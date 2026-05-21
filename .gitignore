@@ -1,0 +1,12 @@
+# Cloudflare Pages / Wrangler local dev — secrets file. NEVER commit this.
+.dev.vars
+.dev.vars.*
+
+# Wrangler local state
+.wrangler/
+.mf/
+
+# Node / editor noise (in case tooling shows up later)
+node_modules/
+.DS_Store
+*.log

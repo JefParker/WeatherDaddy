@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>WeatherDaddy</title>
+  <meta name="description" content="Fast 8-day weather forecasts for your saved cities, with hourly graphs and offline support.">
+  <meta name="theme-color" content="#121212">
+  <meta name="color-scheme" content="dark">
+
+  <!-- Web App Manifest (PWA install) -->
+  <link rel="manifest" href="manifest.json">
+
+  <!-- Favicons -->
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="assets/icons/icon-192.png">
+
+  <!-- Apple touch icon (home-screen icon on iOS) -->
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+  <link rel="apple-touch-icon" sizes="152x152" href="assets/icons/icon-152.png">
+  <link rel="apple-touch-icon" sizes="167x167" href="assets/icons/icon-167.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="assets/icons/icon-180.png">
+
+  <!-- iOS standalone PWA metadata -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="WeatherDaddy">
+
+  <!-- iOS launch / splash screens. Each <link> targets one device class
+       via the device-width / device-height / device-pixel-ratio media
+       query; iOS picks the matching one when launching the installed PWA. -->
+  <!-- iPhone 14 Pro Max -->
+  <link rel="apple-touch-startup-image" href="assets/splash/iphone-14-pro-max-portrait.png"
+        media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="assets/splash/iphone-14-pro-max-landscape.png"
+        media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)">
+  <!-- iPhone 14 Pro / 15 Pro -->
+  <link rel="apple-touch-startup-image" href="assets/splash/iphone-14-pro-portrait.png"
+        media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="assets/splash/iphone-14-pro-landscape.png"
+        media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)">
+  <!-- iPhone 14 Plus / 13 Pro Max / 12 Pro Max -->
+  <link rel="apple-touch-startup-image" href="assets/splash/iphone-14-plus-portrait.png"
+        media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="assets/splash/iphone-14-plus-landscape.png"
+        media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)">
+  <!-- iPhone 14 / 13 / 12 / 13 Pro / 12 Pro -->
+  <link rel="apple-touch-startup-image" href="assets/splash/iphone-14-portrait.png"
+        media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="assets/splash/iphone-14-landscape.png"
+        media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)">
+  <!-- iPhone 13 mini / 12 mini / 11 Pro / X / XS -->
+  <link rel="apple-touch-startup-image" href="assets/splash/iphone-x-portrait.png"
+        media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="assets/splash/iphone-x-landscape.png"
+        media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)">
+  <!-- iPhone 11 Pro Max / XS Max -->
+  <link rel="apple-touch-startup-image" href="assets/splash/iphone-xs-max-portrait.png"
+        media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="assets/splash/iphone-xs-max-landscape.png"
+        media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)">
+  <!-- iPhone 11 / XR -->
+  <link rel="apple-touch-startup-image" href="assets/splash/iphone-xr-portrait.png"
+        media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="assets/splash/iphone-xr-landscape.png"
+        media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+  <!-- iPhone 8 Plus / 7 Plus / 6 Plus -->
+  <link rel="apple-touch-startup-image" href="assets/splash/iphone-8-plus-portrait.png"
+        media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="assets/splash/iphone-8-plus-landscape.png"
+        media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)">
+  <!-- iPhone 8 / 7 / 6 / SE2 / SE3 -->
+  <link rel="apple-touch-startup-image" href="assets/splash/iphone-8-portrait.png"
+        media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="assets/splash/iphone-8-landscape.png"
+        media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+  <!-- iPhone SE (1st gen) / 5s -->
+  <link rel="apple-touch-startup-image" href="assets/splash/iphone-se-portrait.png"
+        media="(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="assets/splash/iphone-se-landscape.png"
+        media="(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+  <!-- iPad mini (6th gen) -->
+  <link rel="apple-touch-startup-image" href="assets/splash/ipad-mini-portrait.png"
+        media="(device-width: 744px) and (device-height: 1133px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="assets/splash/ipad-mini-landscape.png"
+        media="(device-width: 744px) and (device-height: 1133px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+  <!-- iPad 10.2 -->
+  <link rel="apple-touch-startup-image" href="assets/splash/ipad-portrait.png"
+        media="(device-width: 810px) and (device-height: 1080px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="assets/splash/ipad-landscape.png"
+        media="(device-width: 810px) and (device-height: 1080px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+  <!-- iPad Air 10.9 / iPad Pro 11 -->
+  <link rel="apple-touch-startup-image" href="assets/splash/ipad-air-portrait.png"
+        media="(device-width: 820px) and (device-height: 1180px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="assets/splash/ipad-air-landscape.png"
+        media="(device-width: 820px) and (device-height: 1180px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+  <!-- iPad Pro 12.9 -->
+  <link rel="apple-touch-startup-image" href="assets/splash/ipad-pro-12-portrait.png"
+        media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="assets/splash/ipad-pro-12-landscape.png"
+        media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+
+  <!-- Open Graph / Twitter card for shareable links -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="WeatherDaddy">
+  <meta property="og:description" content="Fast 8-day weather forecasts for your saved cities.">
+  <meta property="og:image" content="assets/icons/icon-512.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="WeatherDaddy">
+  <meta name="twitter:description" content="Fast 8-day weather forecasts for your saved cities.">
+  <meta name="twitter:image" content="assets/icons/icon-512.png">
+
+  <link rel="stylesheet" href="css/style.css?v=97">
+</head>
+<body>
+  <div class="app-container">
+    <header class="app-header">
+      <div class="location-display">
+        <h1 id="location-name">Loading...</h1>
+        <div id="save-btn-container"></div>
+      </div>
+      <button class="menu-btn" id="refresh-btn" aria-label="Refresh weather">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+      </button>
+      <button class="menu-btn" id="menu-btn" aria-label="Open Menu">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+      </button>
+    </header>
+    
+    <main class="main-content" id="main-content">
+      <div id="weather-view">
+        <div class="loader">Loading weather data...</div>
+      </div>
+    </main>
+
+    <!-- Main Menu Overlay -->
+    <div class="overlay-screen" id="main-menu-screen">
+      <header class="overlay-header">
+        <button class="back-btn" id="main-menu-back-btn">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+        </button>
+        <h2>Menu</h2>
+      </header>
+      <div class="overlay-body">
+        <div class="menu-options">
+          <button class="menu-option-btn" id="goto-locations-btn">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+            <span>Locations</span>
+          </button>
+          <button class="menu-option-btn" id="goto-units-btn">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            <span>Unit Settings</span>
+          </button>
+          <button class="menu-option-btn" id="goto-about-btn">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+            <span>About</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Units Overlay -->
+    <div class="overlay-screen" id="units-screen">
+      <header class="overlay-header">
+        <button class="back-btn" id="units-back-btn">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+        </button>
+        <h2>Units</h2>
+      </header>
+      <div class="overlay-body">
+        <div class="unit-row">
+          <span>Temperature</span>
+          <div class="segmented-control" id="temp-unit-control" data-setting="temp">
+            <button data-value="C">°C</button>
+            <button data-value="F">°F</button>
+          </div>
+        </div>
+        <div class="unit-row">
+          <span>Wind speed</span>
+          <div class="segmented-control" id="wind-unit-control" data-setting="wind">
+            <button data-value="ms">m/s</button>
+            <button data-value="kmh">km/h</button>
+            <button data-value="mph">mph</button>
+          </div>
+        </div>
+        <div class="unit-row">
+          <span>Pressure</span>
+          <div class="segmented-control" id="pressure-unit-control" data-setting="pressure">
+            <button data-value="hpa">hPa</button>
+            <button data-value="inhg">inHg</button>
+            <button data-value="mmhg">mmHg</button>
+          </div>
+        </div>
+        <div class="unit-row">
+          <span>Precipitation</span>
+          <div class="segmented-control" id="precip-unit-control" data-setting="precip">
+            <button data-value="mm">mm</button>
+            <button data-value="in">in</button>
+          </div>
+        </div>
+        <div class="unit-row">
+          <span>Distance</span>
+          <div class="segmented-control" id="dist-unit-control" data-setting="dist">
+            <button data-value="km">km</button>
+            <button data-value="mi">mi</button>
+          </div>
+        </div>
+        <div class="unit-row">
+          <span>Time format</span>
+          <div class="segmented-control" id="time-unit-control" data-setting="time">
+            <button data-value="24h">24-hour</button>
+            <button data-value="12h">12-hour</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Locations Overlay -->
+    <div class="overlay-screen" id="locations-screen">
+      <header class="overlay-header">
+        <button class="back-btn" id="locations-back-btn">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+        </button>
+        <h2>Locations</h2>
+      </header>
+      <div class="overlay-body">
+        <div class="menu-search">
+          <div class="search-input-wrapper">
+            <input type="text" id="city-input" placeholder="Loading cities..." autocomplete="off" disabled>
+            <span class="city-load-spinner" id="city-load-spinner"></span>
+            <ul id="city-autocomplete"></ul>
+          </div>
+          <button id="search-btn" class="search-confirm-btn" aria-label="Search">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          </button>
+        </div>
+        <button id="location-btn" class="current-loc-btn">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+          Use current location
+        </button>
+        <div class="saved-locations-title">Saved Locations</div>
+        <div id="saved-locations-list" class="locations-list">
+          <!-- JS will render locations here -->
+        </div>
+      </div>
+    </div>
+
+    <!-- About Overlay -->
+    <div class="overlay-screen" id="about-screen">
+      <header class="overlay-header">
+        <button class="back-btn" id="about-back-btn" aria-label="Back">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+        </button>
+        <h2>About</h2>
+      </header>
+      <div class="overlay-body">
+        <section class="about-section">
+          <h3 class="about-title">WeatherDaddy</h3>
+          <p class="about-blurb">A fast, offline-capable progressive web app for 8-day weather forecasts, hourly graphs, severe-weather alerts, and your favorite saved locations.</p>
+        </section>
+
+        <section class="about-section">
+          <h4 class="about-heading">How to use</h4>
+          <ul class="about-sources">
+            <li>
+              <div class="about-source-name">Switching cities</div>
+              <span class="about-source-desc">Swipe left or right anywhere on the main weather dashboard to cycle through your saved locations.</span>
+            </li>
+            <li>
+              <div class="about-source-name">Exploring the forecast</div>
+              <span class="about-source-desc">Swipe the temperature graph or tap a day in the list below it to view a different day. Swipe the quick-stats grid to see more details.</span>
+            </li>
+            <li>
+              <div class="about-source-name">Hourly timeline</div>
+              <span class="about-source-desc">Scroll the hourly bar horizontally to view upcoming weather. Scrolling into a different day will automatically flip the dashboard to that day.</span>
+            </li>
+            <li>
+              <div class="about-source-name">Managing locations</div>
+              <span class="about-source-desc">In the Locations menu, press and hold a city for a moment until it tilts, then drag it up or down to reorder your list.</span>
+            </li>
+          </ul>
+        </section>
+
+        <section class="about-section">
+          <h4 class="about-heading">Data &amp; services</h4>
+          <p class="about-lede">WeatherDaddy stitches together free, open data from several great sources. Massive thanks to each of them.</p>
+          <ul class="about-sources">
+            <li>
+              <a class="about-source-name" href="https://openweathermap.org" target="_blank" rel="noopener noreferrer">OpenWeatherMap ↗</a>
+              <span class="about-source-desc">Current conditions, 5-day / 3-hour forecasts, and city geocoding.</span>
+            </li>
+            <li>
+              <a class="about-source-name" href="https://open-meteo.com" target="_blank" rel="noopener noreferrer">Open-Meteo ↗</a>
+              <span class="about-source-desc">Hourly precipitation, 8-day daily forecast extension, UV index, air quality (US&nbsp;AQI), and European pollen.</span>
+            </li>
+            <li>
+              <a class="about-source-name" href="https://nominatim.openstreetmap.org" target="_blank" rel="noopener noreferrer">OpenStreetMap Nominatim ↗</a>
+              <span class="about-source-desc">Landmark, address, and point-of-interest geocoding — powered by data from <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>.</span>
+            </li>
+            <li>
+              <a class="about-source-name" href="https://www.weather.gov" target="_blank" rel="noopener noreferrer">U.S. National Weather Service ↗</a>
+              <span class="about-source-desc">Severe weather alerts (Severe / Extreme) for U.S. locations.</span>
+            </li>
+            <li>
+              <a class="about-source-name" href="https://www.geonames.org" target="_blank" rel="noopener noreferrer">GeoNames ↗</a>
+              <span class="about-source-desc">The 20,000-city autocomplete dictionary bundled with the app, from the <em>cities15000</em> dataset.</span>
+            </li>
+          </ul>
+        </section>
+
+        <section class="about-section">
+          <h4 class="about-heading">Built into your browser</h4>
+          <ul class="about-sources">
+            <li>
+              <span class="about-source-name">Geolocation API</span>
+              <span class="about-source-desc">Used by the "Use current location" button to find weather for where you are right now. WeatherDaddy never sends your location anywhere except the weather APIs above.</span>
+            </li>
+          </ul>
+        </section>
+
+        <section class="about-section byok-section" aria-labelledby="byok-heading">
+          <h4 class="about-heading" id="byok-heading">Use your own OpenWeatherMap API key</h4>
+          <p class="about-lede">
+            WeatherDaddy ships with a shared service so it works out of the box, but
+            you can plug in your own free OpenWeatherMap API key to get your own
+            request quota and skip our proxy.
+          </p>
+          <ol class="byok-steps">
+            <li>Go to <a href="https://home.openweathermap.org/users/sign_up" target="_blank" rel="noopener noreferrer">openweathermap.org</a> and create a free account.</li>
+            <li>Open <a href="https://home.openweathermap.org/api_keys" target="_blank" rel="noopener noreferrer">API keys</a>, copy your key, and paste it below.</li>
+            <li><strong>Heads up:</strong> brand-new keys can take up to <strong>2 hours</strong> to activate. If you get an error right after creating one, try again later.</li>
+          </ol>
+
+          <div class="byok-status" role="status" aria-live="polite" id="byok-status">
+            <span class="byok-status-dot" aria-hidden="true"></span>
+            <span class="byok-status-text" id="byok-status-text">Status: Using Default Shared Service</span>
+          </div>
+
+          <label class="byok-label" for="byok-input">Your API key</label>
+          <div class="byok-input-row">
+            <input
+              type="password"
+              id="byok-input"
+              class="byok-input"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+              placeholder="Paste your OpenWeatherMap API key">
+            <button
+              type="button"
+              class="byok-toggle"
+              id="byok-toggle"
+              aria-label="Show API key"
+              aria-pressed="false">
+              <svg class="byok-eye-show" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              <svg class="byok-eye-hide" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" hidden><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a19.79 19.79 0 0 1 5.06-6.06"/><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a19.86 19.86 0 0 1-3.17 4.19"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+            </button>
+          </div>
+
+          <div class="byok-actions">
+            <button type="button" class="byok-btn byok-btn-primary" id="byok-save">Save Key</button>
+            <button type="button" class="byok-btn byok-btn-secondary" id="byok-clear">Clear Key</button>
+          </div>
+          <p class="byok-feedback" id="byok-feedback" role="status" aria-live="polite"></p>
+        </section>
+
+        <p class="about-footer">All data is fetched directly from these services by your browser — there is no WeatherDaddy backend.</p>
+      </div>
+    </div>
+
+    <!-- Active National Weather Service alert bar — fixed across the
+         bottom of the screen, shows the most severe currently-active
+         alert. Tapping it opens the alerts overlay below with the full
+         text of every active warning. -->
+    <button class="alert-bar" id="alert-bar" type="button" hidden>
+      <span class="alert-bar-icon" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+      </span>
+      <span class="alert-bar-text" id="alert-bar-text">Weather alert</span>
+      <span class="alert-bar-cta">Details<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-left:4px;vertical-align:-2px"><polyline points="9 18 15 12 9 6"/></svg></span>
+    </button>
+
+    <!-- Alerts detail overlay — full text of every currently-active
+         severe / extreme NWS warning for this location. -->
+    <div class="overlay-screen" id="alerts-screen">
+      <header class="overlay-header">
+        <button class="back-btn" id="alerts-back-btn" aria-label="Back">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+        </button>
+        <h2>Active alerts</h2>
+      </header>
+      <div class="overlay-body" id="alerts-body">
+        <!-- JS injects one .alert-card per active alert -->
+      </div>
+    </div>
+
+    <!-- Context menu — opened by right-click on desktop and long-press on
+         touch. Mirrors the hamburger menu options. JS positions it next
+         to the cursor / touch point and dismisses on outside click. -->
+    <div class="context-menu" id="context-menu" role="menu" hidden>
+      <button class="context-menu-item" data-action="locations" role="menuitem">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+        <span>Locations</span>
+      </button>
+      <button class="context-menu-item" data-action="units" role="menuitem">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+        <span>Unit Settings</span>
+      </button>
+      <button class="context-menu-item" data-action="about" role="menuitem">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+        <span>About</span>
+      </button>
+    </div>
+
+    <!-- iOS "Add to Home Screen" prompt — shown only on iOS Safari that
+         isn't already running in standalone mode, dismissable, and the
+         dismissal is remembered in localStorage. -->
+    <div class="a2hs-prompt" id="a2hs-prompt" role="dialog" aria-live="polite" aria-label="Install WeatherDaddy">
+      <img class="a2hs-icon" src="assets/icons/icon-192.png" alt="" aria-hidden="true">
+      <div class="a2hs-text">
+        <strong>Install WeatherDaddy</strong>
+        <span>
+          Tap
+          <svg class="a2hs-share-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"></path>
+            <polyline points="16 6 12 2 8 6"></polyline>
+            <line x1="12" y1="2" x2="12" y2="15"></line>
+          </svg>
+          then <strong>Add to Home Screen</strong>
+        </span>
+      </div>
+      <button class="a2hs-close" id="a2hs-close" aria-label="Dismiss">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>
+
+  </div>
+
+  <script src="js/storage.js?v=97"></script>
+  <script src="js/location.js?v=97"></script>
+  <script src="js/weather.js?v=97"></script>
+  <script src="js/ui.js?v=97"></script>
+  <script src="js/app.js?v=97"></script>
+</body>
+</html>

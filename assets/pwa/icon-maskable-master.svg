@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="WeatherDaddy">
+  <!-- Maskable variant: the platform may crop up to ~10% of each edge into
+       a circle / squircle / rounded square. Background fills the full
+       canvas; the artwork is scaled to 80% and centered so the safe zone
+       (the inner 410x410 box) is the only thing that must remain visible. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1a1a1a"/>
+      <stop offset="1" stop-color="#101010"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#ffb24d"/>
+      <stop offset="0.55" stop-color="#ff8a1f"/>
+      <stop offset="1" stop-color="#ff6d00"/>
+    </radialGradient>
+    <linearGradient id="cloud" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dcdcdc"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background covers the entire canvas — including the area that may be
+       cropped — so no transparent corners appear after masking. -->
+  <rect width="512" height="512" fill="url(#bg)"/>
+
+  <!-- Artwork transformed to live inside the central 80% safe zone -->
+  <g transform="translate(51.2,51.2) scale(0.8)">
+    <g stroke="url(#sun)" stroke-width="22" stroke-linecap="round" opacity="0.95">
+      <line x1="200" y1="70"  x2="200" y2="120"/>
+      <line x1="200" y1="320" x2="200" y2="370"/>
+      <line x1="50"  y1="220" x2="100" y2="220"/>
+      <line x1="300" y1="220" x2="350" y2="220"/>
+      <line x1="94"  y1="114" x2="129" y2="149"/>
+      <line x1="271" y1="291" x2="306" y2="326"/>
+      <line x1="306" y1="114" x2="271" y2="149"/>
+      <line x1="129" y1="291" x2="94"  y2="326"/>
+    </g>
+    <circle cx="200" cy="220" r="78" fill="url(#sun)"/>
+    <g fill="url(#cloud)">
+      <ellipse cx="320" cy="360" rx="118" ry="42"/>
+      <circle cx="240" cy="332" r="52"/>
+      <circle cx="296" cy="306" r="62"/>
+      <circle cx="360" cy="318" r="52"/>
+      <circle cx="404" cy="344" r="38"/>
+    </g>
+    <path d="M 200 332
+             a 52 52 0 0 1 96 -26
+             a 62 62 0 0 1 64 12
+             a 52 52 0 0 1 44 26"
+          fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="3" stroke-linecap="round"/>
+  </g>
+</svg>

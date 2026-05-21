@@ -1,0 +1,64 @@
+{
+  "name": "WeatherDaddy",
+  "short_name": "WeatherDaddy",
+  "description": "Fast 8-day weather forecasts for your saved cities, with hourly graphs and offline support.",
+  "id": "/weatherdaddy/",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
+  "background_color": "#121212",
+  "theme_color": "#121212",
+  "lang": "en-US",
+  "dir": "ltr",
+  "categories": ["weather", "utilities", "lifestyle"],
+  "prefer_related_applications": false,
+  "icons": [
+    { "src": "./assets/icons/icon-72.png",   "sizes": "72x72",   "type": "image/png", "purpose": "any" },
+    { "src": "./assets/icons/icon-96.png",   "sizes": "96x96",   "type": "image/png", "purpose": "any" },
+    { "src": "./assets/icons/icon-128.png",  "sizes": "128x128", "type": "image/png", "purpose": "any" },
+    { "src": "./assets/icons/icon-144.png",  "sizes": "144x144", "type": "image/png", "purpose": "any" },
+    { "src": "./assets/icons/icon-152.png",  "sizes": "152x152", "type": "image/png", "purpose": "any" },
+    { "src": "./assets/icons/icon-192.png",  "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./assets/icons/icon-256.png",  "sizes": "256x256", "type": "image/png", "purpose": "any" },
+    { "src": "./assets/icons/icon-384.png",  "sizes": "384x384", "type": "image/png", "purpose": "any" },
+    { "src": "./assets/icons/icon-512.png",  "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./assets/icons/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "./assets/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "./assets/icons/monochrome-192.png", "sizes": "192x192", "type": "image/png", "purpose": "monochrome" },
+    { "src": "./assets/icons/monochrome-512.png", "sizes": "512x512", "type": "image/png", "purpose": "monochrome" }
+  ],
+  "screenshots": [
+    {
+      "src": "./assets/mobile_screenshot.png",
+      "sizes": "1170x2532",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Today's forecast at a glance"
+    },
+    {
+      "src": "./assets/desktop_screenshot.png",
+      "sizes": "1280x800",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "WeatherDaddy on the desktop"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Locations",
+      "short_name": "Locations",
+      "description": "Jump straight to your saved-locations list",
+      "url": "./index.html#locations",
+      "icons": [{ "src": "./assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Refresh weather",
+      "short_name": "Refresh",
+      "description": "Force a fresh weather fetch for the current location",
+      "url": "./index.html#refresh",
+      "icons": [{ "src": "./assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}
