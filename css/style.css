@@ -1342,3 +1342,169 @@ body.has-alert .a2hs-prompt {
 }
 .byok-feedback.is-success { color: #34c759; }
 .byok-feedback.is-error   { color: #ff453a; }
+
+/* -------------------------------------------------------------------------
+   Phone in landscape orientation
+   -------------------------------------------------------------------------
+   Phones held sideways have ~360-430px of vertical space but 600-932px of
+   horizontal space. Stacking the dashboard vertically (the default mobile
+   layout) means almost nothing is visible above the fold. Re-layout into
+   two columns:
+     LEFT:  hero block + quick-stats + temperature graph
+     RIGHT: hourly scroll + 8-day hi/lo list
+   This puts the current conditions + graph on the same screen as the
+   forecast list, and the user can scroll either column independently.
+
+   Targeted via `max-height: 500px` so tablets and desktops in landscape
+   (which have plenty of vertical room) keep the single-column layout.
+   ------------------------------------------------------------------------- */
+@media (orientation: landscape) and (max-height: 500px) {
+  /* Open the column up — single-column 500px cap looks lost on a wide
+     landscape phone. Cap to a generous 960px so on the biggest landscape
+     phones the layout doesn't sprawl out to the bezels. */
+  .app-container {
+    max-width: 960px;
+    padding: 0 8px;
+  }
+
+  /* Tighter header so we don't burn a third of the viewport on chrome. */
+  .app-header {
+    padding: calc(8px + env(safe-area-inset-top, 0px)) 12px 8px;
+    gap: 8px;
+  }
+  #location-name { font-size: 1.1rem; }
+
+  /* Two grid cells, one per column wrapper. The wrappers contain the
+     section blocks in normal flow, so we don't have to wire up
+     grid-rows on every individual section — and the swipe-between-
+     cities cube transition can target each wrapper independently. */
+  #weather-view {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 16px;
+    align-items: start;
+    padding-bottom: 16px;
+  }
+  #weather-view > .dashboard-left  { grid-column: 1; grid-row: 1; min-width: 0; }
+  #weather-view > .dashboard-right { grid-column: 2; grid-row: 1; min-width: 0; }
+  /* Cube perspectives spawned by the per-column transition live in the
+     same two grid cells — JS sets grid-column inline, so we just need
+     to make sure they participate in the grid (no display override). */
+
+  /* Compact hero — 4.5rem temp is huge in a half-width column. Drop padding
+     and shrink the number so the graph below it also fits on screen. */
+  .hero-section {
+    padding: 12px 8px 8px;
+  }
+  .hero-when {
+    margin-bottom: 8px;
+    font-size: 0.7rem;
+  }
+  .hero-icon-large svg {
+    width: 44px;
+    height: 44px;
+    margin-bottom: 4px;
+  }
+  .hero-desc { font-size: 1rem; }
+  .hero-temp-large {
+    font-size: 3rem;
+    margin: 4px 0;
+  }
+  .hero-feels-like {
+    font-size: 0.85rem;
+    margin-bottom: 10px;
+  }
+  .precip-message {
+    font-size: 0.85rem;
+    margin-top: 8px;
+  }
+
+  /* Stats grid in a narrow column gets cramped at 3 cols — keep 3 but
+     reduce gaps and font slightly so the labels don't wrap awkwardly. */
+  .quick-stats-grid {
+    padding: 10px;
+    gap: 10px 4px;
+  }
+  .stat-label { font-size: 0.75rem; }
+  .stat-value { font-size: 0.95rem; }
+
+  /* Tighten the graph block. */
+  .day-detail-section { padding: 10px 8px; }
+
+  /* Right-column polish: keep the hourly bar's native horizontal scroll
+     but stop the daily list from pushing the page taller than necessary.
+     Reduce row padding for density. */
+  .hourly-scroll {
+    padding: 10px 8px;
+    gap: 16px;
+  }
+  .daily-list { padding: 0 8px 8px; }
+  .daily-item { padding: 8px 8px; }
+
+  /* The slide-to-hero animation lands ghosts on the hero's actual rect
+     via getBoundingClientRect, so the diagonal right-column-row →
+     left-column-hero flight already works without any JS changes. The
+     only thing worth tuning here is the easing duration: a slightly
+     longer travel deserves a touch more time. */
+  .day-slide-ghost--flying {
+    transition-duration: 600ms;
+  }
+}
+
+/* Even tighter scaling for very short landscape windows (e.g. iPhone SE
+   landscape at 320×568 → 568×320). Keep the two-column structure but
+   drop hero padding further so the graph stays visible. */
+@media (orientation: landscape) and (max-height: 380px) {
+  .hero-section { padding: 8px 6px 4px; }
+  .hero-temp-large { font-size: 2.5rem; }
+  .hero-icon-large svg { width: 36px; height: 36px; }
+  .app-header {
+    padding: calc(4px + env(safe-area-inset-top, 0px)) 10px 4px;
+  }
+  #location-name { font-size: 1rem; }
+}
+
+/* -------------------------------------------------------------------------
+   Tablet in landscape orientation (and wider laptop windows)
+   -------------------------------------------------------------------------
+   The phone-landscape block above only matches at max-height: 500px, so
+   tablets in landscape (iPad mini 1133×744, iPad Pro 12.9 1366×1024, etc.)
+   were falling back to the centered 500px single-column layout with huge
+   empty bands on either side.
+
+   This tier reuses the same left/right column split but keeps the normal
+   font sizes and spacing — there's plenty of vertical room here, so the
+   hero doesn't need to shrink and the columns can breathe.
+
+   Gated by min-height: 501px + min-width: 900px so phones never hit it
+   (they're caught by the block above) and desktops in landscape that
+   happen to be sized like a tablet also benefit.
+   ------------------------------------------------------------------------- */
+@media (orientation: landscape) and (min-height: 501px) and (min-width: 900px) {
+  .app-container {
+    max-width: 1200px;
+    padding: 0 16px;
+  }
+
+  /* Same grid skeleton as the phone-landscape block — explicit grid-row on
+     every child so the right column starts at the top instead of below the
+     left column (CSS Grid's sparse auto-placement bug). */
+  #weather-view {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto auto;
+    column-gap: 32px;
+    align-items: start;
+    padding-bottom: 24px;
+  }
+
+  #weather-view > .dashboard-left  { grid-column: 1; grid-row: 1; min-width: 0; }
+  #weather-view > .dashboard-right { grid-column: 2; grid-row: 1; min-width: 0; }
+  /* Per-column cubes (JS-injected) live in the same two grid cells. */
+
+  /* No size shrinking — keep the regular hero. A touch of vertical trim
+     so the graph below it stays comfortably visible. */
+  .hero-section {
+    padding: 32px 24px 24px;
+  }
+}

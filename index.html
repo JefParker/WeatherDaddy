@@ -112,7 +112,7 @@
   <meta name="twitter:description" content="Fast 8-day weather forecasts for your saved cities.">
   <meta name="twitter:image" content="assets/icons/icon-512.png">
 
-  <link rel="stylesheet" href="css/style.css?v=97">
+  <link rel="stylesheet" href="css/style.css?v=104">
 </head>
 <body>
   <div class="app-container">
@@ -280,6 +280,10 @@
               <div class="about-source-name">Managing locations</div>
               <span class="about-source-desc">In the Locations menu, press and hold a city for a moment until it tilts, then drag it up or down to reorder your list.</span>
             </li>
+            <li>
+              <div class="about-source-name">Landscape layout</div>
+              <span class="about-source-desc">Turn your phone or tablet sideways — the dashboard splits into two columns (hero + graph on the left, hourly + 8&#8209;day list on the right) and each column flips on its own 3D cube when you swipe to another saved city.</span>
+            </li>
           </ul>
         </section>
 
@@ -293,7 +297,7 @@
             </li>
             <li>
               <a class="about-source-name" href="https://open-meteo.com" target="_blank" rel="noopener noreferrer">Open-Meteo ↗</a>
-              <span class="about-source-desc">Hourly precipitation, 8-day daily forecast extension, UV index, air quality (US&nbsp;AQI), and European pollen.</span>
+              <span class="about-source-desc">Hourly precipitation, 8-day daily forecast extension, UV index, air quality (US&nbsp;AQI), and European pollen (broken out by tree, grass, and weed).</span>
             </li>
             <li>
               <a class="about-source-name" href="https://nominatim.openstreetmap.org" target="_blank" rel="noopener noreferrer">OpenStreetMap Nominatim ↗</a>
@@ -367,7 +371,7 @@
           <p class="byok-feedback" id="byok-feedback" role="status" aria-live="polite"></p>
         </section>
 
-        <p class="about-footer">All data is fetched directly from these services by your browser — there is no WeatherDaddy backend.</p>
+        <p class="about-footer">Open-Meteo, OpenStreetMap Nominatim, the U.S. National Weather Service, and the bundled GeoNames dictionary are called directly from your browser. OpenWeatherMap requests go through a tiny Cloudflare Pages proxy that attaches our shared API key — unless you've added your own key above, in which case the browser talks to OpenWeatherMap directly and our proxy is bypassed entirely.</p>
       </div>
     </div>
 
@@ -443,10 +447,10 @@
 
   </div>
 
-  <script src="js/storage.js?v=97"></script>
-  <script src="js/location.js?v=97"></script>
-  <script src="js/weather.js?v=97"></script>
-  <script src="js/ui.js?v=97"></script>
-  <script src="js/app.js?v=97"></script>
+  <script src="js/storage.js?v=104"></script>
+  <script src="js/location.js?v=104"></script>
+  <script src="js/weather.js?v=104"></script>
+  <script src="js/ui.js?v=104"></script>
+  <script src="js/app.js?v=104"></script>
 </body>
 </html>

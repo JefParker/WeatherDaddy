@@ -1297,6 +1297,13 @@ const UI = {
     const currentDayIdx = isToday ? 0 : selectedDayIndex;
 
     let html = `
+      <!-- Left-column wrapper: hero + stats + temperature graph. Pairs
+           with .dashboard-right (below) so the landscape two-column
+           layout has exactly two grid cells, and the swipe-between-
+           cities cube transition can spin each column independently
+           instead of as one big cube. In portrait both wrappers stack
+           as plain blocks, preserving the single-column layout. -->
+      <div class="dashboard-left">
       <section class="hero-section">
         <div class="hero-when">${this.esc(heroWhen)}</div>
         <div class="hero-condition">
@@ -1317,7 +1324,12 @@ const UI = {
       <section class="day-detail-section">
         <div class="graph-container" id="graph-container"></div>
       </section>
+      </div>
 
+      <!-- Right-column wrapper: hourly bar + 8-day hi/lo list. See
+           comment on .dashboard-left above for why both columns are
+           wrapped. -->
+      <div class="dashboard-right">
       <section class="hourly-scroll">
         ${dailyData.map((day, dayIdx) => `
           ${dayIdx > 0 ? '<div class="hourly-day-divider"></div>' : ''}
@@ -1366,6 +1378,7 @@ const UI = {
           `;
         }).join('')}
       </section>
+      </div>
     `;
 
     // Capture the existing hourly scroll position BEFORE we blow away the
@@ -1547,6 +1560,23 @@ const UI = {
   //   direction = 'prev' → cube rotates right, new city was on the left face
   async runCubeTransition(oldClone, direction) {
     if (!this.weatherView.firstChild) return; // nothing new to show
+
+    // Landscape two-column layout: animate each column on its own cube,
+    // rotating in parallel — looks like two cards flipping side by side
+    // instead of one big cube swallowing the whole dashboard.
+    const isTwoColumn = getComputedStyle(this.weatherView).display === 'grid';
+    if (isTwoColumn) {
+      const oldLeft  = oldClone.querySelector('.dashboard-left');
+      const oldRight = oldClone.querySelector('.dashboard-right');
+      const newLeft  = this.weatherView.querySelector('.dashboard-left');
+      const newRight = this.weatherView.querySelector('.dashboard-right');
+      if (oldLeft && oldRight && newLeft && newRight) {
+        return this._runTwoColumnCubeTransition(oldLeft, oldRight, newLeft, newRight, direction);
+      }
+      // Fall through to single-cube if the wrappers somehow aren't present
+      // (older cached DOM, etc.) — better to play any animation than none.
+    }
+
     const isNext = direction === 'next';
 
     // Use the taller of the two so neither face gets clipped during the spin.
@@ -1600,6 +1630,100 @@ const UI = {
       };
       stage.addEventListener('transitionend', finish, { once: true });
       // Fallback in case transitionend doesn't fire (e.g. tab backgrounded).
+      setTimeout(finish, 800);
+    });
+  },
+
+  // Landscape (two-column) variant of the city-swipe cube. Builds two
+  // independent cubes — one per column — and rotates them in parallel,
+  // so visually each half of the dashboard spins as its own card.
+  //
+  //   oldLeft/oldRight  — column wrappers cloned from the OUTGOING DOM
+  //                       (detached nodes inside oldClone). Move them
+  //                       onto each cube's front face.
+  //   newLeft/newRight  — the live wrappers currently mounted under
+  //                       #weather-view. Moving them onto the cube backs
+  //                       takes them out of the grid while the cube
+  //                       animates; we put them back when it's done.
+  //
+  // Per-column --cube-half is set from the measured wrapper width so
+  // the 3D depth math is correct for each column's actual width (rather
+  // than the global 50vw / 250px default, which assumes the portrait
+  // layout's ~500px-wide single cube).
+  async _runTwoColumnCubeTransition(oldLeft, oldRight, newLeft, newRight, direction) {
+    const isNext = direction === 'next';
+    const rotateClass   = isNext ? 'rotate-left' : 'rotate-right';
+    const backFaceClass = isNext ? 'cube-face-right' : 'cube-face-left';
+
+    const buildColumn = (oldCol, newCol, gridColumn) => {
+      // Measure BEFORE moving, while the new column is still in the
+      // grid — once detached its offsetWidth/Height go to 0.
+      const colWidth = newCol.offsetWidth || oldCol.offsetWidth || 300;
+      const stageHeight = Math.max(
+        oldCol.offsetHeight || 0,
+        newCol.offsetHeight || 0,
+        200
+      );
+
+      const perspective = document.createElement('div');
+      perspective.className = 'cube-perspective';
+      perspective.style.gridColumn = gridColumn;
+      perspective.style.gridRow = '1';
+      perspective.style.height = `${stageHeight}px`;
+      perspective.style.setProperty('--cube-half', `${colWidth / 2}px`);
+
+      const stage = document.createElement('div');
+      stage.className = 'cube-stage';
+
+      const front = document.createElement('div');
+      front.className = 'cube-face cube-face-front';
+      front.appendChild(oldCol);
+
+      const back = document.createElement('div');
+      back.className = 'cube-face ' + backFaceClass;
+      back.appendChild(newCol);
+
+      stage.appendChild(front);
+      stage.appendChild(back);
+      perspective.appendChild(stage);
+      return { perspective, stage };
+    };
+
+    const left  = buildColumn(oldLeft,  newLeft,  '1');
+    const right = buildColumn(oldRight, newRight, '2');
+
+    this.weatherView.appendChild(left.perspective);
+    this.weatherView.appendChild(right.perspective);
+
+    return new Promise((resolve) => {
+      // Force layout, then rotate on the next frame so the transition
+      // actually plays rather than collapsing into one frame.
+      // eslint-disable-next-line no-unused-expressions
+      left.stage.offsetHeight; right.stage.offsetHeight;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          left.stage.classList.add(rotateClass);
+          right.stage.classList.add(rotateClass);
+        });
+      });
+
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        // Restore the new wrappers back into weather-view so the rest
+        // of the app continues to find them via querySelector. Grid
+        // placement is by class (.dashboard-left → col 1, etc.), so
+        // append order doesn't matter.
+        this.weatherView.appendChild(newLeft);
+        this.weatherView.appendChild(newRight);
+        left.perspective.remove();
+        right.perspective.remove();
+        resolve();
+      };
+      // Listen on one stage — both finish on the same frame since the
+      // transition duration / easing are identical.
+      left.stage.addEventListener('transitionend', finish, { once: true });
       setTimeout(finish, 800);
     });
   },
