@@ -1,4 +1,4 @@
-const CACHE_NAME = 'weatherdaddy-v127';
+const CACHE_NAME = 'weatherdaddy-v128';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -16,7 +16,27 @@ const ASSETS_TO_CACHE = [
   './assets/icons/icon-192.png',
   './assets/icons/icon-512.png',
   './assets/icons/maskable-192.png',
-  './assets/icons/maskable-512.png'
+  './assets/icons/maskable-512.png',
+  // Weather condition illustrations — referenced by every dashboard
+  // render (hero + ~24 hourly tiles + 8 daily rows), so precaching them
+  // keeps the dashboard usable offline without a flash of missing icons.
+  './assets/icons/weather/clear-day.svg',
+  './assets/icons/weather/clear-night.svg',
+  './assets/icons/weather/few-clouds-day.svg',
+  './assets/icons/weather/cloudy-night.svg',
+  './assets/icons/weather/scattered-clouds.svg',
+  './assets/icons/weather/broken-clouds.svg',
+  './assets/icons/weather/shower-rain.svg',
+  './assets/icons/weather/shower-rain-night.svg',
+  './assets/icons/weather/thunderstorm.svg',
+  './assets/icons/weather/thunderstorm-night.svg',
+  './assets/icons/weather/snow.svg',
+  './assets/icons/weather/snow-night.svg',
+  './assets/icons/weather/mist.svg',
+  './assets/icons/weather/haze.svg',
+  './assets/icons/weather/smoke.svg',
+  './assets/icons/weather/sand.svg',
+  './assets/icons/weather/dust.svg'
 ];
 
 // Strip ?v=... query strings so cache-busted asset URLs still hit the precache.

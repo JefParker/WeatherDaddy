@@ -548,25 +548,82 @@ const UI = {
     this.weatherView.appendChild(div);
   },
 
-  getWeatherIconSVG(iconCode, size = 24) {
-    const isNight = iconCode.includes('n');
-    if (iconCode.startsWith('01')) {
-      if (isNight) return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>`;
-      return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>`;
+  // Map OWM's icon code (and optional numeric weather id for distinguishing
+  // 50d atmospheric variants) to the filename of an SVG in
+  // assets/icons/weather/. Returns a name WITHOUT extension; callers slap
+  // ".svg" on it. Returning a single token (rather than the icon code +
+  // night flag separately) means we can also use these as the "mode" keys
+  // when picking the day's representative icon in the daily list.
+  //
+  //   01 → clear-day / clear-night
+  //   02 → few-clouds-day / cloudy-night (no dedicated "few-clouds-night")
+  //   03 → scattered-clouds
+  //   04 → broken-clouds
+  //   09 / 10 → shower-rain / shower-rain-night
+  //   11 → thunderstorm / thunderstorm-night
+  //   13 → snow / snow-night
+  //   50 → mist / smoke / haze / sand / dust depending on weather.id
+  _weatherAssetName(iconCode, weatherId) {
+    const code   = (iconCode || '').toLowerCase();
+    const isNight = code.endsWith('n');
+    if (code.startsWith('50')) {
+      // 7xx series in OWM — the icon code collapses them all to 50d.
+      switch (Number(weatherId)) {
+        case 701: case 741: return 'mist';   // Mist or Fog
+        case 711:           return 'smoke';
+        case 721:           return 'haze';
+        case 731: case 751: return 'sand';   // Sand/dust whirls or Sand
+        case 761: case 762: return 'dust';   // Dust or volcanic ash
+        default:            return 'mist';   // safe fallback for unknown ids
+      }
     }
-    if (iconCode.startsWith('02') || iconCode.startsWith('03') || iconCode.startsWith('04')) {
-      return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19a4.5 4.5 0 0 0 .5-8.97 7 7 0 0 0-13.43-1.6A5 5 0 0 0 6 19h11.5z"></path></svg>`;
+    switch (code.slice(0, 2)) {
+      case '01': return isNight ? 'clear-night'        : 'clear-day';
+      case '02': return isNight ? 'cloudy-night'       : 'few-clouds-day';
+      case '03': return 'scattered-clouds';
+      case '04': return 'broken-clouds';
+      case '09': return isNight ? 'shower-rain-night'  : 'shower-rain';
+      case '10': return isNight ? 'shower-rain-night'  : 'shower-rain';
+      case '11': return isNight ? 'thunderstorm-night' : 'thunderstorm';
+      case '13': return isNight ? 'snow-night'         : 'snow';
+      default:   return isNight ? 'clear-night'        : 'clear-day';
     }
-    if (iconCode.startsWith('09') || iconCode.startsWith('10')) {
-      return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"></path><path d="M8 13v8"></path><path d="M12 15v8"></path><path d="M16 13v8"></path></svg>`;
+  },
+
+  // List of every asset name the icon picker can resolve to. Used by the
+  // service worker so the bundled weather illustrations are precached and
+  // available offline.
+  WEATHER_ICON_ASSETS: [
+    'clear-day', 'clear-night',
+    'few-clouds-day', 'cloudy-night',
+    'scattered-clouds', 'broken-clouds',
+    'shower-rain', 'shower-rain-night',
+    'thunderstorm', 'thunderstorm-night',
+    'snow', 'snow-night',
+    'mist', 'haze', 'smoke', 'sand', 'dust',
+  ],
+
+  // Render a weather-condition icon as an <img> pointing at the bundled
+  // SVG asset. Returns markup so callers can interpolate into innerHTML
+  // exactly like the old inline-SVG version did.
+  //
+  // Accepts either:
+  //   getWeatherIconSVG(iconCode, size)
+  //   getWeatherIconSVG(iconCode, size, weatherId)   // disambiguates 50d
+  //   getWeatherIconSVG(assetName, size)             // already-resolved name
+  //
+  // The third form lets the daily-list "mode" logic store fully-resolved
+  // names in `d.icons` and pass them straight through here without a
+  // second lookup.
+  getWeatherIconSVG(iconCodeOrAsset, size = 24, weatherId = null) {
+    let asset;
+    if (this.WEATHER_ICON_ASSETS.includes(iconCodeOrAsset)) {
+      // Already an asset name (from the mode-icon path).
+      asset = iconCodeOrAsset;
+    } else {
+      asset = this._weatherAssetName(iconCodeOrAsset, weatherId);
     }
-    if (iconCode.startsWith('11')) {
-      return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 16.9A5 5 0 0 0 18 7h-1.26a8 8 0 1 0-11.62 9"></path><polyline points="13 11 9 17 15 17 11 23"></polyline></svg>`;
-    }
-    if (iconCode.startsWith('13')) {
-      return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"></path><path d="M8 19v2"></path><path d="M16 19v2"></path><path d="M12 21v2"></path></svg>`;
-    }
-    return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line></svg>`;
+    return `<img class="weather-icon" src="assets/icons/weather/${asset}.svg" width="${size}" height="${size}" alt="" draggable="false">`;
   },
 
   // Beaufort scale (m/s) → short description for the hero subtitle.
@@ -1089,7 +1146,11 @@ const UI = {
       }
       const d = allDays.get(key);
       d.temps.push(item.main.temp);
-      d.icons.push(item.weather[0].icon);
+      // Store the fully-resolved asset name (e.g. "few-clouds-day",
+      // "haze") so the daily-list "mode" calculation can distinguish
+      // 50d sub-types (mist / smoke / haze / sand / dust) which all
+      // share the same OWM icon code.
+      d.icons.push(this._weatherAssetName(item.weather[0].icon, item.weather[0].id));
       d.hourly.push(item);
     });
 
@@ -1109,7 +1170,7 @@ const UI = {
       allDays.set(key, {
         key,
         temps: slots.map(s => s.main.temp),
-        icons: slots.map(s => s.weather[0].icon),
+        icons: slots.map(s => this._weatherAssetName(s.weather[0].icon, s.weather[0].id)),
         hourly: slots,
         dt: dayStart,
         _om: dayInfo // marker + accurate sunrise/sunset for this day
@@ -1142,7 +1203,7 @@ const UI = {
         const slot = this._omHourToOwmSlot(omH);
         day.hourly.push(slot);
         day.temps.push(slot.main.temp);
-        day.icons.push(slot.weather[0].icon);
+        day.icons.push(this._weatherAssetName(slot.weather[0].icon, slot.weather[0].id));
         existingHours.add(omHour);
       }
       day.hourly.sort((a, b) => a.dt - b.dt);
@@ -1212,19 +1273,27 @@ const UI = {
       const sun = day._om
         ? { sunrise: day._om.sunrise, sunset: day._om.sunset }
         : sunTimesForDay(day.dt);
-      // Mode icon for the day — same derivation the daily-list row uses,
-      // so the hero icon matches the row icon (otherwise a "mostly rain
-      // but clear at noon" day would show rain in the row and a sun in
-      // the hero, which makes the row→hero slide animation look like
-      // the icon morphs at the end).
+      // Mode asset name for the day — same derivation the daily-list row
+      // uses, so the hero icon matches the row icon (otherwise a "mostly
+      // rain but clear at noon" day would show rain in the row and a sun
+      // in the hero, which makes the row→hero slide animation look like
+      // the icon morphs at the end). `day.icons` now holds resolved
+      // asset names ("haze", "shower-rain-night", etc.), so the mode is
+      // already an asset name we can pass straight to getWeatherIconSVG.
       const iconCounts = {};
-      day.icons.forEach(c => { iconCounts[c] = (iconCounts[c] || 0) + 1; });
-      const modeIcon = Object.keys(iconCounts).sort((a, b) => iconCounts[b] - iconCounts[a])[0];
-      // Pull description from an hourly slot whose icon matches the mode,
-      // so "rain" cloud doesn't end up captioned "few clouds".
-      const matchingSlot = day.hourly.find(h => h.weather && h.weather[0] && h.weather[0].icon === modeIcon) || mid;
+      day.icons.forEach(a => { iconCounts[a] = (iconCounts[a] || 0) + 1; });
+      const modeAsset = Object.keys(iconCounts).sort((a, b) => iconCounts[b] - iconCounts[a])[0];
+      // Pull description from an hourly slot whose icon resolves to the
+      // same asset, so "rain" cloud doesn't end up captioned "few clouds".
+      const matchingSlot = day.hourly.find(h =>
+        h.weather && h.weather[0] &&
+        this._weatherAssetName(h.weather[0].icon, h.weather[0].id) === modeAsset
+      ) || mid;
+      // Stash the resolved asset name on a synthetic _asset field so the
+      // hero render can pass it directly into getWeatherIconSVG (which
+      // accepts asset names as well as OWM codes).
       const modeWeather = (matchingSlot.weather && matchingSlot.weather[0])
-        ? [{ ...matchingSlot.weather[0], icon: modeIcon }]
+        ? [{ ...matchingSlot.weather[0], _asset: modeAsset }]
         : mid.weather;
       return {
         ...mid,
@@ -1417,7 +1486,11 @@ const UI = {
       <section class="hero-section">
         <div class="hero-when">${this.esc(heroWhen)}</div>
         <div class="hero-condition">
-          <div class="hero-icon-large">${this.getWeatherIconSVG(activeDay.weather[0].icon, 48)}</div>
+          <div class="hero-icon-large">${this.getWeatherIconSVG(
+            activeDay.weather[0]._asset || activeDay.weather[0].icon,
+            48,
+            activeDay.weather[0].id
+          )}</div>
           <span class="hero-desc">${this.esc(activeDay.weather[0].description)}</span>
         </div>
         ${heroTempHTML}
@@ -1446,7 +1519,7 @@ const UI = {
           ${day.hourly.map(h => `
             <div class="hourly-tile ${dayIdx === currentDayIdx ? 'active-day' : ''}" data-day-index="${dayIdx}">
               <span class="hourly-time">${this.formatTime(h.dt, true, state.timezone)}</span>
-              <span class="hourly-icon">${this.getWeatherIconSVG(h.weather[0].icon, 28)}</span>
+              <span class="hourly-icon">${this.getWeatherIconSVG(h.weather[0].icon, 28, h.weather[0].id)}</span>
               <span class="hourly-temp">${this.formatTemp(h.main.temp)}°</span>
             </div>
           `).join('')}
@@ -1468,9 +1541,12 @@ const UI = {
           // Round AFTER converting to the user's unit to avoid compounding errors.
           const maxTemp = Math.round(this.convertTemp(Math.max(...d.temps)));
           const minTemp = Math.round(this.convertTemp(Math.min(...d.temps)));
-          // Mode (most common) icon for the day
+          // Mode (most common) asset name for the day. `d.icons` now
+          // holds resolved asset names, so this is already a full asset
+          // name (e.g. "snow-night", "haze") ready to hand to
+          // getWeatherIconSVG without re-mapping.
           const counts = {};
-          d.icons.forEach(c => { counts[c] = (counts[c] || 0) + 1; });
+          d.icons.forEach(a => { counts[a] = (counts[a] || 0) + 1; });
           const icon = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
           const isActive = selectedDayIndex === i || (isToday && i === 0);
 
@@ -1853,7 +1929,9 @@ const UI = {
     if (!rowEl) return null;
     const srcTemps = rowEl.querySelector('.daily-temps');
     const srcIcon  = rowEl.querySelector('.daily-icon');
-    const srcIconSvg = srcIcon && srcIcon.querySelector('svg');
+    // Weather icons render as <img> now (was inline <svg>); animation
+    // logic below targets the img element for width/height transitions.
+    const srcIconSvg = srcIcon && srcIcon.querySelector('img, svg');
     if (!srcTemps || !srcIcon || !srcIconSvg) return null;
 
     let  tempsRect = srcTemps.getBoundingClientRect();
@@ -1899,7 +1977,7 @@ const UI = {
     return () => {
       const heroTemp = this.weatherView.querySelector('.hero-temp-large');
       const heroIcon = this.weatherView.querySelector('.hero-icon-large');
-      const heroIconSvg = heroIcon && heroIcon.querySelector('svg');
+      const heroIconSvg = heroIcon && heroIcon.querySelector('img, svg');
       if (!heroTemp || !heroIcon || !heroIconSvg) return;
 
       const destTempRect = heroTemp.getBoundingClientRect();
@@ -1963,11 +2041,11 @@ const UI = {
       const iconGhost = makeGhost(
         iconHTML, iconRect, destIconRect,
         (inner) => {
-          const svg = inner.querySelector('svg');
+          const svg = inner.querySelector('img, svg');
           if (svg) { svg.style.width = srcSvgSize; svg.style.height = srcSvgSize; }
         },
         (inner) => {
-          const svg = inner.querySelector('svg');
+          const svg = inner.querySelector('img, svg');
           if (svg) { svg.style.width = destSvgSize; svg.style.height = destSvgSize; }
         },
       );
