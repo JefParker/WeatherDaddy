@@ -650,13 +650,28 @@ const UI = {
     return `<img class="moon-icon" src="assets/icons/weather/${asset}.svg" width="${size}" height="${size}" alt="" draggable="false">`;
   },
 
-  getWeatherIconSVG(iconCodeOrAsset, size = 24, weatherId = null) {
+  getWeatherIconSVG(iconCodeOrAsset, size = 24, weatherId = null, dtSeconds = null) {
     let asset;
     if (this.WEATHER_ICON_ASSETS.includes(iconCodeOrAsset)) {
       // Already an asset name (from the mode-icon path).
       asset = iconCodeOrAsset;
     } else {
       asset = this._weatherAssetName(iconCodeOrAsset, weatherId);
+    }
+    // Phase-correct clear-night substitution. When the icon would be a
+    // generic crescent moon (clear-night) AND we know the timestamp this
+    // icon represents, swap in the actual moon-phase illustration for
+    // that date so the hero / hourly / daily icons reflect the sky the
+    // user would actually see that night. The five other night-variant
+    // assets (cloudy-night, shower-rain-night, thunderstorm-night,
+    // snow-night) keep their painted-in crescent — phase-correct
+    // versions of those would need 7 hand-drawn variants each.
+    if (asset === 'clear-night' && dtSeconds != null) {
+      const phase = this.moonPhaseName(dtSeconds * 1000);
+      const moonAsset = this._moonAssetName(phase);
+      // _moonAssetName returns null for 'New' (no art) — keep
+      // clear-night as the visual fallback in that case.
+      if (moonAsset) asset = moonAsset;
     }
     return `<img class="weather-icon" src="assets/icons/weather/${asset}.svg" width="${size}" height="${size}" alt="" draggable="false">`;
   },
@@ -931,12 +946,15 @@ const UI = {
     return 'High';
   },
 
-  // Current moon phase name. Synodic period 29.530588 days, anchored to
+  // Moon phase name at a given moment. Defaults to "now" so existing
+  // callers don't change, but takes a ms timestamp so forecast days /
+  // hourly tiles can show the correct phase for THEIR date rather than
+  // always "today's phase". Synodic period 29.530588 days, anchored to
   // the new moon on 2000-01-06 18:14 UTC.
-  moonPhaseName() {
+  moonPhaseName(atMs = Date.now()) {
     const SYNODIC = 29.530588853;
     const REF_MS = Date.UTC(2000, 0, 6, 18, 14);
-    const daysSince = (Date.now() - REF_MS) / 86400000;
+    const daysSince = (atMs - REF_MS) / 86400000;
     const p = (((daysSince % SYNODIC) + SYNODIC) % SYNODIC) / SYNODIC; // 0..1
     if (p < 0.03 || p >= 0.97) return 'New';
     if (p < 0.22) return 'Waxing crescent';
@@ -1271,6 +1289,53 @@ const UI = {
     // Compute sunrise/sunset for a given calendar day at the city. For Today
     // we trust OWM's values (sub-minute accurate); for forecast days we compute
     // locally since OWM's free /forecast endpoint doesn't include them.
+    // Pick the most "notable" hourly slot for a day — a storm at 3 AM is
+    // a more useful daily headline than a clear noon, so we rank slots
+    // by severity first and use closeness to local noon only as a tie
+    // breaker among slots that share the highest severity. That means:
+    //   - any thunderstorm anywhere in the day → ⛈️ icon
+    //   - else any snow → 🌨️ icon
+    //   - else any rain → 🌧️ icon
+    //   - else any dust/sand/smoke/haze/mist → that atmospheric icon
+    //   - else cloudiest of the day → ☁️ / ⛅
+    //   - else clear → ☀️
+    // Used by both the daily-list row and the hero (for non-today days),
+    // so the two stay matched and the row→hero slide animation still
+    // ends on the same illustration.
+    const NOTABILITY = {
+      'thunderstorm': 9, 'thunderstorm-night': 9,
+      'snow':          8, 'snow-night':          8,
+      'shower-rain':   7, 'shower-rain-night':   7,
+      'sand':          6, 'dust':                6,
+      'smoke':         5, 'haze':                5,
+      'mist':          4,
+      'broken-clouds': 3,
+      'scattered-clouds': 2,
+      'few-clouds-day': 1, 'cloudy-night':       1,
+      'clear-day':     0, 'clear-night':         0,
+    };
+    const notableSlotFor = (day) => {
+      if (!day || !day.hourly || !day.hourly.length) return null;
+      let best = null;
+      let bestScore = -1;
+      let bestDiff  = Infinity;
+      for (const slot of day.hourly) {
+        if (!slot.weather || !slot.weather[0]) continue;
+        const asset = this._weatherAssetName(slot.weather[0].icon, slot.weather[0].id);
+        const score = NOTABILITY[asset] != null ? NOTABILITY[asset] : 0;
+        const lh = (((slot.dt + state.timezone) / 3600) % 24 + 24) % 24;
+        const diff = Math.abs(lh - 12);
+        // Strictly higher severity always wins; among ties we keep the
+        // slot closest to local noon.
+        if (score > bestScore || (score === bestScore && diff < bestDiff)) {
+          bestScore = score;
+          bestDiff  = diff;
+          best      = slot;
+        }
+      }
+      return best;
+    };
+
     const sunTimesForDay = (dayDt) => {
       const localMs = (dayDt + state.timezone) * 1000;
       const d = new Date(localMs);
@@ -1297,7 +1362,11 @@ const UI = {
         sunrise: currentWeather.sys.sunrise,
         sunset: currentWeather.sys.sunset,
         pop: totals.pop,
-        rainMM: totals.rainMM
+        rainMM: totals.rainMM,
+        // Used by the hero icon picker so a phase-correct moon shows
+        // tonight if it's currently clear-night here. (Forecast days
+        // get .dt via the `mid` spread in the else branch.)
+        dt: currentWeather.dt
       };
     })() : (() => {
       const day = dailyData[selectedDayIndex];
@@ -1308,27 +1377,19 @@ const UI = {
       const sun = day._om
         ? { sunrise: day._om.sunrise, sunset: day._om.sunset }
         : sunTimesForDay(day.dt);
-      // Mode asset name for the day — same derivation the daily-list row
-      // uses, so the hero icon matches the row icon (otherwise a "mostly
-      // rain but clear at noon" day would show rain in the row and a sun
-      // in the hero, which makes the row→hero slide animation look like
-      // the icon morphs at the end). `day.icons` now holds resolved
-      // asset names ("haze", "shower-rain-night", etc.), so the mode is
-      // already an asset name we can pass straight to getWeatherIconSVG.
-      const iconCounts = {};
-      day.icons.forEach(a => { iconCounts[a] = (iconCounts[a] || 0) + 1; });
-      const modeAsset = Object.keys(iconCounts).sort((a, b) => iconCounts[b] - iconCounts[a])[0];
-      // Pull description from an hourly slot whose icon resolves to the
-      // same asset, so "rain" cloud doesn't end up captioned "few clouds".
-      const matchingSlot = day.hourly.find(h =>
-        h.weather && h.weather[0] &&
-        this._weatherAssetName(h.weather[0].icon, h.weather[0].id) === modeAsset
-      ) || mid;
+      // Headline icon for the day = the most NOTABLE weather (storm /
+      // snow / rain / dust / haze / clouds, in that order), tie-broken
+      // by closeness to local noon. Matches the daily-list row picker
+      // exactly, so the row→hero slide animation lands on the same art.
+      const heroSlot = notableSlotFor(day) || mid;
+      const heroAsset = (heroSlot.weather && heroSlot.weather[0])
+        ? this._weatherAssetName(heroSlot.weather[0].icon, heroSlot.weather[0].id)
+        : null;
       // Stash the resolved asset name on a synthetic _asset field so the
       // hero render can pass it directly into getWeatherIconSVG (which
       // accepts asset names as well as OWM codes).
-      const modeWeather = (matchingSlot.weather && matchingSlot.weather[0])
-        ? [{ ...matchingSlot.weather[0], _asset: modeAsset }]
+      const modeWeather = (heroSlot.weather && heroSlot.weather[0] && heroAsset)
+        ? [{ ...heroSlot.weather[0], _asset: heroAsset }]
         : mid.weather;
       return {
         ...mid,
@@ -1455,18 +1516,34 @@ const UI = {
     const page2Forced = [
       item('Sunrise',    activeDay.sunrise != null ? this.formatTime(activeDay.sunrise, true, state.timezone) : '—'),
       item('Sunset',     activeDay.sunset  != null ? this.formatTime(activeDay.sunset,  true, state.timezone) : '—'),
-      // Moon-phase stat: inject the matching illustration ABOVE the name
-      // so the picture and label always agree (getMoonIconSVG looks up
-      // the SVG via the same phase string the label uses, so they can't
-      // drift apart). 'New' has no art and falls back to text-only.
-      item(
-        'Moon phase',
-        (() => {
-          const phase = this.moonPhaseName();
-          const icon  = this.getMoonIconSVG(phase, 24);
-          return `${icon ? `<span class="moon-stat-icon">${icon}</span>` : ''}${this.esc(phase)}`;
-        })()
-      ),
+      // Moon-phase stat: inline the matching illustration alongside the
+      // word "Moon phase" in the label row (instead of stacking the icon
+      // on its own line above the value). Hand-rolled instead of using
+      // the shared item() helper because item() escapes the label, which
+      // would turn the icon's <img> markup into literal text. Phase name
+      // stays in the .stat-value row beneath it. getMoonIconSVG and the
+      // phase label both come from the same moonPhaseName() result, so
+      // the icon can't drift out of sync with the name.
+      //
+      // IMPORTANT: when the user switches to another day in the daily
+      // list, moonPhaseName() needs to compute the phase for THAT day,
+      // not today. activeDay.dt is the slot timestamp (Unix seconds) for
+      // the currently-selected day's mid-hour; converting to ms gives us
+      // a moment squarely inside that day, so the moon icon + name
+      // update along with the rest of the dashboard.
+      (() => {
+        const dtMs = activeDay.dt != null ? activeDay.dt * 1000 : Date.now();
+        const phase = this.moonPhaseName(dtMs);
+        const icon  = this.getMoonIconSVG(phase, 18);
+        return `
+          <div class="stat-item">
+            <span class="stat-label stat-label-with-icon">
+              <span>Moon phase</span>
+              ${icon}
+            </span>
+            <span class="stat-value">${this.esc(phase)}</span>
+          </div>`;
+      })(),
     ];
     if (!localTimeOnPage1) page2Forced.push(localTimeItem);
     page2Forced.push(item('Dew point', `${this.formatTemp(dewPoint)}°`));
@@ -1535,7 +1612,11 @@ const UI = {
           <div class="hero-icon-large">${this.getWeatherIconSVG(
             activeDay.weather[0]._asset || activeDay.weather[0].icon,
             48,
-            activeDay.weather[0].id
+            activeDay.weather[0].id,
+            // dt for phase substitution: today uses the current weather's
+            // dt (= now), forecast days use the mid-of-day slot's dt
+            // (activeDay spreads from `mid` so .dt is that slot's time).
+            activeDay.dt
           )}</div>
           <span class="hero-desc">${this.esc(activeDay.weather[0].description)}</span>
         </div>
@@ -1565,7 +1646,7 @@ const UI = {
           ${day.hourly.map(h => `
             <div class="hourly-tile ${dayIdx === currentDayIdx ? 'active-day' : ''}" data-day-index="${dayIdx}">
               <span class="hourly-time">${this.formatTime(h.dt, true, state.timezone)}</span>
-              <span class="hourly-icon">${this.getWeatherIconSVG(h.weather[0].icon, 28, h.weather[0].id)}</span>
+              <span class="hourly-icon">${this.getWeatherIconSVG(h.weather[0].icon, 28, h.weather[0].id, h.dt)}</span>
               <span class="hourly-temp">${this.formatTemp(h.main.temp)}°</span>
             </div>
           `).join('')}
@@ -1587,13 +1668,14 @@ const UI = {
           // Round AFTER converting to the user's unit to avoid compounding errors.
           const maxTemp = Math.round(this.convertTemp(Math.max(...d.temps)));
           const minTemp = Math.round(this.convertTemp(Math.min(...d.temps)));
-          // Mode (most common) asset name for the day. `d.icons` now
-          // holds resolved asset names, so this is already a full asset
-          // name (e.g. "snow-night", "haze") ready to hand to
-          // getWeatherIconSVG without re-mapping.
-          const counts = {};
-          d.icons.forEach(a => { counts[a] = (counts[a] || 0) + 1; });
-          const icon = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
+          // Most-notable-weather icon for the day (storm > snow > rain >
+          // dust/haze > clouds > clear), tie-broken by closeness to
+          // local noon. Identical picker as the hero, so tapping this
+          // row slides into a matching hero illustration.
+          const notable = notableSlotFor(d);
+          const icon = (notable && notable.weather && notable.weather[0])
+            ? this._weatherAssetName(notable.weather[0].icon, notable.weather[0].id)
+            : (d.icons[Math.floor(d.icons.length / 2)] || d.icons[0]);
           const isActive = selectedDayIndex === i || (isToday && i === 0);
 
           return `
@@ -1604,7 +1686,7 @@ const UI = {
               </div>
               <div class="daily-right">
                 <span class="daily-temps">${maxTemp}° / ${minTemp}°</span>
-                <span class="daily-icon">${this.getWeatherIconSVG(icon, 24)}</span>
+                <span class="daily-icon">${this.getWeatherIconSVG(icon, 24, null, d.dt)}</span>
               </div>
             </div>
           `;

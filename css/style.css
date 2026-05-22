@@ -237,18 +237,22 @@ body {
   font-weight: 600;
 }
 
-/* Moon-phase stat — the value cell contains a small moon illustration
-   stacked above the phase name. The wrapper span keeps the icon on its
-   own line without disturbing the stat-item's flex column layout. */
-.moon-stat-icon {
-  display: block;
-  line-height: 0;
-  margin-bottom: 2px;
+/* Moon-phase stat — small illustration sits inline with the "Moon
+   phase" label text in the .stat-label row, so the value row underneath
+   shows just the phase name. The label is flex so the icon + text line
+   up centered on the same baseline (and on a long phase name like
+   "Waning crescent", the icon stays attached to "Moon phase" rather
+   than the wrapping value below). */
+.stat-label-with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: center;
 }
-.moon-stat-icon img {
-  width: 24px;
-  height: 24px;
-  display: inline-block;
+.stat-label-with-icon img {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
 }
 
 /* Hourly Scroll */
