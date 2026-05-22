@@ -445,7 +445,11 @@ const App = {
       const name = this.buildLocationName(coords.name, coords.state, coords.country);
       await this.fetchAndDisplay(coords.lat, coords.lon, name);
       UI.cityInput.value = '';
-      UI.toggleScreen('locations', false);
+      // Cube-flip the locations overlay away so it matches the
+      // dual-cube (landscape) / single-cube (portrait) animation that
+      // the < Back button uses. Dashboard already rendered above, so
+      // the cube's back face captures the NEW city, not the old.
+      UI.closeOverlayWithCube('locations-screen');
     } catch (e) {
       UI.showError('Could not find that location. Please try again.');
     }
@@ -462,14 +466,13 @@ const App = {
       const name = this.buildLocationName(coords.name, coords.state, coords.country);
       await this.fetchAndDisplay(coords.lat, coords.lon, name);
       UI.cityInput.value = '';
-      UI.toggleScreen('locations', false);
+      UI.closeOverlayWithCube('locations-screen');
     } catch (e) {
       UI.showError('Could not find that location. Please try again.');
     }
   },
 
   async handleLocation() {
-    UI.toggleScreen('locations', false);
     UI.showLoading();
     try {
       const coords = await LocationService.getCurrentPosition();
@@ -479,6 +482,7 @@ const App = {
         if (geo) name = this.buildLocationName(geo.name, geo.state, geo.country);
       } catch (_) {}
       await this.fetchAndDisplay(coords.lat, coords.lon, name);
+      UI.closeOverlayWithCube('locations-screen');
     } catch (e) {
       UI.showError('Could not get current location.');
     }
@@ -740,8 +744,15 @@ const App = {
     UI.renderSavedLocations(
       list,
       (loc) => {
-        UI.toggleScreen('locations', false);
+        // Render the new city FIRST so the cube's back-face clone
+        // captures the new dashboard, not the old one. _applyCachedCity
+        // inside fetchAndDisplay runs synchronously when the city is in
+        // cache, so by the time closeOverlayWithCube clones the columns
+        // they already show the destination weather. (No cache → loader,
+        // which is still better than briefly snapping to the OLD city
+        // at the end of the cube rotation.)
         this.fetchAndDisplay(loc.lat, loc.lon, loc.name);
+        UI.closeOverlayWithCube('locations-screen');
       },
       (idx) => {
         Storage.removeSavedList(idx);

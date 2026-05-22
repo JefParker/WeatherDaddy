@@ -357,6 +357,18 @@ const UI = {
     // (though our perspective wrapper will cover it)
     overlay.classList.remove('open');
 
+    // Landscape two-column layout: animate each column on its own cube,
+    // matching the city-swipe dual-cube transition. Without this branch,
+    // the portrait code below renders a single 500px-wide cube anchored
+    // at viewport center, which looks like an awkward floating sliver
+    // in the middle of a wide landscape dashboard.
+    const isTwoColumn = getComputedStyle(this.weatherView).display === 'grid';
+    const leftEl  = this.weatherView.querySelector('.dashboard-left');
+    const rightEl = this.weatherView.querySelector('.dashboard-right');
+    if (isTwoColumn && leftEl && rightEl) {
+      return this._closeOverlayWithDualCube(overlay, leftEl, rightEl);
+    }
+
     const perspective = document.createElement('div');
     perspective.className = 'cube-perspective';
     perspective.style.position = 'fixed';
@@ -421,6 +433,104 @@ const UI = {
         resolve();
       };
       stage.addEventListener('transitionend', finish, { once: true });
+      setTimeout(finish, 800);
+    });
+  },
+
+  // Landscape variant of closeOverlayWithCube: two fixed-position
+  // perspectives stacked over the live .dashboard-left / .dashboard-right
+  // wrappers, each spinning in parallel like the city-swipe dual cube.
+  //
+  // Front face of each cube: a full-viewport clone of the overlay, offset
+  // so the slice visible through the column-shaped face shows exactly the
+  // portion of the overlay that was sitting over that column. Combined,
+  // the two front faces look like the unbroken overlay.
+  //
+  // Back face: a clone of the corresponding column wrapper, so as the
+  // cubes rotate, the overlay halves spin away and the column halves of
+  // the dashboard spin in.
+  async _closeOverlayWithDualCube(overlay, leftEl, rightEl) {
+    const leftRect  = leftEl.getBoundingClientRect();
+    const rightRect = rightEl.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    const buildSide = (rect, columnEl) => {
+      const perspective = document.createElement('div');
+      perspective.className = 'cube-perspective';
+      perspective.style.position = 'fixed';
+      perspective.style.left   = `${rect.left}px`;
+      perspective.style.top    = `${rect.top}px`;
+      perspective.style.width  = `${rect.width}px`;
+      perspective.style.height = `${rect.height}px`;
+      perspective.style.zIndex = '9999';
+      // Cube depth tuned per column so each side's rotation looks correct
+      // at its actual width (instead of the global 250px default that's
+      // sized for the portrait 500px cube).
+      perspective.style.setProperty('--cube-half', `${rect.width / 2}px`);
+
+      const stage = document.createElement('div');
+      stage.className = 'cube-stage';
+
+      // ----- Front face: full-viewport overlay clone, clipped -----
+      const front = document.createElement('div');
+      front.className = 'cube-face cube-face-front';
+      const overlayClone = overlay.cloneNode(true);
+      // Force the clone into absolute positioning relative to the front
+      // face so we can place it deterministically — bypasses any
+      // position:fixed-in-transformed-ancestor quirks.
+      overlayClone.style.position  = 'absolute';
+      overlayClone.style.left      = `${-rect.left}px`;
+      overlayClone.style.top       = `${-rect.top}px`;
+      overlayClone.style.width     = `${vw}px`;
+      overlayClone.style.height    = `${vh}px`;
+      overlayClone.style.maxWidth  = 'none';
+      overlayClone.style.transform = 'none';
+      // Front face already has overflow:hidden via .cube-face CSS, so
+      // only the column-shaped slice of the overlay will be visible.
+      front.appendChild(overlayClone);
+
+      // ----- Back face: clone of the column wrapper -----
+      const back = document.createElement('div');
+      back.className = 'cube-face cube-face-left'; // rotate-right brings this in
+      const colClone = columnEl.cloneNode(true);
+      colClone.style.transform = 'none';
+      // Fill the cube face so the clone matches the real column's render.
+      back.appendChild(colClone);
+
+      stage.appendChild(front);
+      stage.appendChild(back);
+      perspective.appendChild(stage);
+      document.body.appendChild(perspective);
+      return { perspective, stage };
+    };
+
+    const left  = buildSide(leftRect,  leftEl);
+    const right = buildSide(rightRect, rightEl);
+
+    return new Promise(resolve => {
+      // Force layout, then rotate both stages on the same frame so they
+      // spin in lockstep instead of one finishing before the other.
+      // eslint-disable-next-line no-unused-expressions
+      left.stage.offsetHeight; right.stage.offsetHeight;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          left.stage.classList.add('rotate-right');
+          right.stage.classList.add('rotate-right');
+        });
+      });
+
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        left.perspective.remove();
+        right.perspective.remove();
+        resolve();
+      };
+      // Either stage's transitionend is fine — they fire on the same
+      // frame since the duration / easing are identical.
+      left.stage.addEventListener('transitionend', finish, { once: true });
       setTimeout(finish, 800);
     });
   },

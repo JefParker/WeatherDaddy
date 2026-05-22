@@ -252,6 +252,18 @@ const WeatherAPI = {
   // which excludes Statements, Advisories, Watches, and other Moderate /
   // Minor messages we don't want to pop up at the user.
   async getAlerts(lat, lon) {
+    // NWS only covers US territory (CONUS + AK + HI + PR + USVI + Guam etc.).
+    // Calling /alerts/active with a point outside that bounding box returns
+    // 400 Bad Request, which the browser logs as a noisy network error even
+    // though we catch it. Skip the request entirely for clearly-non-US
+    // coordinates. The box is intentionally loose — false positives just
+    // become a single 400 we catch below, false negatives would silently
+    // miss real alerts.
+    const inUSBox =
+      lat >= 17 && lat <= 72 &&
+      lon >= -180 && lon <= -65;
+    if (!inUSBox) return [];
+
     try {
       const res = await fetch(
         `https://api.weather.gov/alerts/active?point=${enc(lat)},${enc(lon)}`,
@@ -328,14 +340,6 @@ const WeatherAPI = {
       const treePollen  = sum(TREE_FIELDS);
       const grassPollen = sum(GRASS_FIELDS);
       const weedPollen  = sum(WEED_FIELDS);
-      // Diagnostic: CAMS pollen is Europe-only — outside that coverage every
-      // field is null and the per-bucket totals stay null. Log the raw
-      // species values + bucket totals so it's obvious from devtools whether
-      // the API actually returned anything for this location.
-      console.log('[WeatherDaddy] pollen current:', {
-        raw: POLLEN_FIELDS.reduce((o, k) => (o[k] = cur[k], o), {}),
-        treePollen, grassPollen, weedPollen,
-      });
       const hasPollen = POLLEN_FIELDS.some(k => cur[k] != null);
       const pollen = hasPollen
         ? POLLEN_FIELDS.reduce((s, k) => s + (typeof cur[k] === 'number' ? cur[k] : 0), 0)
