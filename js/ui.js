@@ -1856,8 +1856,18 @@ const UI = {
         const newDayIdx = parseInt(leading.getAttribute('data-day-index'));
         if (newDayIdx === currentDayIdx) return;
         const direction = newDayIdx > currentDayIdx ? 'next' : 'prev';
+        // Same hi/lo → hero slide animation we run on daily-row taps and
+        // graph swipes. Capture the target day's row BEFORE the
+        // re-render (so the source rects are still in the live DOM),
+        // then trigger the day change, then run the continuation which
+        // mounts the flying ghost on top of the freshly-rendered hero.
+        const targetRow = this.weatherView.querySelector(
+          `.daily-item[data-index="${newDayIdx}"]`
+        );
+        const finishHeroSlide = this.captureDayRowForHeroSlide(targetRow);
         // Scroll-driven → preserve scroll position across the re-render.
         this.changeDayWithGraphCube(newDayIdx, direction, onDayClick, false);
+        if (finishHeroSlide) finishHeroSlide();
       }, 180);
     };
     hourlyEl.addEventListener('scroll', onScroll, { passive: true });
