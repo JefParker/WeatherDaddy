@@ -31,18 +31,18 @@
   ],
   "screenshots": [
     {
-      "src": "./assets/mobile_screenshot.png",
-      "sizes": "1170x2532",
+      "src": "./assets/screenshot-vertical.png",
+      "sizes": "707x1626",
       "type": "image/png",
       "form_factor": "narrow",
-      "label": "Today's forecast at a glance"
+      "label": "WeatherDaddy in portrait — today's forecast at a glance"
     },
     {
-      "src": "./assets/desktop_screenshot.png",
-      "sizes": "1280x800",
+      "src": "./assets/screenshot-horizontal.png",
+      "sizes": "1174x801",
       "type": "image/png",
       "form_factor": "wide",
-      "label": "WeatherDaddy on the desktop"
+      "label": "WeatherDaddy in landscape — dashboard split into two columns"
     }
   ],
   "shortcuts": [
