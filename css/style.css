@@ -237,6 +237,20 @@ body {
   font-weight: 600;
 }
 
+/* Moon-phase stat — the value cell contains a small moon illustration
+   stacked above the phase name. The wrapper span keeps the icon on its
+   own line without disturbing the stat-item's flex column layout. */
+.moon-stat-icon {
+  display: block;
+  line-height: 0;
+  margin-bottom: 2px;
+}
+.moon-stat-icon img {
+  width: 24px;
+  height: 24px;
+  display: inline-block;
+}
+
 /* Hourly Scroll */
 .hourly-scroll {
   display: flex;

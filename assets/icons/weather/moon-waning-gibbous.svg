@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%">
+    <defs>
+        <filter id="moonGlow" x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur stdDeviation="12" result="blur" />
+            <feFlood flood-color="#ff5511" flood-opacity="0.5" result="glowColor"/>
+            <feComposite in="glowColor" in2="blur" operator="in" result="softGlow"/>
+            <feComposite in="SourceGraphic" in2="softGlow" operator="over" />
+        </filter>
+    </defs>
+    <g filter="url(#moonGlow)">
+        <path d="M 50,15 C 31,15 15,31 15,50 C 15,69 31,85 50,85 C 62,75 70,62 70,50 C 70,38 62,25 50,15 Z" fill="#ffffff" />
+    </g>
+</svg>

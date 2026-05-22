@@ -615,6 +615,41 @@ const UI = {
   // The third form lets the daily-list "mode" logic store fully-resolved
   // names in `d.icons` and pass them straight through here without a
   // second lookup.
+  // ── Moon-phase art ────────────────────────────────────────────────
+  // moonPhaseName() returns one of eight strings. We have art for seven
+  // of them — the "New" moon has no dedicated illustration (it's
+  // essentially invisible), so the caller is expected to fall back to a
+  // text-only display when this returns null.
+  //
+  // Files live alongside the weather illustrations in
+  // assets/icons/weather/, prefixed with `moon-` so they're easy to
+  // spot. Add the same prefix to any future additions.
+  MOON_PHASE_ASSETS: {
+    'Waxing crescent':  'moon-waxing-crescent',
+    'First quarter':    'moon-first-quarter',
+    'Waxing gibbous':   'moon-waxing-gibbous',
+    'Full':             'moon-full',
+    'Waning gibbous':   'moon-waning-gibbous',
+    'Last quarter':     'moon-last-quarter',
+    'Waning crescent':  'moon-waning-crescent',
+    // 'New' intentionally absent — handled as a text-only fallback by
+    // getMoonIconSVG (returns empty string).
+  },
+
+  _moonAssetName(phaseName) {
+    return this.MOON_PHASE_ASSETS[phaseName] || null;
+  },
+
+  // Render the moon-phase illustration matching the given phase name.
+  // Returns an <img> tag (same approach as getWeatherIconSVG) sized to
+  // `size` px. For 'New' (no asset) returns the empty string so the
+  // caller's surrounding text falls through cleanly.
+  getMoonIconSVG(phaseName, size = 24) {
+    const asset = this._moonAssetName(phaseName);
+    if (!asset) return '';
+    return `<img class="moon-icon" src="assets/icons/weather/${asset}.svg" width="${size}" height="${size}" alt="" draggable="false">`;
+  },
+
   getWeatherIconSVG(iconCodeOrAsset, size = 24, weatherId = null) {
     let asset;
     if (this.WEATHER_ICON_ASSETS.includes(iconCodeOrAsset)) {
@@ -1420,7 +1455,18 @@ const UI = {
     const page2Forced = [
       item('Sunrise',    activeDay.sunrise != null ? this.formatTime(activeDay.sunrise, true, state.timezone) : '—'),
       item('Sunset',     activeDay.sunset  != null ? this.formatTime(activeDay.sunset,  true, state.timezone) : '—'),
-      item('Moon phase', this.esc(this.moonPhaseName())),
+      // Moon-phase stat: inject the matching illustration ABOVE the name
+      // so the picture and label always agree (getMoonIconSVG looks up
+      // the SVG via the same phase string the label uses, so they can't
+      // drift apart). 'New' has no art and falls back to text-only.
+      item(
+        'Moon phase',
+        (() => {
+          const phase = this.moonPhaseName();
+          const icon  = this.getMoonIconSVG(phase, 24);
+          return `${icon ? `<span class="moon-stat-icon">${icon}</span>` : ''}${this.esc(phase)}`;
+        })()
+      ),
     ];
     if (!localTimeOnPage1) page2Forced.push(localTimeItem);
     page2Forced.push(item('Dew point', `${this.formatTemp(dewPoint)}°`));

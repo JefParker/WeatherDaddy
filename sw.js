@@ -1,4 +1,4 @@
-const CACHE_NAME = 'weatherdaddy-v128';
+const CACHE_NAME = 'weatherdaddy-v129';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -36,7 +36,16 @@ const ASSETS_TO_CACHE = [
   './assets/icons/weather/haze.svg',
   './assets/icons/weather/smoke.svg',
   './assets/icons/weather/sand.svg',
-  './assets/icons/weather/dust.svg'
+  './assets/icons/weather/dust.svg',
+  // Moon-phase art (7 of 8 phases — New moon has no illustration and
+  // falls back to text-only in getMoonIconSVG).
+  './assets/icons/weather/moon-waxing-crescent.svg',
+  './assets/icons/weather/moon-first-quarter.svg',
+  './assets/icons/weather/moon-waxing-gibbous.svg',
+  './assets/icons/weather/moon-full.svg',
+  './assets/icons/weather/moon-waning-gibbous.svg',
+  './assets/icons/weather/moon-last-quarter.svg',
+  './assets/icons/weather/moon-waning-crescent.svg'
 ];
 
 // Strip ?v=... query strings so cache-busted asset URLs still hit the precache.
