@@ -1537,3 +1537,394 @@ body.has-alert .a2hs-prompt {
     padding: 32px 24px 24px;
   }
 }
+
+/* -------------------------------------------------------------------------
+   Ambient weather effects layer
+   -------------------------------------------------------------------------
+   #weather-fx is a fixed-position container behind .app-container that
+   plays gentle animations matching whatever weather the dashboard is
+   showing — clouds drifting past, lightning flashes during a storm,
+   fog rolling through, rain streaks, snow falling, dust on the wind.
+
+   Rules of engagement:
+     - Always position:fixed + pointer-events:none, so it can never
+       block taps / drags / text selection on the real UI.
+     - Low opacity (12-20%) on every visible layer — the dashboard text
+       must stay perfectly legible.
+     - Pure CSS — JS only toggles the parent class. No timers, no
+       animation re-bind on day changes; the @keyframes loops cover
+       the "every ~20 s" cadence by spacing visible content far apart
+       in the cycle.
+     - Honors prefers-reduced-motion at the bottom (all animations off).
+   ------------------------------------------------------------------------- */
+#weather-fx {
+  position: fixed;
+  inset: 0;
+  z-index: 0;            /* behind .app-container (z-index: 1 below) */
+  pointer-events: none;
+  overflow: hidden;
+}
+
+#weather-fx .fx-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+/* Make sure the actual UI floats above the fx layer. .app-container is
+   already position:relative; just give it a higher stacking context. */
+.app-container { z-index: 1; }
+
+/* ── Clouds drifting (few / scattered / broken / cloudy-night) ──────── */
+/* CSS-drawn clouds using radial-gradient ellipses instead of SVG-as-
+   background-image. Two reasons:
+     1. No external file dependency — if the SVG path / cache / service
+        worker glitches, the effect still renders.
+     2. We can tune the visible alpha directly in the gradient stop,
+        instead of relying on filter:brightness + element opacity to
+        haul a darkly-painted SVG up to a visible value on a #121212
+        background.
+   Each .fx-layer is a 100vw × ~30vh band containing 2-3 soft-edged
+   ellipses; horizontal translation drifts the whole band across. The
+   gradient is wider than the viewport (300vw), so the band stays full
+   of clouds across the entire animation cycle. */
+.fx-clouds .fx-layer-1,
+.fx-clouds .fx-layer-2,
+.fx-clouds .fx-layer-3,
+.fx-clouds-many .fx-layer-1,
+.fx-clouds-many .fx-layer-2,
+.fx-clouds-many .fx-layer-3 {
+  background-repeat: no-repeat;
+  animation: fx-cloud-drift 36s linear infinite;
+  /* Direction is now encoded in the start/end translate values inside
+     the @keyframes (--fx-wind-{start,end}-{x,y}) set by JS. The old
+     animation-direction approach handled only 1D L↔R drift. */
+}
+
+/* Each layer is the full viewport (100vw × 100vh from `inset: 0` above).
+   We paint 1-3 cloud ellipses INSIDE that box via radial-gradient at
+   specific %-x positions, then animate the whole layer with the existing
+   fx-cloud-drift keyframes (transform: translateX from -15vw to 120vw)
+   to slide it across. Layer is `background-repeat: no-repeat` so the
+   ellipses don't tile. */
+
+/* Cloud vertical placement is deliberately spread across the MID and
+   LOWER half of the viewport — the top ~25% is covered by the sticky
+   #121212 app-header on most layouts, so painting clouds there hides
+   them. Bands at 35-90% height stay in the transparent dashboard area
+   where the user will actually see them drifting past. */
+
+/* Few-clouds layout: 1-2 clouds per layer, well spaced out vertically. */
+.fx-clouds .fx-layer-1 {
+  background-image:
+    radial-gradient(ellipse 160px 55px at 30% 38%, rgba(255,255,255,0.50), transparent 70%),
+    radial-gradient(ellipse 90px  38px at 70% 45%, rgba(255,255,255,0.42), transparent 75%);
+  background-size: 100% 100%;
+  animation-duration: calc(38s / var(--fx-wind-speed, 1));
+}
+.fx-clouds .fx-layer-2 {
+  background-image:
+    radial-gradient(ellipse 200px 65px at 55% 62%, rgba(255,255,255,0.46), transparent 70%);
+  background-size: 100% 100%;
+  animation-duration: calc(48s / var(--fx-wind-speed, 1));
+  animation-delay: -18s;
+}
+.fx-clouds .fx-layer-3 {
+  background-image:
+    radial-gradient(ellipse 130px 45px at 40% 85%, rgba(255,255,255,0.48), transparent 75%);
+  background-size: 100% 100%;
+  animation-duration: calc(28s / var(--fx-wind-speed, 1));
+  animation-delay: -10s;
+}
+
+/* Many-clouds layout (scattered / broken): 2-3 clouds per layer for a
+   busier sky, slightly higher alpha. */
+.fx-clouds-many .fx-layer-1 {
+  background-image:
+    radial-gradient(ellipse 170px 58px at 20% 38%, rgba(255,255,255,0.58), transparent 70%),
+    radial-gradient(ellipse 130px 45px at 55% 45%, rgba(255,255,255,0.54), transparent 75%),
+    radial-gradient(ellipse 150px 50px at 82% 40%, rgba(255,255,255,0.56), transparent 70%);
+  background-size: 100% 100%;
+  animation-duration: calc(34s / var(--fx-wind-speed, 1));
+}
+.fx-clouds-many .fx-layer-2 {
+  background-image:
+    radial-gradient(ellipse 220px 75px at 30% 62%, rgba(255,255,255,0.50), transparent 70%),
+    radial-gradient(ellipse 160px 55px at 70% 65%, rgba(255,255,255,0.48), transparent 75%);
+  background-size: 100% 100%;
+  animation-duration: calc(46s / var(--fx-wind-speed, 1));
+  animation-delay: -18s;
+}
+.fx-clouds-many .fx-layer-3 {
+  background-image:
+    radial-gradient(ellipse 150px 50px at 25% 86%, rgba(255,255,255,0.54), transparent 70%),
+    radial-gradient(ellipse 190px 65px at 65% 82%, rgba(255,255,255,0.50), transparent 75%);
+  background-size: 100% 100%;
+  animation-duration: calc(30s / var(--fx-wind-speed, 1));
+  animation-delay: -9s;
+}
+@keyframes fx-cloud-drift {
+  /* Two-phase drift: travel from start position to end position during
+     the FIRST ~30% of the cycle, then hold off-screen at the end for
+     the remaining ~70%. The 0% → 100% jump is invisible because both
+     endpoints are off-screen. Net effect: clouds appear in a burst,
+     then there's a long gap before the next pass — "occasional"
+     rather than constant.
+
+     Start / end positions come from CSS custom properties set by JS
+     (applyWeatherFX). They encode both x AND y components of the wind,
+     so clouds can drift diagonally — e.g. a SE wind blows clouds up
+     and to the left, not just left. Fallback values keep clouds
+     drifting roughly L→R when wind data is missing. */
+  0%      { transform: translate(var(--fx-wind-start-x, -200vmax), var(--fx-wind-start-y, 0)); }
+  30%     { transform: translate(var(--fx-wind-end-x,    200vmax), var(--fx-wind-end-y,   0)); }
+  100%    { transform: translate(var(--fx-wind-end-x,    200vmax), var(--fx-wind-end-y,   0)); }
+}
+
+/* ── Thunderstorm: occasional white flash ──────────────────────────── */
+/* The flash is ~0.6 s of mostly-imperceptible whiteness inside a 22 s
+   cycle, with a two-pulse pattern so it reads as real lightning rather
+   than a screen blink. */
+.fx-thunder .fx-layer-1 {
+  background: #ffffff;
+  opacity: 0;
+  animation: fx-lightning 22s ease-out infinite;
+}
+@keyframes fx-lightning {
+  0%, 92%, 100% { opacity: 0; }
+  92.3% { opacity: 0.30; }
+  92.8% { opacity: 0.05; }
+  93.2% { opacity: 0.42; }
+  93.7% { opacity: 0; }
+}
+
+/* Rain — discrete drops, not stripes. Each rain layer paints a handful
+   of small elongated ellipses at scattered (%-x, %-y) positions inside
+   the layer; the layer then translates vertically from above-viewport
+   to below, so the drops fall together. Three layers with different
+   drop positions + fall durations make the drops look like they're at
+   slightly varied speeds. Drops are 3×14 px with the bright center
+   fading to transparent, so they read as raindrops on the #121212
+   background rather than a solid stripe.
+
+   .fx-rain uses all three rain layers.
+   .fx-thunder reuses two of them on top of its lightning flash layer. */
+.fx-rain .fx-layer-1,
+.fx-rain .fx-layer-2,
+.fx-rain .fx-layer-3,
+.fx-thunder .fx-layer-2,
+.fx-thunder .fx-layer-3 {
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  animation: fx-rain-fall 2s linear infinite;
+}
+
+.fx-rain .fx-layer-1,
+.fx-thunder .fx-layer-2 {
+  background-image:
+    radial-gradient(ellipse 3px 14px at  8% 12%, rgba(200,225,255,0.80), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 22% 38%, rgba(200,225,255,0.80), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 36% 64%, rgba(200,225,255,0.80), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 51% 22%, rgba(200,225,255,0.80), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 65% 78%, rgba(200,225,255,0.80), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 79% 48%, rgba(200,225,255,0.80), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 92% 90%, rgba(200,225,255,0.80), transparent 70%);
+  animation-duration: 2.2s;
+}
+
+.fx-rain .fx-layer-2,
+.fx-thunder .fx-layer-3 {
+  background-image:
+    radial-gradient(ellipse 3px 14px at  4% 70%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 17% 24%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 30% 92%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 46%  6%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 60% 50%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 74% 28%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 88% 62%, rgba(200,225,255,0.70), transparent 70%);
+  animation-duration: 1.7s;
+  animation-delay: -0.6s;
+}
+
+.fx-rain .fx-layer-3 {
+  background-image:
+    radial-gradient(ellipse 2px 12px at 12% 44%, rgba(200,225,255,0.65), transparent 70%),
+    radial-gradient(ellipse 2px 12px at 27% 80%, rgba(200,225,255,0.65), transparent 70%),
+    radial-gradient(ellipse 2px 12px at 42% 18%, rgba(200,225,255,0.65), transparent 70%),
+    radial-gradient(ellipse 2px 12px at 56% 64%, rgba(200,225,255,0.65), transparent 70%),
+    radial-gradient(ellipse 2px 12px at 71% 36%, rgba(200,225,255,0.65), transparent 70%),
+    radial-gradient(ellipse 2px 12px at 86% 84%, rgba(200,225,255,0.65), transparent 70%);
+  animation-duration: 1.4s;
+  animation-delay: -0.3s;
+}
+
+@keyframes fx-rain-fall {
+  from { transform: translateY(-100vh); }
+  to   { transform: translateY(100vh); }
+}
+
+/* Light rain / drizzle — just a handful of drops on a single active
+   layer, falling slowly. Two extra layers contribute a couple more
+   drops on slow cycles so the user still gets the "every few seconds"
+   feel without a continuous downpour. Used for OWM ids 300/301/310/
+   311/500/520 (see LIGHT_RAIN_IDS in ui.js). */
+.fx-rain-light .fx-layer-1,
+.fx-rain-light .fx-layer-2,
+.fx-rain-light .fx-layer-3 {
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  animation: fx-rain-fall 3s linear infinite;
+}
+.fx-rain-light .fx-layer-1 {
+  background-image:
+    radial-gradient(ellipse 3px 14px at 18% 30%, rgba(200,225,255,0.75), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 56% 62%, rgba(200,225,255,0.75), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 82% 18%, rgba(200,225,255,0.75), transparent 70%);
+  animation-duration: 3.4s;
+}
+.fx-rain-light .fx-layer-2 {
+  background-image:
+    radial-gradient(ellipse 2px 12px at 35% 80%, rgba(200,225,255,0.65), transparent 70%),
+    radial-gradient(ellipse 2px 12px at 72% 42%, rgba(200,225,255,0.65), transparent 70%);
+  animation-duration: 2.8s;
+  animation-delay: -1.4s;
+}
+.fx-rain-light .fx-layer-3 {
+  background-image:
+    radial-gradient(ellipse 2px 12px at  9% 55%, rgba(200,225,255,0.65), transparent 70%),
+    radial-gradient(ellipse 2px 12px at 92% 88%, rgba(200,225,255,0.65), transparent 70%);
+  animation-duration: 3.8s;
+  animation-delay: -0.9s;
+}
+
+/* ── Snow falling: layered dot patterns drifting downward ─────────── */
+.fx-snow .fx-layer-1,
+.fx-snow .fx-layer-2,
+.fx-snow .fx-layer-3 {
+  opacity: 0.55;
+  animation: fx-snow-fall 14s linear infinite;
+}
+.fx-snow .fx-layer-1 {
+  background-image: radial-gradient(circle, rgba(255,255,255,0.55) 1px, transparent 1.6px);
+  background-size: 26px 26px;
+  animation-duration: 12s;
+}
+.fx-snow .fx-layer-2 {
+  background-image: radial-gradient(circle, rgba(255,255,255,0.45) 1.5px, transparent 2.4px);
+  background-size: 48px 48px;
+  animation-duration: 20s;
+  animation-delay: -7s;
+  opacity: 0.45;
+}
+.fx-snow .fx-layer-3 {
+  background-image: radial-gradient(circle, rgba(255,255,255,0.7) 2px, transparent 3px);
+  background-size: 90px 90px;
+  animation-duration: 32s;
+  animation-delay: -14s;
+  opacity: 0.35;
+}
+@keyframes fx-snow-fall {
+  from { background-position-y: 0; }
+  to   { background-position-y: 110vh; }
+}
+
+/* ── Fog / mist / smoke / haze: drifting hazy bands ───────────────── */
+/* A wide soft white gradient that pans horizontally — like a low cloud
+   blowing through. Two staggered bands at different vertical positions
+   give the "every 20s or so" impression. */
+.fx-fog .fx-layer-1,
+.fx-fog .fx-layer-2,
+.fx-fog .fx-layer-3,
+.fx-haze .fx-layer-1,
+.fx-haze .fx-layer-2,
+.fx-smoke .fx-layer-1,
+.fx-smoke .fx-layer-2 {
+  background-repeat: no-repeat;
+  animation: fx-haze-drift 28s linear infinite;
+}
+.fx-fog .fx-layer-1 {
+  background-image: linear-gradient(90deg, transparent, rgba(220, 230, 240, 0.32), transparent);
+  background-size: 75vw 32vh;
+  background-position: -80vw 28%;
+  animation-duration: 26s;
+}
+.fx-fog .fx-layer-2 {
+  background-image: linear-gradient(90deg, transparent, rgba(220, 230, 240, 0.24), transparent);
+  background-size: 90vw 28vh;
+  background-position: -100vw 58%;
+  animation-duration: 38s;
+  animation-delay: -16s;
+}
+.fx-fog .fx-layer-3 {
+  background-image: linear-gradient(90deg, transparent, rgba(220, 230, 240, 0.20), transparent);
+  background-size: 65vw 22vh;
+  background-position: -70vw 80%;
+  animation-duration: 22s;
+  animation-delay: -10s;
+}
+.fx-haze .fx-layer-1 {
+  background-image: linear-gradient(90deg, transparent, rgba(240, 210, 140, 0.30), transparent);
+  background-size: 90vw 60vh;
+  background-position: -100vw 30%;
+  animation-duration: 36s;
+}
+.fx-haze .fx-layer-2 {
+  background-image: linear-gradient(90deg, transparent, rgba(240, 210, 140, 0.22), transparent);
+  background-size: 80vw 50vh;
+  background-position: -90vw 65%;
+  animation-duration: 28s;
+  animation-delay: -14s;
+}
+.fx-smoke .fx-layer-1 {
+  background-image: linear-gradient(90deg, transparent, rgba(110, 110, 110, 0.22), transparent);
+  background-size: 80vw 55vh;
+  background-position: -90vw 35%;
+  animation-duration: 30s;
+}
+.fx-smoke .fx-layer-2 {
+  background-image: linear-gradient(90deg, transparent, rgba(80, 80, 80, 0.18), transparent);
+  background-size: 100vw 45vh;
+  background-position: -110vw 70%;
+  animation-duration: 40s;
+  animation-delay: -20s;
+}
+@keyframes fx-haze-drift {
+  from { background-position-x: -100vw; }
+  to   { background-position-x: 120vw; }
+}
+
+/* ── Sand / dust: tan-tinted blowing bands ────────────────────────── */
+.fx-dust .fx-layer-1,
+.fx-dust .fx-layer-2 {
+  background-repeat: no-repeat;
+  animation: fx-haze-drift 22s linear infinite;
+}
+.fx-dust .fx-layer-1 {
+  background-image: linear-gradient(90deg, transparent, rgba(220, 180, 130, 0.35), transparent);
+  background-size: 70vw 70vh;
+  background-position: -85vw 25%;
+}
+.fx-dust .fx-layer-2 {
+  background-image: linear-gradient(90deg, transparent, rgba(200, 160, 110, 0.30), transparent);
+  background-size: 85vw 60vh;
+  background-position: -95vw 65%;
+  animation-duration: 30s;
+  animation-delay: -12s;
+}
+
+/* Reduced-motion: disable every background animation. The layers are
+   still rendered but stay parked at their initial transform/position,
+   so users who opted out of motion get the static dashboard. */
+@media (prefers-reduced-motion: reduce) {
+  /* Reduced motion: kill the drift / fall / flash animations but leave
+     the painted clouds / fog bands at their starting position so the
+     ambient layer is still SEEN (just not animated). Without resetting
+     transform here, layers driven by translateX keyframes get parked
+     off-screen at the keyframe's `from` state and the user sees
+     nothing at all. */
+  #weather-fx .fx-layer {
+    animation: none !important;
+    transform: translateX(0) !important;
+  }
+}

@@ -615,6 +615,101 @@ const UI = {
   // The third form lets the daily-list "mode" logic store fully-resolved
   // names in `d.icons` and pass them straight through here without a
   // second lookup.
+  // ── Ambient weather-effects layer ─────────────────────────────────
+  // Toggles the body-level #weather-fx element's class based on what
+  // the dashboard's headline icon is. The CSS does the actual animation
+  // work; this is the only piece of JS involved (no timers — the
+  // @keyframes loops pace themselves with long off-screen sections so
+  // the "every ~20 s" cadence falls out naturally).
+  //
+  // Pass null / unrecognised → effect layer is cleared (clear sky).
+  // OWM `weather.id` values that mean "very light precipitation" — used
+  // to pick the fx-rain-light variant (fewer drops, slower fall) instead
+  // of the default fx-rain. Covers explicit "light intensity" rain +
+  // drizzle codes; heavier rain stays on fx-rain.
+  LIGHT_RAIN_IDS: new Set([
+    300, // light intensity drizzle
+    301, // drizzle
+    310, // light intensity drizzle rain
+    311, // drizzle rain
+    500, // light rain
+    520, // light intensity shower rain
+  ]),
+
+  _fxClassFor(assetName, weatherId) {
+    if (!assetName) return null;
+    if (assetName.startsWith('thunderstorm'))         return 'fx-thunder';
+    if (assetName.startsWith('shower-rain')) {
+      return this.LIGHT_RAIN_IDS.has(Number(weatherId))
+        ? 'fx-rain-light'
+        : 'fx-rain';
+    }
+    if (assetName.startsWith('snow'))                 return 'fx-snow';
+    if (assetName === 'broken-clouds' ||
+        assetName === 'scattered-clouds')             return 'fx-clouds-many';
+    if (assetName === 'few-clouds-day' ||
+        assetName === 'cloudy-night')                 return 'fx-clouds';
+    if (assetName === 'mist')                         return 'fx-fog';
+    if (assetName === 'haze')                         return 'fx-haze';
+    if (assetName === 'smoke')                        return 'fx-smoke';
+    if (assetName === 'sand' || assetName === 'dust') return 'fx-dust';
+    return null; // clear-day / clear-night / moon-* → no effect
+  },
+
+  // Apply the matching ambient effect class to #weather-fx AND publish
+  // wind direction + speed to the layer via CSS custom properties so the
+  // cloud-drift animation reflects the actual wind (clouds drift the
+  // direction the wind is blowing TOWARD, at a duration scaled by wind
+  // speed). Skips the class swap when the right class is already
+  // applied — but always refreshes the wind vars so a same-condition
+  // city change still updates wind direction.
+  applyWeatherFX(assetName, wind = null, weatherId = null) {
+    const el = document.getElementById('weather-fx');
+    if (!el) return;
+
+    // Wind to CSS custom properties:
+    //   --fx-wind-start-x, --fx-wind-start-y → translate at 0%   of cycle
+    //   --fx-wind-end-x,   --fx-wind-end-y   → translate at 30%  of cycle
+    //                                          (and held to 100%)
+    //   --fx-wind-dir                        → legacy 1D (kept for fog/dust)
+    //   --fx-wind-speed                      → animation-duration divisor
+    //
+    // OWM gives wind direction in meteorological convention: degrees the
+    // wind is coming FROM. Project onto SCREEN axes (y is down):
+    //   toward_x = -sin(deg)   westerly (270°) → +x → drift right
+    //   toward_y =  cos(deg)   northerly (  0°) → +y → drift down
+    // The layer translates from -toward × TRAVEL to +toward × TRAVEL so
+    // the clouds inside it enter from the upwind edge and exit on the
+    // downwind edge — including diagonal motion when the wind isn't
+    // purely horizontal. TRAVEL is in vmax so the angle stays correct
+    // on non-square viewports.
+    const windDeg   = wind && typeof wind.deg   === 'number' ? wind.deg   : 270;
+    const windSpeed = wind && typeof wind.speed === 'number' ? wind.speed : 5;
+    const towardX = -Math.sin(windDeg * Math.PI / 180);
+    const towardY =  Math.cos(windDeg * Math.PI / 180);
+    const TRAVEL  = 200; // vmax units of travel each way (off-screen padding)
+    el.style.setProperty('--fx-wind-start-x', `${(-towardX * TRAVEL).toFixed(1)}vmax`);
+    el.style.setProperty('--fx-wind-start-y', `${(-towardY * TRAVEL).toFixed(1)}vmax`);
+    el.style.setProperty('--fx-wind-end-x',   `${( towardX * TRAVEL).toFixed(1)}vmax`);
+    el.style.setProperty('--fx-wind-end-y',   `${( towardY * TRAVEL).toFixed(1)}vmax`);
+    // Speed multiplier 0.1..0.625 with 0.25 at 5 m/s baseline. Halved
+    // again from the previous (0.2..1.25 / 0.5 at 5 m/s) — clouds now
+    // drift about four times slower than the original setting, more
+    // like a lazy afternoon sky than a moving radar map.
+    const mult = Math.max(0.1, Math.min(0.625, windSpeed / 20));
+    el.style.setProperty('--fx-wind-speed', mult.toFixed(2));
+    // Legacy 1D direction (still used by fog / haze / dust which only
+    // animate background-position-x).
+    el.style.setProperty('--fx-wind-dir', towardX >= 0 ? 'normal' : 'reverse');
+
+    const next = this._fxClassFor(assetName, weatherId);
+    if (this._activeFxClass === next) return;
+    // Wipe any prior fx-* class.
+    el.className = '';
+    if (next) el.classList.add(next);
+    this._activeFxClass = next;
+  },
+
   // ── Moon-phase art ────────────────────────────────────────────────
   // moonPhaseName() returns one of eight strings. We have art for seven
   // of them — the "New" moon has no dedicated illustration (it's
@@ -1705,6 +1800,25 @@ const UI = {
 
     this.weatherView.innerHTML = html;
 
+    // Drive the ambient background-effects layer from whatever icon the
+    // hero just landed on. Picks among fx-clouds / fx-rain / fx-snow /
+    // fx-thunder / fx-fog / fx-haze / fx-smoke / fx-dust based on the
+    // resolved asset name; clear-day / clear-night / moon-* deliberately
+    // map to no effect (a clear sky has nothing to drift past).
+    this.applyWeatherFX(
+      (activeDay.weather && activeDay.weather[0] && activeDay.weather[0]._asset) ||
+      this._weatherAssetName(
+        activeDay.weather && activeDay.weather[0] ? activeDay.weather[0].icon : '',
+        activeDay.weather && activeDay.weather[0] ? activeDay.weather[0].id   : null
+      ),
+      // Pass wind so cloud/fog/dust drift direction matches the actual
+      // wind direction (and speed scales animation duration).
+      activeDay.wind,
+      // Pass the OWM weather id so the fx picker can distinguish light
+      // rain / drizzle (sparse drops) from heavier rain (denser drops).
+      activeDay.weather && activeDay.weather[0] ? activeDay.weather[0].id : null
+    );
+
     this.weatherView.querySelectorAll('.daily-item').forEach(el => {
       el.addEventListener('click', () => {
         const idx = parseInt(el.getAttribute('data-index'));
@@ -1721,6 +1835,17 @@ const UI = {
     // city change or click-driven day change always frames the right day.
     const hourlyEl = this.weatherView.querySelector('.hourly-scroll');
     if (hourlyEl) {
+      // Suppress the scroll-into-new-day handler in _bindHourlyDayScroll
+      // for a beat after we set scrollLeft programmatically. Without this,
+      // clicking the LAST day in the daily list runs into a feedback loop:
+      // we try to scroll the hourly bar to that day's first tile, but
+      // there aren't enough tiles after it to fill the bar so the browser
+      // silently CLAMPS scrollLeft to its max — short of the target tile.
+      // The scroll event from that clamp fires, the handler sees a tile
+      // from the second-to-last day as the leading tile, and bounces the
+      // user back to that day. The 600ms window comfortably outlasts the
+      // 180ms debounce in the scroll handler.
+      this._suppressScrollDayChangeUntil = Date.now() + 600;
       if (!cityChanged && prevHourlyScrollLeft != null && !this._snapHourlyToActiveDay) {
         hourlyEl.scrollLeft = prevHourlyScrollLeft;
       } else {
@@ -1845,6 +1970,12 @@ const UI = {
       if (pendingId) clearTimeout(pendingId);
       pendingId = setTimeout(() => {
         pendingId = null;
+        // Skip if this scroll event was triggered by our own programmatic
+        // scrollLeft set in renderDashboard (snap-to-active-day). See the
+        // long comment there for why this matters — clicking the LAST day
+        // would otherwise bounce back to the second-to-last.
+        if (this._suppressScrollDayChangeUntil &&
+            Date.now() < this._suppressScrollDayChangeUntil) return;
         const tiles = hourlyEl.querySelectorAll('.hourly-tile');
         if (!tiles.length) return;
         const left = hourlyEl.scrollLeft;

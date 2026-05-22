@@ -112,9 +112,20 @@
   <meta name="twitter:description" content="Fast 8-day weather forecasts for your saved cities.">
   <meta name="twitter:image" content="assets/icons/icon-512.png">
 
-  <link rel="stylesheet" href="css/style.css?v=119">
+  <link rel="stylesheet" href="css/style.css?v=132">
 </head>
 <body>
+  <!-- Ambient weather effects layer. Three fx-layer children give the JS
+       picker room to stack passing clouds / rain streaks / lightning
+       flashes etc. on different timing offsets without DOM churn. Sits
+       fixed behind .app-container at low opacity, with pointer-events
+       disabled, so it never gets in the way of reading the dashboard. -->
+  <div id="weather-fx" aria-hidden="true">
+    <div class="fx-layer fx-layer-1"></div>
+    <div class="fx-layer fx-layer-2"></div>
+    <div class="fx-layer fx-layer-3"></div>
+  </div>
+
   <div class="app-container">
     <header class="app-header">
       <div class="location-display">
@@ -447,10 +458,10 @@
 
   </div>
 
-  <script src="js/storage.js?v=119"></script>
-  <script src="js/location.js?v=119"></script>
-  <script src="js/weather.js?v=119"></script>
-  <script src="js/ui.js?v=119"></script>
-  <script src="js/app.js?v=119"></script>
+  <script src="js/storage.js?v=132"></script>
+  <script src="js/location.js?v=132"></script>
+  <script src="js/weather.js?v=132"></script>
+  <script src="js/ui.js?v=132"></script>
+  <script src="js/app.js?v=132"></script>
 </body>
 </html>
