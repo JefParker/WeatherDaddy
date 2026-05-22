@@ -2311,11 +2311,22 @@ const UI = {
         <line class="graph-guideline" x1="${paddingX}" y1="${height - paddingY}" x2="${width - paddingX}" y2="${height - paddingY}"></line>
         <line class="graph-guideline" x1="${paddingX}" y1="${paddingY}" x2="${width - paddingX}" y2="${paddingY}"></line>
 
-        ${hasRain ? `
-          <text class="graph-y-axis-label" x="5" y="${paddingY + 5}">${maxPrecip.toFixed(1)}</text>
-          <text class="graph-y-axis-label" x="5" y="${paddingY + 15}">mm/h</text>
-          <text class="graph-y-axis-label" x="5" y="${height - paddingY - 5}">0</text>
-        ` : ''}
+        ${hasRain ? (() => {
+          // Display the y-axis peak in the user's chosen precip unit.
+          // The model stores mm/h internally; convert + format here so
+          // the label matches what the user picked in Units → Precipitation.
+          const precipUnit = Storage.getUnits().precip;
+          const isInches = precipUnit === 'in';
+          const peakDisplay = isInches
+            ? (maxPrecip / 25.4).toFixed(2)
+            : maxPrecip.toFixed(1);
+          const unitLabel = isInches ? 'in/h' : 'mm/h';
+          return `
+            <text class="graph-y-axis-label" x="5" y="${paddingY + 5}">${peakDisplay}</text>
+            <text class="graph-y-axis-label" x="5" y="${paddingY + 15}">${unitLabel}</text>
+            <text class="graph-y-axis-label" x="5" y="${height - paddingY - 5}">0</text>
+          `;
+        })() : ''}
 
         ${points.map((p) => {
           if (p.precip === 0) return '';
