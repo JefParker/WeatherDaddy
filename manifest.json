@@ -38,6 +38,20 @@
       "label": "WeatherDaddy in portrait — today's forecast at a glance"
     },
     {
+      "src": "./assets/screenshot-vertical-2.png",
+      "sizes": "976x2048",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Hourly timeline and 8-day forecast"
+    },
+    {
+      "src": "./assets/screenshot-vertical-3.png",
+      "sizes": "978x2048",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Saved locations and per-city weather"
+    },
+    {
       "src": "./assets/screenshot-horizontal.png",
       "sizes": "1174x801",
       "type": "image/png",
