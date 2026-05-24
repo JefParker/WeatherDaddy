@@ -1889,14 +1889,28 @@ body.has-alert .a2hs-prompt {
   animation-duration: 22s;
   animation-delay: -10s;
 }
+/* Haze — matched to mist: radial-gradient ellipses (soft on all four
+   sides) rather than linear-gradients (hard horizontal edges). Three
+   stops for a long, smooth fade. Tan tint kept to differentiate from
+   mist's neutral grey-white. */
 .fx-haze .fx-layer-1 {
-  background-image: linear-gradient(90deg, transparent, rgba(240, 210, 140, 0.30), transparent);
+  background-image: radial-gradient(
+    ellipse closest-side at 50% 50%,
+    rgba(240, 210, 140, 0.18),
+    rgba(240, 210, 140, 0.10) 45%,
+    transparent 80%
+  );
   background-size: 90vw 60vh;
   background-position: 50% 30%;
   animation-duration: 36s;
 }
 .fx-haze .fx-layer-2 {
-  background-image: linear-gradient(90deg, transparent, rgba(240, 210, 140, 0.22), transparent);
+  background-image: radial-gradient(
+    ellipse closest-side at 50% 50%,
+    rgba(240, 210, 140, 0.13),
+    rgba(240, 210, 140, 0.07) 45%,
+    transparent 80%
+  );
   background-size: 80vw 50vh;
   background-position: 50% 65%;
   animation-duration: 28s;
