@@ -1857,8 +1857,8 @@ body.has-alert .a2hs-prompt {
 .fx-fog .fx-layer-1 {
   background-image: radial-gradient(
     ellipse closest-side at 50% 50%,
-    rgba(220, 230, 240, 0.14),
-    rgba(220, 230, 240, 0.08) 45%,
+    rgba(220, 230, 240, 0.22),
+    rgba(220, 230, 240, 0.13) 45%,
     transparent 78%
   );
   background-size: 75vw 32vh;
@@ -1868,8 +1868,8 @@ body.has-alert .a2hs-prompt {
 .fx-fog .fx-layer-2 {
   background-image: radial-gradient(
     ellipse closest-side at 50% 50%,
-    rgba(220, 230, 240, 0.11),
-    rgba(220, 230, 240, 0.06) 45%,
+    rgba(220, 230, 240, 0.18),
+    rgba(220, 230, 240, 0.10) 45%,
     transparent 80%
   );
   background-size: 90vw 28vh;
@@ -1880,8 +1880,8 @@ body.has-alert .a2hs-prompt {
 .fx-fog .fx-layer-3 {
   background-image: radial-gradient(
     ellipse closest-side at 50% 50%,
-    rgba(220, 230, 240, 0.10),
-    rgba(220, 230, 240, 0.05) 45%,
+    rgba(220, 230, 240, 0.16),
+    rgba(220, 230, 240, 0.09) 45%,
     transparent 80%
   );
   background-size: 65vw 22vh;
@@ -1896,8 +1896,8 @@ body.has-alert .a2hs-prompt {
 .fx-haze .fx-layer-1 {
   background-image: radial-gradient(
     ellipse closest-side at 50% 50%,
-    rgba(240, 210, 140, 0.18),
-    rgba(240, 210, 140, 0.10) 45%,
+    rgba(240, 210, 140, 0.26),
+    rgba(240, 210, 140, 0.15) 45%,
     transparent 80%
   );
   background-size: 90vw 60vh;
@@ -1907,8 +1907,8 @@ body.has-alert .a2hs-prompt {
 .fx-haze .fx-layer-2 {
   background-image: radial-gradient(
     ellipse closest-side at 50% 50%,
-    rgba(240, 210, 140, 0.13),
-    rgba(240, 210, 140, 0.07) 45%,
+    rgba(240, 210, 140, 0.20),
+    rgba(240, 210, 140, 0.11) 45%,
     transparent 80%
   );
   background-size: 80vw 50vh;
