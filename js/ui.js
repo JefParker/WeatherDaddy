@@ -1588,15 +1588,38 @@ const UI = {
     })();
     const uvStatItem = item('UV index', this.esc(this.uvLabel(uvValue)));
 
-    // Is it actually night at the city for the active day? Compare the
-    // active slot's timestamp to that day's sunrise/sunset. For Today,
-    // active.dt = now. For a forecast day, active.dt is roughly midday
-    // (set from the mid hourly slot), so it'll usually evaluate as day
-    // — moon stays on page 2 there, matching the previous behavior.
-    const isNightAtCity =
+    // Is it night-time at the city for the active day? Two parallel
+    // checks, ORed together:
+    //   1) Sun-based: active slot is before today's sunrise or after
+    //      today's sunset. Catches normal latitudes correctly.
+    //   2) Clock-based: local hour at the city is in the 20:00 — 06:00
+    //      band. Catches high-latitude "white nights" (e.g. Reykjavík
+    //      in May/June where sunset is ~11:30 PM and a casual 10 PM
+    //      user still expects to see the moon, not UV).
+    //
+    // Either signal alone is enough. The clock band also degrades
+    // gracefully in winter at high latitudes (polar night): sun says
+    // night all day, so isNightAtCity is true around the clock and
+    // the moon takes page 1 — which is what you'd actually want when
+    // it's literally dark out at noon.
+    const sunSaysNight =
       activeDay.dt != null &&
       activeDay.sunrise != null && activeDay.sunset != null &&
       (activeDay.dt < activeDay.sunrise || activeDay.dt > activeDay.sunset);
+    const localHourAtCity = activeDay.dt != null
+      ? (((Math.floor((activeDay.dt + (state.timezone || 0)) / 3600)) % 24) + 24) % 24
+      : 12; // safe noon default if we have no timestamp
+    const clockSaysNight = localHourAtCity >= 20 || localHourAtCity < 6;
+    const isNightAtCity = sunSaysNight || clockSaysNight;
+
+    // UV above the "Low" band (0-2 rounded) is health-relevant enough
+    // that it always belongs on page 1, even at night — displacing the
+    // moon back to page 2 when the two would otherwise compete. The
+    // thresholds match uvLabel(): Moderate (3-5) / High (6-7) /
+    // Very High (8-10) / Extreme (11+) all qualify.
+    const uvRounded = (uvValue != null && !isNaN(uvValue)) ? Math.round(uvValue) : 0;
+    const uvIsNoteworthy = uvRounded > 2;
+    const uvOnPage1 = uvIsNoteworthy || !isNightAtCity;
 
     // Page-1 candidates (in priority order). Sunrise / Sunset / Dew point
     // are always on page 2. Moon phase / UV index swap pages based on
@@ -1616,9 +1639,9 @@ const UI = {
     if ((activeDay.pop || 0) > 0) {
       page1Candidates.push(item('Precip chance', `${Math.round(activeDay.pop * 100)}%`));
     }
-    // At night, the moon phase is the headline ambient stat; UV is
-    // always 0 after sunset so it gets demoted to page 2.
-    page1Candidates.push(isNightAtCity ? moonStatHTML : uvStatItem);
+    // UV when noteworthy (Moderate+) OR during the day; otherwise the
+    // moon phase. The complement always lives on page 2 — see below.
+    page1Candidates.push(uvOnPage1 ? uvStatItem : moonStatHTML);
     page1Candidates.push(item('Air quality', this.esc(this.aqiLabel(aq.aqi))));
     if (hasPressure)        page1Candidates.push(item('Pressure',   this.formatPressure(activeDay.main.pressure)));
     if (hasVisibility)      page1Candidates.push(item('Visibility', this.formatDist(activeDay.visibility)));
@@ -1644,7 +1667,7 @@ const UI = {
       item('Sunset',     activeDay.sunset  != null ? this.formatTime(activeDay.sunset,  true, state.timezone) : '—'),
       // Whichever of moon / UV did NOT make it onto page 1 lives here.
       // The two together always cover both values exactly once.
-      isNightAtCity ? uvStatItem : moonStatHTML,
+      uvOnPage1 ? moonStatHTML : uvStatItem,
     ];
     if (!localTimeOnPage1) page2Forced.push(localTimeItem);
     page2Forced.push(item('Dew point', `${this.formatTemp(dewPoint)}°`));
