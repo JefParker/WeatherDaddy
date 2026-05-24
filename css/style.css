@@ -1843,55 +1843,88 @@ body.has-alert .a2hs-prompt {
   background-repeat: no-repeat;
   animation: fx-haze-drift 28s linear infinite;
 }
+/* Mist — radial-gradient ellipses (not linear) so the fade is soft on
+   ALL sides instead of having a hard horizontal top/bottom edge. Alpha
+   dropped roughly in half from the original values so the mist reads
+   as a faint drifting haze rather than a bright stripe across the
+   dashboard.
+   Movement: layer translates via the shared fx-haze-drift keyframes,
+   which now use the 2D wind vector (--fx-wind-start-x/y → end-x/y)
+   set by JS — so mist drifts in whatever direction the wind is
+   blowing toward, not just left → right. Background-position keeps
+   the gradient at a fixed vertical band within the layer so the
+   three layers occupy top / middle / bottom thirds. */
 .fx-fog .fx-layer-1 {
-  background-image: linear-gradient(90deg, transparent, rgba(220, 230, 240, 0.32), transparent);
+  background-image: radial-gradient(
+    ellipse closest-side at 50% 50%,
+    rgba(220, 230, 240, 0.14),
+    rgba(220, 230, 240, 0.08) 45%,
+    transparent 78%
+  );
   background-size: 75vw 32vh;
-  background-position: -80vw 28%;
+  background-position: 50% 28%;
   animation-duration: 26s;
 }
 .fx-fog .fx-layer-2 {
-  background-image: linear-gradient(90deg, transparent, rgba(220, 230, 240, 0.24), transparent);
+  background-image: radial-gradient(
+    ellipse closest-side at 50% 50%,
+    rgba(220, 230, 240, 0.11),
+    rgba(220, 230, 240, 0.06) 45%,
+    transparent 80%
+  );
   background-size: 90vw 28vh;
-  background-position: -100vw 58%;
+  background-position: 50% 58%;
   animation-duration: 38s;
   animation-delay: -16s;
 }
 .fx-fog .fx-layer-3 {
-  background-image: linear-gradient(90deg, transparent, rgba(220, 230, 240, 0.20), transparent);
+  background-image: radial-gradient(
+    ellipse closest-side at 50% 50%,
+    rgba(220, 230, 240, 0.10),
+    rgba(220, 230, 240, 0.05) 45%,
+    transparent 80%
+  );
   background-size: 65vw 22vh;
-  background-position: -70vw 80%;
+  background-position: 50% 80%;
   animation-duration: 22s;
   animation-delay: -10s;
 }
 .fx-haze .fx-layer-1 {
   background-image: linear-gradient(90deg, transparent, rgba(240, 210, 140, 0.30), transparent);
   background-size: 90vw 60vh;
-  background-position: -100vw 30%;
+  background-position: 50% 30%;
   animation-duration: 36s;
 }
 .fx-haze .fx-layer-2 {
   background-image: linear-gradient(90deg, transparent, rgba(240, 210, 140, 0.22), transparent);
   background-size: 80vw 50vh;
-  background-position: -90vw 65%;
+  background-position: 50% 65%;
   animation-duration: 28s;
   animation-delay: -14s;
 }
 .fx-smoke .fx-layer-1 {
   background-image: linear-gradient(90deg, transparent, rgba(110, 110, 110, 0.22), transparent);
   background-size: 80vw 55vh;
-  background-position: -90vw 35%;
+  background-position: 50% 35%;
   animation-duration: 30s;
 }
 .fx-smoke .fx-layer-2 {
   background-image: linear-gradient(90deg, transparent, rgba(80, 80, 80, 0.18), transparent);
   background-size: 100vw 45vh;
-  background-position: -110vw 70%;
+  background-position: 50% 70%;
   animation-duration: 40s;
   animation-delay: -20s;
 }
 @keyframes fx-haze-drift {
-  from { background-position-x: -100vw; }
-  to   { background-position-x: 120vw; }
+  /* 2D wind drift, same custom properties the cloud-drift keyframes use
+     (set by JS in applyWeatherFX). Mist / haze / smoke / dust now
+     follow the actual wind direction — diagonally if the wind isn't
+     purely horizontal. Unlike the cloud keyframes, this is a smooth
+     0% → 100% drift (no off-screen "hold"), so atmospheric haze is
+     continuous rather than bursty. Layers stagger via per-layer
+     animation-duration / -delay. */
+  from { transform: translate(var(--fx-wind-start-x, -200vmax), var(--fx-wind-start-y, 0)); }
+  to   { transform: translate(var(--fx-wind-end-x,    200vmax), var(--fx-wind-end-y,   0)); }
 }
 
 /* ── Sand / dust: tan-tinted blowing bands ────────────────────────── */
@@ -1903,12 +1936,12 @@ body.has-alert .a2hs-prompt {
 .fx-dust .fx-layer-1 {
   background-image: linear-gradient(90deg, transparent, rgba(220, 180, 130, 0.35), transparent);
   background-size: 70vw 70vh;
-  background-position: -85vw 25%;
+  background-position: 50% 25%;
 }
 .fx-dust .fx-layer-2 {
   background-image: linear-gradient(90deg, transparent, rgba(200, 160, 110, 0.30), transparent);
   background-size: 85vw 60vh;
-  background-position: -95vw 65%;
+  background-position: 50% 65%;
   animation-duration: 30s;
   animation-delay: -12s;
 }

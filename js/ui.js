@@ -1569,8 +1569,38 @@ const UI = {
       ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate(${activeDay.wind.deg}deg); margin-left: 2px; vertical-align: -2px;"><line x1="12" y1="4" x2="12" y2="20"></line><polyline points="18 14 12 20 6 14"></polyline></svg>`
       : '';
 
+    // Build the moon-phase + UV-index cells once so the page-1 / page-2
+    // logic below can shuffle them between pages without re-building.
+    // Moon-phase is built by hand (not via item()) because item() escapes
+    // its label, which would turn the icon's <img> markup into text.
+    const moonStatHTML = (() => {
+      const dtMs = activeDay.dt != null ? activeDay.dt * 1000 : Date.now();
+      const phase = this.moonPhaseName(dtMs);
+      const icon  = this.getMoonIconSVG(phase, 18);
+      return `
+        <div class="stat-item">
+          <span class="stat-label stat-label-with-icon">
+            <span>Moon phase</span>
+            ${icon}
+          </span>
+          <span class="stat-value">${this.esc(phase)}</span>
+        </div>`;
+    })();
+    const uvStatItem = item('UV index', this.esc(this.uvLabel(uvValue)));
+
+    // Is it actually night at the city for the active day? Compare the
+    // active slot's timestamp to that day's sunrise/sunset. For Today,
+    // active.dt = now. For a forecast day, active.dt is roughly midday
+    // (set from the mid hourly slot), so it'll usually evaluate as day
+    // — moon stays on page 2 there, matching the previous behavior.
+    const isNightAtCity =
+      activeDay.dt != null &&
+      activeDay.sunrise != null && activeDay.sunset != null &&
+      (activeDay.dt < activeDay.sunrise || activeDay.dt > activeDay.sunset);
+
     // Page-1 candidates (in priority order). Sunrise / Sunset / Dew point
-    // / Moon phase are intentionally NOT here — they always live on page 2.
+    // are always on page 2. Moon phase / UV index swap pages based on
+    // whether it's day or night at the city.
     const page1Candidates = [
       item('Wind',
         `${this.formatWind(activeDay.wind.speed)}${
@@ -1586,10 +1616,10 @@ const UI = {
     if ((activeDay.pop || 0) > 0) {
       page1Candidates.push(item('Precip chance', `${Math.round(activeDay.pop * 100)}%`));
     }
-    page1Candidates.push(
-      item('UV index',    this.esc(this.uvLabel(uvValue))),
-      item('Air quality', this.esc(this.aqiLabel(aq.aqi)))
-    );
+    // At night, the moon phase is the headline ambient stat; UV is
+    // always 0 after sunset so it gets demoted to page 2.
+    page1Candidates.push(isNightAtCity ? moonStatHTML : uvStatItem);
+    page1Candidates.push(item('Air quality', this.esc(this.aqiLabel(aq.aqi))));
     if (hasPressure)        page1Candidates.push(item('Pressure',   this.formatPressure(activeDay.main.pressure)));
     if (hasVisibility)      page1Candidates.push(item('Visibility', this.formatDist(activeDay.visibility)));
     if (aq.pollen != null)  page1Candidates.push(item('Pollen',     this.esc(this.pollenLabel(aq.pollen))));
@@ -1605,40 +1635,16 @@ const UI = {
     const localTimeOnPage1 = page1Candidates.length < STATS_PER_PAGE;
     if (localTimeOnPage1) page1Candidates.push(localTimeItem);
 
-    // Fixed page-2 leaders. Top line = Sunrise / Sunset / Moon phase;
+    // Fixed page-2 leaders. Top line = Sunrise / Sunset / (Moon or UV);
     // second line begins with Local time (when page 1 had no room),
-    // then Dew point.
+    // then Dew point. Whichever of Moon / UV got moved to page 1 is the
+    // one MISSING here, so each value always appears exactly once.
     const page2Forced = [
       item('Sunrise',    activeDay.sunrise != null ? this.formatTime(activeDay.sunrise, true, state.timezone) : '—'),
       item('Sunset',     activeDay.sunset  != null ? this.formatTime(activeDay.sunset,  true, state.timezone) : '—'),
-      // Moon-phase stat: inline the matching illustration alongside the
-      // word "Moon phase" in the label row (instead of stacking the icon
-      // on its own line above the value). Hand-rolled instead of using
-      // the shared item() helper because item() escapes the label, which
-      // would turn the icon's <img> markup into literal text. Phase name
-      // stays in the .stat-value row beneath it. getMoonIconSVG and the
-      // phase label both come from the same moonPhaseName() result, so
-      // the icon can't drift out of sync with the name.
-      //
-      // IMPORTANT: when the user switches to another day in the daily
-      // list, moonPhaseName() needs to compute the phase for THAT day,
-      // not today. activeDay.dt is the slot timestamp (Unix seconds) for
-      // the currently-selected day's mid-hour; converting to ms gives us
-      // a moment squarely inside that day, so the moon icon + name
-      // update along with the rest of the dashboard.
-      (() => {
-        const dtMs = activeDay.dt != null ? activeDay.dt * 1000 : Date.now();
-        const phase = this.moonPhaseName(dtMs);
-        const icon  = this.getMoonIconSVG(phase, 18);
-        return `
-          <div class="stat-item">
-            <span class="stat-label stat-label-with-icon">
-              <span>Moon phase</span>
-              ${icon}
-            </span>
-            <span class="stat-value">${this.esc(phase)}</span>
-          </div>`;
-      })(),
+      // Whichever of moon / UV did NOT make it onto page 1 lives here.
+      // The two together always cover both values exactly once.
+      isNightAtCity ? uvStatItem : moonStatHTML,
     ];
     if (!localTimeOnPage1) page2Forced.push(localTimeItem);
     page2Forced.push(item('Dew point', `${this.formatTemp(dewPoint)}°`));
