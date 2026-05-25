@@ -274,8 +274,9 @@ body {
   min-width: 72px;       /* fits "12:00 PM" without wrapping */
   padding: 6px 4px;
   border-radius: 8px;
-  transition: background 0.2s ease;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
   flex-shrink: 0;
+  cursor: pointer;       /* tapping pins this hour into the hero */
 }
 
 .hourly-time {
@@ -287,6 +288,14 @@ body {
    they're about to land on once the cube animation fires. */
 .hourly-tile.active-day {
   background: var(--surface-color);
+}
+
+/* A specific tile the user has pinned into the hero gets a stronger
+   outline — sits on top of .active-day so the user can clearly see
+   "this is the exact hour whose data is in the big card right now". */
+.hourly-tile.active-hour {
+  background: var(--surface-color);
+  box-shadow: inset 0 0 0 2px var(--accent-color, #4aa3ff);
 }
 
 /* Thin vertical separator between adjacent days in the hourly scroll. */
@@ -387,10 +396,17 @@ body {
   display: inline-block;
   line-height: 1;
 }
-.day-slide-ghost > .daily-icon { line-height: 0; }
+.day-slide-ghost > .daily-icon,
+.day-slide-ghost > .hourly-icon { line-height: 0; }
+/* Same transition rules apply whether the ghost was sourced from the
+   daily hi/lo row (daily-temps / daily-icon) or from an hourly tile
+   (hourly-temp / hourly-icon) — both fly up to the hero. */
 .day-slide-ghost > .daily-temps,
+.day-slide-ghost > .hourly-temp,
 .day-slide-ghost > .daily-icon svg,
-.day-slide-ghost > .daily-icon img {
+.day-slide-ghost > .daily-icon img,
+.day-slide-ghost > .hourly-icon svg,
+.day-slide-ghost > .hourly-icon img {
   transition: font-size 520ms cubic-bezier(.2, .7, .2, 1),
               width     520ms cubic-bezier(.2, .7, .2, 1),
               height    520ms cubic-bezier(.2, .7, .2, 1),
@@ -406,8 +422,11 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .day-slide-ghost--flying,
   .day-slide-ghost > .daily-temps,
+  .day-slide-ghost > .hourly-temp,
   .day-slide-ghost > .daily-icon svg,
-  .day-slide-ghost > .daily-icon img { transition: none; }
+  .day-slide-ghost > .daily-icon img,
+  .day-slide-ghost > .hourly-icon svg,
+  .day-slide-ghost > .hourly-icon img { transition: none; }
 }
 
 /* Detailed Day Section (Expanded) */

@@ -3,7 +3,12 @@ const App = {
     currentWeather: null,
     forecast: null,
     cityName: '',
-    selectedDayIndex: -1 // -1 means today, 0-6 means forecast days
+    selectedDayIndex: -1, // -1 means today, 0-6 means forecast days
+    // Unix-seconds dt of a specific hourly tile the user has tapped, so the
+    // hero displays that exact 3-hour slot's data instead of the day's
+    // headline. null = no hour pinned (hero shows current weather for today
+    // or notable-slot for forecast days, as before).
+    selectedHourDt: null
   },
 
   async init() {
@@ -521,6 +526,7 @@ const App = {
     this.state.cityName         = cityName;
     this.state.timezone         = cached.currentWeather.timezone;
     this.state.selectedDayIndex = -1;
+    this.state.selectedHourDt   = null;
     this.renderAll();
     return true;
   },
@@ -570,6 +576,10 @@ const App = {
       this.state.cityName         = cityName;
       this.state.timezone         = currentWeather.timezone;
       this.state.selectedDayIndex = keepDay;
+      // A pinned hour is tied to an exact dt that no longer exists in the
+      // fresh forecast (slots roll forward), so clearing keeps the hero
+      // honest after a refresh / city change.
+      this.state.selectedHourDt   = null;
 
       this.renderAll();
     } catch (e) {
@@ -607,6 +617,21 @@ const App = {
 
   handleDayClick(index) {
     this.state.selectedDayIndex = index;
+    // Picking a day always returns the hero to "the whole day" view —
+    // tapping "Today" restores "Right now", tapping any other day shows
+    // that day's notable-slot headline. Any previously-pinned hour is
+    // dropped.
+    this.state.selectedHourDt = null;
+    this.renderAll();
+  },
+
+  // User tapped a specific tile in the hourly scroller. Pin that hour
+  // (hero swaps in its data + a contextual label like "This evening at
+  // 8 PM") and switch the dashboard to that tile's day so the rest of
+  // the UI (quick stats, daily-list highlight) stays in sync.
+  handleHourClick(dt, dayIdx) {
+    this.state.selectedDayIndex = dayIdx;
+    this.state.selectedHourDt   = dt;
     this.renderAll();
   },
 
@@ -632,7 +657,8 @@ const App = {
     UI.renderDashboard(
       this.state,
       (idx) => this.handleDayClick(idx),
-      () => this.handleSaveLocation()
+      () => this.handleSaveLocation(),
+      (dt, dayIdx) => this.handleHourClick(dt, dayIdx)
     );
     UI.renderAlertBar(this.state.alerts || []);
   },

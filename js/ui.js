@@ -1247,8 +1247,9 @@ const UI = {
     }).join('');
   },
 
-  renderDashboard(state, onDayClick, onSave) {
+  renderDashboard(state, onDayClick, onSave, onHourClick) {
     const { currentWeather, forecast, cityName, selectedDayIndex } = state;
+    const selectedHourDt = state.selectedHourDt || null;
 
     this.locationName.textContent = this.prettifyLocationName(cityName);
 
@@ -1497,8 +1498,47 @@ const UI = {
       };
     })();
 
+    // If the user has tapped a specific hourly tile, locate that exact slot
+    // so we can project ITS conditions into the hero. The day-level
+    // `activeDay` keeps driving the quick stats, temperature graph and
+    // daily-list highlight (those describe the whole day, not one hour);
+    // only the hero card swaps. A missing dt (stale pin after refresh,
+    // city change, etc.) silently falls back to the day view.
+    let pinnedHourSlot = null;
+    if (selectedHourDt != null) {
+      for (const d of dailyData) {
+        if (!d || !d.hourly) continue;
+        const found = d.hourly.find(h => h.dt === selectedHourDt);
+        if (found) { pinnedHourSlot = found; break; }
+      }
+    }
+
+    // heroData mirrors the fields the hero card reads (main, weather, wind,
+    // dt) — defaulting to activeDay so the existing render path "just
+    // works" when no hour is pinned. When pinned, we layer the slot's
+    // values on top, recomputing the hero icon's asset name (and the
+    // matching ambient-fx selection downstream) so it tracks the hour.
+    let heroData = activeDay;
+    if (pinnedHourSlot) {
+      const w0 = (pinnedHourSlot.weather && pinnedHourSlot.weather[0]) || activeDay.weather[0];
+      const heroAsset = w0 ? this._weatherAssetName(w0.icon, w0.id) : null;
+      const weatherWithAsset = (w0 && heroAsset)
+        ? [{ ...w0, _asset: heroAsset }]
+        : [w0];
+      heroData = {
+        ...activeDay,
+        main:    pinnedHourSlot.main    || activeDay.main,
+        weather: weatherWithAsset,
+        wind:    pinnedHourSlot.wind    || activeDay.wind,
+        dt:      pinnedHourSlot.dt
+      };
+    }
+
     const dewPoint = this.calculateDewPoint(activeDay.main.temp, activeDay.main.humidity);
-    const breeze = this.windDescription(activeDay.wind.speed);
+    // Breeze description tracks the hero (pinned hour wind if set,
+    // otherwise the day's wind) so the "Feels like X — windy" subtitle
+    // stays consistent with the rest of the hero card.
+    const breeze = this.windDescription(heroData.wind.speed);
 
     // Hero subtitle clock: short city name (before any comma) + local time.
     const cityShort = (cityName || '').split(',')[0].trim() || cityName || '';
@@ -1507,10 +1547,38 @@ const UI = {
     this._clockTimezone = state.timezone;
     this._ensureClockTimer();
 
-    // Small label above the weather icon: "Right now" for today,
-    // "Tuesday's forecast" for any other day.
+    // Small label above the weather icon. Default behaviour:
+    //   - today (no hour pinned)            → "Right now"
+    //   - other day (no hour pinned)        → "Tuesday's forecast"
+    // When a specific hourly tile is pinned, swap in a contextual phrase
+    // that names both the relative day and the time-of-day band:
+    //   - today + morning/afternoon hour    → "Today at 11 AM"
+    //   - today + evening hour (17–20)      → "This evening at 8 PM"
+    //   - today + night hour (21–23, 0–4)   → "Tonight at 10 PM"
+    //   - any other day                     → "Tuesday at 3 PM"
+    // The day-of-week comes from the hour's CITY-local date (via dayKeyFor),
+    // not the dashboard's selectedDayIndex, so a tile from tomorrow's
+    // slots in the scroller reads "Wednesday at..." even though the
+    // dashboard day is also being switched.
     let heroWhen = 'Right now';
-    if (!isToday) {
+    if (pinnedHourSlot) {
+      const hourLabel = this.formatTime(pinnedHourSlot.dt, true, state.timezone);
+      const hourDayKey = dayKeyFor(pinnedHourSlot.dt);
+      const localSec = pinnedHourSlot.dt + (state.timezone || 0);
+      const localHour = (((Math.floor(localSec / 3600)) % 24) + 24) % 24;
+      if (hourDayKey === todayKey) {
+        if (localHour >= 17 && localHour <= 20)      heroWhen = `This evening at ${hourLabel}`;
+        else if (localHour >= 21 || localHour <= 4)  heroWhen = `Tonight at ${hourLabel}`;
+        else                                          heroWhen = `Today at ${hourLabel}`;
+      } else {
+        // Use the city-local date (UTC-on-shifted-ms trick) so a slot
+        // that's "Wednesday in Tokyo" doesn't render as "Tuesday" just
+        // because the browser is in New York.
+        const d = new Date(localSec * 1000);
+        const weekday = d.toLocaleDateString([], { weekday: 'long', timeZone: 'UTC' });
+        heroWhen = `${weekday} at ${hourLabel}`;
+      }
+    } else if (!isToday) {
       const day = dailyData[selectedDayIndex];
       if (day && day.key) {
         const [yy, mo, dd] = day.key.split('-').map(Number);
@@ -1520,9 +1588,14 @@ const UI = {
       }
     }
 
-    // Big temperature readout. Today → current temp. Other days → high/low.
+    // Big temperature readout.
+    //   - hour pinned         → that hour's single temp (regardless of day)
+    //   - today, no pin       → current temp
+    //   - other day, no pin   → the day's high / low
     let heroTempHTML;
-    if (isToday) {
+    if (pinnedHourSlot) {
+      heroTempHTML = `<div class="hero-temp-large">${this.formatTemp(heroData.main.temp)}°</div>`;
+    } else if (isToday) {
       heroTempHTML = `<div class="hero-temp-large">${this.formatTemp(activeDay.main.temp)}°</div>`;
     } else {
       const day = dailyData[selectedDayIndex];
@@ -1734,18 +1807,19 @@ const UI = {
         <div class="hero-when">${this.esc(heroWhen)}</div>
         <div class="hero-condition">
           <div class="hero-icon-large">${this.getWeatherIconSVG(
-            activeDay.weather[0]._asset || activeDay.weather[0].icon,
+            heroData.weather[0]._asset || heroData.weather[0].icon,
             48,
-            activeDay.weather[0].id,
-            // dt for phase substitution: today uses the current weather's
-            // dt (= now), forecast days use the mid-of-day slot's dt
-            // (activeDay spreads from `mid` so .dt is that slot's time).
-            activeDay.dt
+            heroData.weather[0].id,
+            // dt for phase substitution: today (no pin) uses the current
+            // weather's dt (= now), forecast days use the mid-of-day
+            // slot's dt; a pinned hour uses that hour's exact dt so the
+            // moon-phase / day-vs-night art is hour-accurate.
+            heroData.dt
           )}</div>
-          <span class="hero-desc">${this.esc(activeDay.weather[0].description)}</span>
+          <span class="hero-desc">${this.esc(heroData.weather[0].description)}</span>
         </div>
         ${heroTempHTML}
-        <div class="hero-feels-like">Feels like ${this.formatTemp(activeDay.main.feels_like)}° - ${this.esc(breeze)}</div>
+        <div class="hero-feels-like">Feels like ${this.formatTemp(heroData.main.feels_like)}° - ${this.esc(breeze)}</div>
         <div class="precip-message">${precipMsg}</div>
       </section>
 
@@ -1768,7 +1842,7 @@ const UI = {
         ${dailyData.map((day, dayIdx) => `
           ${dayIdx > 0 ? '<div class="hourly-day-divider"></div>' : ''}
           ${day.hourly.map(h => `
-            <div class="hourly-tile ${dayIdx === currentDayIdx ? 'active-day' : ''}" data-day-index="${dayIdx}">
+            <div class="hourly-tile ${dayIdx === currentDayIdx ? 'active-day' : ''} ${selectedHourDt === h.dt ? 'active-hour' : ''}" data-day-index="${dayIdx}" data-dt="${h.dt}">
               <span class="hourly-time">${this.formatTime(h.dt, true, state.timezone)}</span>
               <span class="hourly-icon">${this.getWeatherIconSVG(h.weather[0].icon, 28, h.weather[0].id, h.dt)}</span>
               <span class="hourly-temp">${this.formatTemp(h.main.temp)}°</span>
@@ -1835,29 +1909,59 @@ const UI = {
     // resolved asset name; clear-day / clear-night / moon-* deliberately
     // map to no effect (a clear sky has nothing to drift past).
     this.applyWeatherFX(
-      (activeDay.weather && activeDay.weather[0] && activeDay.weather[0]._asset) ||
+      (heroData.weather && heroData.weather[0] && heroData.weather[0]._asset) ||
       this._weatherAssetName(
-        activeDay.weather && activeDay.weather[0] ? activeDay.weather[0].icon : '',
-        activeDay.weather && activeDay.weather[0] ? activeDay.weather[0].id   : null
+        heroData.weather && heroData.weather[0] ? heroData.weather[0].icon : '',
+        heroData.weather && heroData.weather[0] ? heroData.weather[0].id   : null
       ),
       // Pass wind so cloud/fog/dust drift direction matches the actual
-      // wind direction (and speed scales animation duration).
-      activeDay.wind,
+      // wind direction (and speed scales animation duration). When an
+      // hour is pinned this is the hour's wind; otherwise the day's.
+      heroData.wind,
       // Pass the OWM weather id so the fx picker can distinguish light
       // rain / drizzle (sparse drops) from heavier rain (denser drops).
-      activeDay.weather && activeDay.weather[0] ? activeDay.weather[0].id : null
+      heroData.weather && heroData.weather[0] ? heroData.weather[0].id : null
     );
 
     this.weatherView.querySelectorAll('.daily-item').forEach(el => {
       el.addEventListener('click', () => {
         const idx = parseInt(el.getAttribute('data-index'));
-        if (idx === currentDayIdx) return;
+        // If a specific hour is currently pinned, tapping the same day
+        // again should still "unpin" and return the hero to that day's
+        // headline view (Today → "Right now", others → "X's forecast").
+        // onDayClick clears selectedHourDt unconditionally, so just fall
+        // through and re-render in that case — but skip the cube/slide
+        // animation since the day index isn't actually changing.
+        if (idx === currentDayIdx) {
+          if (selectedHourDt != null) onDayClick(idx);
+          return;
+        }
         const direction = idx > currentDayIdx ? 'next' : 'prev';
         const finishHeroSlide = this.captureDayRowForHeroSlide(el);
         this.changeDayWithGraphCube(idx, direction, onDayClick);
         if (finishHeroSlide) finishHeroSlide();
       });
     });
+
+    // Hourly-tile taps → pin that hour into the hero. The tile's small
+    // temp number and condition icon fly up to the hero's large slots
+    // (same FLIP-style animation as the daily-list rows), then the
+    // re-render swaps in the hour's data. Cross-day taps re-render
+    // without an animated graph/cube — the hourly-scroll position is
+    // preserved so the user stays oriented at the tile they tapped.
+    if (onHourClick) {
+      this.weatherView.querySelectorAll('.hourly-tile').forEach(el => {
+        el.addEventListener('click', () => {
+          const dt     = parseInt(el.getAttribute('data-dt'), 10);
+          const dayIdx = parseInt(el.getAttribute('data-day-index'), 10);
+          if (!isFinite(dt)) return;
+          if (dt === selectedHourDt && dayIdx === currentDayIdx) return; // already pinned
+          const finishHeroSlide = this.captureHourlyTileForHeroSlide(el);
+          onHourClick(dt, dayIdx);
+          if (finishHeroSlide) finishHeroSlide();
+        });
+      });
+    }
 
     // Position the hourly scroll: preserve user's scroll on same-city
     // re-renders, otherwise center on the active day's first tile so a
@@ -2355,6 +2459,122 @@ const UI = {
         heroIcon.classList.remove('hero-slide-hidden');
         if (newRowTemps) newRowTemps.classList.remove('hero-slide-hidden');
         if (newRowIcon)  newRowIcon.classList.remove('hero-slide-hidden');
+      };
+      setTimeout(cleanup, 560);
+    };
+  },
+
+  // FLIP-style slide for the hourly tiles: same idea as
+  // captureDayRowForHeroSlide above, but sourced from the small tile in
+  // the hourly scroller (temp number + condition icon) rather than from
+  // a daily-list row. Ghost flies the temp and icon up to the hero's
+  // large slots, growing in size mid-flight so the landing is seamless.
+  //
+  // Called before re-render; returns a continuation that mounts the
+  // ghosts once the new hero is in the DOM. Source tile is located in
+  // the re-rendered DOM by data-dt so we can hide its "real" temp/icon
+  // for the duration of the flight (the tile itself does not change,
+  // just sprouts a pinned highlight).
+  captureHourlyTileForHeroSlide(tileEl) {
+    if (!tileEl) return null;
+    const srcTemp = tileEl.querySelector('.hourly-temp');
+    const srcIcon = tileEl.querySelector('.hourly-icon');
+    const srcIconImg = srcIcon && srcIcon.querySelector('img, svg');
+    if (!srcTemp || !srcIcon || !srcIconImg) return null;
+
+    const tempRect = srcTemp.getBoundingClientRect();
+    const iconRect = srcIcon.getBoundingClientRect();
+    const tempHTML = srcTemp.outerHTML;
+    const iconHTML = srcIcon.outerHTML;
+    const tileDt   = tileEl.getAttribute('data-dt');
+
+    const srcTempCS = getComputedStyle(srcTemp);
+    const srcIconCS = getComputedStyle(srcIconImg);
+    const srcTempFS     = srcTempCS.fontSize;
+    const srcTempWeight = srcTempCS.fontWeight;
+    const srcIconSize   = srcIconCS.width; // square
+
+    return () => {
+      const heroTemp = this.weatherView.querySelector('.hero-temp-large');
+      const heroIcon = this.weatherView.querySelector('.hero-icon-large');
+      const heroIconImg = heroIcon && heroIcon.querySelector('img, svg');
+      if (!heroTemp || !heroIcon || !heroIconImg) return;
+
+      const destTempRect = heroTemp.getBoundingClientRect();
+      const destIconRect = heroIcon.getBoundingClientRect();
+      const destTempCS   = getComputedStyle(heroTemp);
+      const destIconCS   = getComputedStyle(heroIconImg);
+      const destTempFS     = destTempCS.fontSize;
+      const destTempWeight = destTempCS.fontWeight;
+      const destIconSize   = destIconCS.width;
+
+      heroTemp.classList.add('hero-slide-hidden');
+      heroIcon.classList.add('hero-slide-hidden');
+
+      const newTile = this.weatherView.querySelector(`.hourly-tile[data-dt="${tileDt}"]`);
+      const newTileTemp = newTile && newTile.querySelector('.hourly-temp');
+      const newTileIcon = newTile && newTile.querySelector('.hourly-icon');
+      if (newTileTemp) newTileTemp.classList.add('hero-slide-hidden');
+      if (newTileIcon) newTileIcon.classList.add('hero-slide-hidden');
+
+      // Same makeGhost pattern as captureDayRowForHeroSlide. Anchored on
+      // the hero's center; transform starts offset to the tile and
+      // animates back to (0, 0).
+      const makeGhost = (html, srcRect, destRect, applyStart, applyEnd) => {
+        const ghost = document.createElement('div');
+        ghost.className = 'day-slide-ghost';
+        const destCX = destRect.left + destRect.width  / 2;
+        const destCY = destRect.top  + destRect.height / 2;
+        const srcCX  = srcRect.left  + srcRect.width   / 2;
+        const srcCY  = srcRect.top   + srcRect.height  / 2;
+        ghost.style.left = `${destCX}px`;
+        ghost.style.top  = `${destCY}px`;
+        ghost.innerHTML = html;
+        const inner = ghost.firstElementChild;
+        applyStart(inner);
+        ghost.style.transform = `translate(calc(-50% + ${srcCX - destCX}px), calc(-50% + ${srcCY - destCY}px))`;
+        document.body.appendChild(ghost);
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            ghost.classList.add('day-slide-ghost--flying');
+            ghost.style.transform = 'translate(-50%, -50%)';
+            applyEnd(inner);
+          });
+        });
+        return ghost;
+      };
+
+      const tempGhost = makeGhost(
+        tempHTML, tempRect, destTempRect,
+        (inner) => {
+          inner.style.fontSize   = srcTempFS;
+          inner.style.fontWeight = srcTempWeight;
+        },
+        (inner) => {
+          inner.style.fontSize   = destTempFS;
+          inner.style.fontWeight = destTempWeight;
+        },
+      );
+
+      const iconGhost = makeGhost(
+        iconHTML, iconRect, destIconRect,
+        (inner) => {
+          const img = inner.querySelector('img, svg');
+          if (img) { img.style.width = srcIconSize; img.style.height = srcIconSize; }
+        },
+        (inner) => {
+          const img = inner.querySelector('img, svg');
+          if (img) { img.style.width = destIconSize; img.style.height = destIconSize; }
+        },
+      );
+
+      const cleanup = () => {
+        tempGhost.remove();
+        iconGhost.remove();
+        heroTemp.classList.remove('hero-slide-hidden');
+        heroIcon.classList.remove('hero-slide-hidden');
+        if (newTileTemp) newTileTemp.classList.remove('hero-slide-hidden');
+        if (newTileIcon) newTileIcon.classList.remove('hero-slide-hidden');
       };
       setTimeout(cleanup, 560);
     };
