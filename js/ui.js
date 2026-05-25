@@ -1839,16 +1839,74 @@ const UI = {
            wrapped. -->
       <div class="dashboard-right">
       <section class="hourly-scroll">
-        ${dailyData.map((day, dayIdx) => `
-          ${dayIdx > 0 ? '<div class="hourly-day-divider"></div>' : ''}
-          ${day.hourly.map(h => `
-            <div class="hourly-tile ${dayIdx === currentDayIdx ? 'active-day' : ''} ${selectedHourDt === h.dt ? 'active-hour' : ''}" data-day-index="${dayIdx}" data-dt="${h.dt}">
-              <span class="hourly-time">${this.formatTime(h.dt, true, state.timezone)}</span>
-              <span class="hourly-icon">${this.getWeatherIconSVG(h.weather[0].icon, 28, h.weather[0].id, h.dt)}</span>
-              <span class="hourly-temp">${this.formatTemp(h.main.temp)}°</span>
-            </div>
-          `).join('')}
-        `).join('')}
+        ${(() => {
+          // Drop any slot whose start time is no longer in the future.
+          // OWM 3h slots use their START time as dt — so once the 12 PM
+          // slot has started, "Now" is the right label for it and the
+          // dedicated Now tile (below) takes over the visual spot. This
+          // also keeps the timeline from showing a stale 9 AM tile next
+          // to "Now" at 11:30 AM. Open-Meteo filler slots are 1h-spaced
+          // and only appear on forecast days (entirely in the future),
+          // so the rule is a no-op there.
+          //
+          // Today's section is also prefixed with a synthetic "Now" tile
+          // sourced from the live currentWeather — its label and data
+          // always reflect THIS moment, not a 3h-block snapshot. Tapping
+          // it clears any pinned hour and returns the hero to the
+          // "Right now" view (via onDayClick(0), which is what
+          // handleDayClick does).
+          //
+          // We also skip any day that becomes empty after filtering and
+          // suppress the day-divider before the first day actually
+          // rendered, so the scroller can't lead with an orphan divider.
+          // Today never becomes empty because the Now tile is always
+          // present.
+          const cw = currentWeather;
+          let out = '';
+          let firstShown = true;
+          for (let dayIdx = 0; dayIdx < dailyData.length; dayIdx++) {
+            const day = dailyData[dayIdx];
+            if (!day || !day.hourly) continue;
+            const slots = day.hourly.filter(h => h.dt > nowSec);
+            const isTodayCol = dayIdx === 0;
+            if (!slots.length && !isTodayCol) continue;
+            if (!firstShown) out += '<div class="hourly-day-divider"></div>';
+            firstShown = false;
+
+            if (isTodayCol) {
+              // The Now tile is the hero-equivalent in the scroller: it
+              // glows when the hero is showing "Right now" (i.e. today
+              // is selected AND no hour is pinned) so the user can see
+              // at a glance which tile their hero card represents.
+              const nowActive =
+                currentDayIdx === 0 && selectedHourDt == null
+                  ? 'active-hour' : '';
+              const w0 = cw.weather && cw.weather[0] ? cw.weather[0] : null;
+              const nowIcon = w0
+                ? this.getWeatherIconSVG(w0.icon, 28, w0.id, cw.dt)
+                : '';
+              out += `
+                <div class="hourly-tile active-day ${nowActive}" data-day-index="0" data-now="1">
+                  <span class="hourly-time">Now</span>
+                  <span class="hourly-icon">${nowIcon}</span>
+                  <span class="hourly-temp">${this.formatTemp(cw.main.temp)}°</span>
+                </div>`;
+            }
+
+            for (const h of slots) {
+              const cls =
+                (dayIdx === currentDayIdx ? 'active-day ' : '') +
+                (selectedHourDt === h.dt ? 'active-hour' : '');
+              out += `
+                <div class="hourly-tile ${cls.trim()}" data-day-index="${dayIdx}" data-dt="${h.dt}">
+                  <span class="hourly-time">${this.formatTime(h.dt, true, state.timezone)}</span>
+                  <span class="hourly-icon">${this.getWeatherIconSVG(h.weather[0].icon, 28, h.weather[0].id, h.dt)}</span>
+                  <span class="hourly-temp">${this.formatTemp(h.main.temp)}°</span>
+                </div>`;
+            }
+          }
+          return out;
+        })()}
       </section>
 
       <section class="daily-list">
@@ -1949,9 +2007,23 @@ const UI = {
     // re-render swaps in the hour's data. Cross-day taps re-render
     // without an animated graph/cube — the hourly-scroll position is
     // preserved so the user stays oriented at the tile they tapped.
+    //
+    // The synthetic Now tile (data-now="1", no data-dt) is the inverse:
+    // tapping it CLEARS any pinned hour and returns the hero to the
+    // "Right now" view via onDayClick(0) (handleDayClick wipes
+    // selectedHourDt and sets selectedDayIndex to 0).
     if (onHourClick) {
       this.weatherView.querySelectorAll('.hourly-tile').forEach(el => {
         el.addEventListener('click', () => {
+          const isNow = el.hasAttribute('data-now');
+          if (isNow) {
+            // Already on "Right now"? Nothing to do.
+            if (currentDayIdx === 0 && selectedHourDt == null) return;
+            const finishHeroSlide = this.captureHourlyTileForHeroSlide(el);
+            onDayClick(0);
+            if (finishHeroSlide) finishHeroSlide();
+            return;
+          }
           const dt     = parseInt(el.getAttribute('data-dt'), 10);
           const dayIdx = parseInt(el.getAttribute('data-day-index'), 10);
           if (!isFinite(dt)) return;
