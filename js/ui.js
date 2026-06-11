@@ -20,6 +20,18 @@ const UI = {
   locationBtn: document.getElementById('location-btn'),
   savedLocationsList: document.getElementById('saved-locations-list'),
 
+  importExportScreen: document.getElementById('import-export-screen'),
+  gotoImportExportBtn: document.getElementById('goto-import-export-btn'),
+  importExportBackBtn: document.getElementById('import-export-back-btn'),
+  exportDataBtn: document.getElementById('export-data-btn'),
+  importDataBtn: document.getElementById('import-data-btn'),
+  importExportTextarea: document.getElementById('import-export-textarea'),
+  exportApiKeyCheckbox: document.getElementById('export-api-key-checkbox'),
+  exportApiKeyContainer: document.getElementById('export-api-key-container'),
+  copyClipboardBtn: document.getElementById('copy-clipboard-btn'),
+  pasteClipboardBtn: document.getElementById('paste-clipboard-btn'),
+  importExportFeedback: document.getElementById('import-export-feedback'),
+
   _resizeBound: false,
   _lastGraph: null,
   _clockTimezone: 0,
@@ -71,13 +83,21 @@ const UI = {
       this.closeOverlayWithCube('about-screen');
     });
 
+    if (this.gotoImportExportBtn) this.gotoImportExportBtn.addEventListener('click', () => {
+      this.toggleScreen('main-menu', false);
+      this.toggleScreen('import-export', true);
+    });
+    if (this.importExportBackBtn) this.importExportBackBtn.addEventListener('click', () => {
+      this.closeOverlayWithCube('import-export-screen');
+    });
+
     // Close any open overlay on Escape
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return;
-      ['alerts', 'about', 'units', 'locations', 'main-menu'].forEach(s => {
+      ['alerts', 'about', 'units', 'locations', 'main-menu', 'import-export'].forEach(s => {
         const el = document.getElementById(s + '-screen') || document.getElementById(s);
         if (el && el.classList.contains('open')) {
-          if (['about', 'units', 'locations'].includes(s)) {
+          if (['about', 'units', 'locations', 'import-export'].includes(s)) {
              this.closeOverlayWithCube(el.id);
           } else {
              this.toggleScreen(s, false);
@@ -124,6 +144,9 @@ const UI = {
 
     // Custom right-click / long-press menu mirroring the hamburger menu.
     this._bindContextMenu();
+
+    // Import/Export panel setup
+    this._initImportExportPanel();
   },
 
   // BYOK panel wiring. All state lives in localStorage (via Storage), so
@@ -352,6 +375,7 @@ const UI = {
       close();
       if (action === 'locations') this.toggleScreen('locations', true);
       else if (action === 'units') this.toggleScreen('units', true);
+      else if (action === 'import-export') this.toggleScreen('import-export', true);
       else if (action === 'about') this.toggleScreen('about', true);
     });
   },
@@ -374,11 +398,16 @@ const UI = {
       'locations': this.locationsScreen,
       'units':     this.unitsScreen,
       'alerts':    document.getElementById('alerts-screen'),
-      'about':     document.getElementById('about-screen')
+      'about':     document.getElementById('about-screen'),
+      'import-export': this.importExportScreen
     };
     const el = map[screen];
     if (!el) return;
     el.classList.toggle('open', !!show);
+
+    if (screen === 'import-export' && show) {
+      this.onShowImportExportScreen();
+    }
   },
 
   closeOverlayWithCube(overlayId) {
@@ -3346,5 +3375,122 @@ const UI = {
         card.addEventListener('pointercancel', onCancel);
       });
     });
+  },
+
+  _initImportExportPanel() {
+    if (!this.importExportScreen) return;
+    
+    if (this.copyClipboardBtn) {
+      this.copyClipboardBtn.addEventListener('click', () => this.handleCopyToClipboard());
+    }
+    
+    if (this.pasteClipboardBtn) {
+      this.pasteClipboardBtn.addEventListener('click', () => this.handlePasteFromClipboard());
+    }
+    
+    if (this.importExportTextarea) {
+      const updateBtn = () => this.updateImportButtonState();
+      this.importExportTextarea.addEventListener('input', updateBtn);
+      this.importExportTextarea.addEventListener('change', updateBtn);
+      this.importExportTextarea.addEventListener('keyup', updateBtn);
+    }
+    
+    if (this.exportDataBtn) {
+      this.exportDataBtn.addEventListener('click', () => App.handleExportData());
+    }
+    
+    if (this.importDataBtn) {
+      this.importDataBtn.addEventListener('click', () => App.handleImportData());
+    }
+  },
+
+  onShowImportExportScreen() {
+    const hasKey = !!Storage.getCustomApiKey();
+    if (this.exportApiKeyContainer) {
+      this.exportApiKeyContainer.style.display = hasKey ? 'block' : 'none';
+    }
+    if (this.exportApiKeyCheckbox) {
+      this.exportApiKeyCheckbox.checked = hasKey;
+    }
+    if (this.importExportTextarea) {
+      this.importExportTextarea.value = '';
+    }
+    if (this.importExportFeedback) {
+      this.importExportFeedback.textContent = '';
+      this.importExportFeedback.className = 'byok-feedback';
+    }
+    this.updateImportButtonState();
+  },
+
+  updateImportButtonState() {
+    if (!this.importExportTextarea || !this.importDataBtn) return;
+    const text = this.importExportTextarea.value.trim();
+    let isValid = false;
+    if (text) {
+      try {
+        JSON.parse(text);
+        isValid = true;
+      } catch (e) {
+        isValid = false;
+      }
+    }
+    this.importDataBtn.disabled = !isValid;
+  },
+
+  async handlePasteFromClipboard() {
+    const feedback = this.importExportFeedback;
+    const textarea = this.importExportTextarea;
+    if (!navigator.clipboard || !navigator.clipboard.readText) {
+      if (feedback) {
+        feedback.textContent = 'Clipboard API not supported. Please paste manually using Ctrl+V.';
+        feedback.className = 'byok-feedback is-error';
+      }
+      return;
+    }
+    try {
+      const text = await navigator.clipboard.readText();
+      if (textarea) {
+        textarea.value = text;
+        this.updateImportButtonState();
+      }
+      if (feedback) {
+        feedback.textContent = 'Clipboard pasted successfully.';
+        feedback.className = 'byok-feedback is-success';
+      }
+    } catch (err) {
+      console.error('Failed to read clipboard:', err);
+      if (feedback) {
+        feedback.textContent = 'Could not access clipboard. Please paste manually.';
+        feedback.className = 'byok-feedback is-error';
+      }
+    }
+  },
+
+  async handleCopyToClipboard() {
+    const feedback = this.importExportFeedback;
+    const textarea = this.importExportTextarea;
+    if (!textarea || !textarea.value.trim()) return;
+    
+    if (!navigator.clipboard || !navigator.clipboard.writeText) {
+      if (feedback) {
+        feedback.textContent = 'Clipboard API not supported. Please select and copy manually.';
+        feedback.className = 'byok-feedback is-error';
+      }
+      return;
+    }
+    
+    try {
+      await navigator.clipboard.writeText(textarea.value);
+      if (feedback) {
+        feedback.textContent = 'Copied to clipboard successfully!';
+        feedback.className = 'byok-feedback is-success';
+      }
+    } catch (err) {
+      console.error('Failed to write clipboard:', err);
+      if (feedback) {
+        feedback.textContent = 'Could not copy to clipboard. Please select and copy manually.';
+        feedback.className = 'byok-feedback is-error';
+      }
+    }
   }
 };

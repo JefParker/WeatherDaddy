@@ -822,6 +822,102 @@ const App = {
     );
   },
 
+  handleExportData() {
+    const data = {
+      locations: Storage.getSavedList(),
+      currentLocation: Storage.getLocation()
+    };
+    
+    const includeKey = UI.exportApiKeyCheckbox && UI.exportApiKeyCheckbox.checked;
+    const apiKey = Storage.getCustomApiKey();
+    if (includeKey && apiKey) {
+      data.apiKey = apiKey;
+    }
+    
+    if (UI.importExportTextarea) {
+      UI.importExportTextarea.value = JSON.stringify(data, null, 2);
+      UI.updateImportButtonState();
+    }
+    
+    if (UI.importExportFeedback) {
+      UI.importExportFeedback.textContent = 'Data exported successfully.';
+      UI.importExportFeedback.className = 'byok-feedback is-success';
+    }
+  },
+
+  async handleImportData() {
+    if (!UI.importExportTextarea) return;
+    const text = UI.importExportTextarea.value.trim();
+    if (!text) return;
+    
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      if (UI.importExportFeedback) {
+        UI.importExportFeedback.textContent = 'Invalid JSON format.';
+        UI.importExportFeedback.className = 'byok-feedback is-error';
+      }
+      return;
+    }
+    
+    // 1. Import locations (don't lose existing, no duplicates)
+    const currentList = Storage.getSavedList();
+    const importedLocations = Array.isArray(data.locations) ? data.locations : [];
+    let addedCount = 0;
+    
+    for (const loc of importedLocations) {
+      if (loc && typeof loc.lat === 'number' && typeof loc.lon === 'number' && loc.name) {
+        if (!Storage.isDuplicate(currentList, loc.lat, loc.lon)) {
+          currentList.push({ lat: loc.lat, lon: loc.lon, name: loc.name });
+          addedCount++;
+        }
+      }
+    }
+    
+    if (addedCount > 0) {
+      Storage.saveReorderedList(currentList);
+      this.updateSavedLocations();
+    }
+    
+    // 2. Import API key if present
+    let apiImported = false;
+    if (data.apiKey && typeof data.apiKey === 'string') {
+      const trimmed = data.apiKey.trim();
+      if (trimmed) {
+        Storage.setCustomApiKey(trimmed);
+        UI.refreshByokStatus();
+        const byokInput = document.getElementById('byok-input');
+        if (byokInput) byokInput.value = trimmed;
+        document.dispatchEvent(new CustomEvent('byok:changed', { detail: { mode: 'custom' } }));
+        apiImported = true;
+      }
+    }
+    
+    // 3. Import current location if present
+    let locationChanged = false;
+    if (data.currentLocation && typeof data.currentLocation.lat === 'number' && typeof data.currentLocation.lon === 'number' && data.currentLocation.name) {
+      Storage.saveLocation(data.currentLocation.lat, data.currentLocation.lon, data.currentLocation.name);
+      locationChanged = true;
+    }
+    
+    // 4. Update UI feedback
+    if (UI.importExportFeedback) {
+      let msg = `Successfully imported ${addedCount} location(s).`;
+      if (apiImported) msg += ' Custom API key imported.';
+      if (locationChanged) msg += ' Current location updated.';
+      UI.importExportFeedback.textContent = msg;
+      UI.importExportFeedback.className = 'byok-feedback is-success';
+    }
+    
+    // 5. Refresh / Re-render dashboard
+    if (locationChanged) {
+      this.fetchAndDisplay(data.currentLocation.lat, data.currentLocation.lon, data.currentLocation.name);
+    } else {
+      this.renderAll();
+    }
+  },
+
   registerServiceWorker() {
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {

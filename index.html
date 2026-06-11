@@ -164,6 +164,14 @@
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
             <span>Unit Settings</span>
           </button>
+          <button class="menu-option-btn" id="goto-import-export-btn">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="16 16 12 12 8 16"></polyline>
+              <line x1="12" y1="12" x2="12" y2="21"></line>
+              <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"></path>
+            </svg>
+            <span>Import / Export Data</span>
+          </button>
           <button class="menu-option-btn" id="goto-about-btn">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
             <span>About</span>
@@ -429,8 +437,65 @@
           </div>
           <p class="byok-feedback" id="byok-feedback" role="status" aria-live="polite"></p>
         </section>
-
         <p class="about-footer">Open-Meteo, OpenStreetMap Nominatim, the U.S. National Weather Service, and the bundled GeoNames dictionary are called directly from your browser. OpenWeatherMap requests go through a tiny Cloudflare Pages proxy that attaches our shared API key — unless you've added your own key above, in which case the browser talks to OpenWeatherMap directly and our proxy is bypassed entirely.</p>
+      </div>
+    </div>
+
+    <!-- Import / Export Overlay -->
+    <div class="overlay-screen" id="import-export-screen">
+      <header class="overlay-header">
+        <button class="back-btn" id="import-export-back-btn" aria-label="Back">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+        </button>
+        <h2>Import / Export Data</h2>
+      </header>
+      <div class="overlay-body">
+        <section class="import-export-section">
+          <p class="import-export-lede" style="margin-bottom: 20px;">Export your saved locations and custom API key to back them up or transfer them to another device, or import your data from a JSON backup. Unit settings will not be affected.</p>
+          
+          <div class="checkbox-container" id="export-api-key-container" style="display: none; margin-bottom: 20px;">
+            <label class="custom-checkbox">
+              <input type="checkbox" id="export-api-key-checkbox" checked>
+              <span class="checkmark"></span>
+              Include my custom API key in the export
+            </label>
+          </div>
+
+          <div class="action-buttons" style="display: flex; gap: 12px; margin-bottom: 20px;">
+            <button type="button" class="byok-btn byok-btn-primary" id="export-data-btn" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+              Export Data
+            </button>
+            <button type="button" class="byok-btn byok-btn-primary" id="import-data-btn" disabled style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              Import Data
+            </button>
+          </div>
+
+          <div class="textbox-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <label for="import-export-textarea" class="about-heading" style="margin-bottom: 0;">JSON Data</label>
+            <div style="display: flex; gap: 8px;">
+              <button type="button" class="paste-btn" id="copy-clipboard-btn" aria-label="Copy to Clipboard" title="Copy to Clipboard" style="background: none; border: none; color: var(--accent-color); cursor: pointer; padding: 6px; display: flex; align-items: center; justify-content: center; border-radius: 6px; transition: background 0.2s;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+              </button>
+              <button type="button" class="paste-btn" id="paste-clipboard-btn" aria-label="Paste from Clipboard" title="Paste from Clipboard" style="background: none; border: none; color: var(--accent-color); cursor: pointer; padding: 6px; display: flex; align-items: center; justify-content: center; border-radius: 6px; transition: background 0.2s;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+                  <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="textarea-wrapper" style="position: relative; margin-bottom: 16px;">
+            <textarea id="import-export-textarea" placeholder="Exported JSON will appear here, or paste JSON here to import..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style="width: 100%; height: 260px; background: #1e1e1e; border: 1px solid var(--border-color); border-radius: 8px; color: #fff; padding: 12px; font-family: 'Courier New', Courier, monospace; font-size: 0.9rem; resize: vertical; outline: none;"></textarea>
+          </div>
+
+          <p class="byok-feedback" id="import-export-feedback" role="status" aria-live="polite" style="margin-top: 10px;"></p>
+        </section>
       </div>
     </div>
 
@@ -475,6 +540,10 @@
       <button class="context-menu-item" data-action="units" role="menuitem">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
         <span>Unit Settings</span>
+      </button>
+      <button class="context-menu-item" data-action="import-export" role="menuitem">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"></path><polyline points="16 16 12 12 8 16"></polyline></svg>
+        <span>Import / Export Data</span>
       </button>
       <button class="context-menu-item" data-action="about" role="menuitem">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
