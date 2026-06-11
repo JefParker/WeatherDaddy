@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%">
+    <defs>
+        <linearGradient id="moonGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#ff8833" />
+            <stop offset="100%" stop-color="#ff4400" />
+        </linearGradient>
+        <linearGradient id="cloudGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="#ffffff" />
+            <stop offset="40%" stop-color="#e2e8f0" />
+            <stop offset="100%" stop-color="#94a3b8" />
+        </linearGradient>
+        <filter id="softShadow" x="-10%" y="-10%" width="130%" height="130%">
+            <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#000000" flood-opacity="0.15"/>
+        </filter>
+    </defs>
+    <g filter="url(#softShadow)">
+        <path d="M 36,10 C 48,10 54,18 54,18 C 54,18 46,21 46,30 C 46,39 55,41 55,41 C 55,41 48,46 38,46 C 26,46 19,37 19,27 C 19,17 26,10 38,10 Z" fill="url(#moonGrad)" transform="translate(10, 2) scale(0.9)"/>
+        <path d="M 32,55 C 22,55 14,47 14,37 C 14,28 21,20 30,19 C 33,11 41,5 50,5 C 60,5 68,12 70,21 C 72,20 74,20 76,20 C 85,20 92,27 92,36 C 92,45 85,55 76,55 Z" fill="url(#cloudGrad)" transform="translate(0, 16) scale(0.95)"/>
+        <g stroke="#7dd3fc" stroke-width="2.5" stroke-linecap="round" opacity="0.9">
+            <g transform="translate(32, 72)">
+                <line x1="0" y1="-5" x2="0" y2="5" /><line x1="-5" y1="0" x2="5" y2="0" />
+            </g>
+            <g transform="translate(50, 78)">
+                <line x1="0" y1="-5" x2="0" y2="5" /><line x1="-5" y1="0" x2="5" y2="0" />
+            </g>
+            <g transform="translate(68, 72)">
+                <line x1="0" y1="-5" x2="0" y2="5" /><line x1="-5" y1="0" x2="5" y2="0" />
+            </g>
+        </g>
+    </g>
+</svg>

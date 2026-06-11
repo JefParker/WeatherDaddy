@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="WeatherDaddy">
+  <!-- Monochrome / Android themed-icon: a single-color silhouette on a
+       transparent background, scaled to 80% inside the safe zone so the
+       platform can tint and mask it freely. -->
+  <g transform="translate(51.2,51.2) scale(0.8)" fill="#ffffff">
+    <!-- Sun rays -->
+    <g stroke="#ffffff" stroke-width="22" stroke-linecap="round">
+      <line x1="200" y1="70"  x2="200" y2="120"/>
+      <line x1="200" y1="320" x2="200" y2="370"/>
+      <line x1="50"  y1="220" x2="100" y2="220"/>
+      <line x1="300" y1="220" x2="350" y2="220"/>
+      <line x1="94"  y1="114" x2="129" y2="149"/>
+      <line x1="271" y1="291" x2="306" y2="326"/>
+      <line x1="306" y1="114" x2="271" y2="149"/>
+      <line x1="129" y1="291" x2="94"  y2="326"/>
+    </g>
+    <circle cx="200" cy="220" r="78"/>
+    <ellipse cx="320" cy="360" rx="118" ry="42"/>
+    <circle cx="240" cy="332" r="52"/>
+    <circle cx="296" cy="306" r="62"/>
+    <circle cx="360" cy="318" r="52"/>
+    <circle cx="404" cy="344" r="38"/>
+  </g>
+</svg>

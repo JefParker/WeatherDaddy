@@ -1,0 +1,2109 @@
+:root {
+  --bg-color: #121212;
+  --header-bg: #1e1e1e;
+  --text-primary: #ffffff;
+  --text-secondary: #a0a0a0;
+  --accent-color: #ff6d00;
+  --border-color: #333333;
+  --surface-color: #1e1e1e;
+  --font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  /* Hide the document scrollbar — content still scrolls. */
+  scrollbar-width: none;          /* Firefox */
+  -ms-overflow-style: none;       /* legacy Edge / IE */
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none;                  /* Chrome / Safari */
+  width: 0;
+  height: 0;
+}
+
+body {
+  font-family: var(--font-family);
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+  overflow-x: hidden;
+  /* Let the document itself scroll vertically — so a touch anywhere in the
+     viewport (even outside the centered column) scrolls the page. */
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.app-container {
+  max-width: 500px;
+  margin: 0 auto;
+  position: relative;
+}
+
+/* Header & Search */
+.app-header {
+  display: flex;
+  align-items: center;
+  /* Pad the top by env(safe-area-inset-top) so the header clears the iOS
+     status bar / notch / dynamic island when the PWA is installed and
+     launched from the home screen (status bar style: black-translucent). */
+  padding: calc(12px + env(safe-area-inset-top, 0px)) 16px 12px;
+  gap: 12px;
+  background-color: var(--bg-color);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+#city-input {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 1.2rem;
+  font-weight: 600;
+  padding: 8px 0;
+  outline: none;
+  text-overflow: ellipsis;
+}
+
+.menu-btn {
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 8px;
+}
+
+/* Main content is no longer an internal scroll container — the document
+   scrolls instead so touches outside the 500px column still scroll. */
+.main-content {
+  flex: 1;
+}
+
+.location-display {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Vertical → browser scroll; horizontal → JS swipe-to-cycle-cities. */
+  touch-action: pan-y;
+  min-width: 0; /* Allows this flex child to shrink below its content's intrinsic size */
+}
+
+#location-name {
+  font-size: 1.3rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  user-select: none;
+  min-width: 0; /* Allows text truncation to work inside flex container */
+}
+
+#location-name::after {
+  content: ' ⌄';
+  font-size: 1rem;
+  opacity: 0.5;
+  font-weight: 400;
+}
+
+#location-name:active {
+  opacity: 0.6;
+}
+
+#weather-view {
+  padding-bottom: 40px;
+}
+
+/* Hero Section */
+.hero-section {
+  text-align: center;
+  padding: 40px 20px;
+  /* Vertical → browser scroll; horizontal → JS swipe-to-cycle-cities. */
+  touch-action: pan-y;
+}
+
+.hero-when {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 16px;
+}
+
+.hero-condition {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Weather illustrations are now <img>-loaded SVGs (so each file gets its
+   own gradient-id namespace, avoiding collisions when 30+ icons are on
+   the page at once). The original svg-targeting rules stay for backward
+   compatibility / dev-tools inspection convenience. */
+.hero-icon-large svg,
+.hero-icon-large img {
+  width: 64px;
+  height: 64px;
+  fill: #fff;
+  margin-bottom: 8px;
+}
+
+.hero-desc {
+  font-size: 1.2rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.hero-breeze {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.hero-temp-large {
+  font-size: 4.5rem;
+  font-weight: 300;
+  line-height: 1;
+  margin: 10px 0;
+  display: inline-block;
+  /* Double-tap toggles °F ↔ °C. `manipulation` disables the browser's
+     double-tap-to-zoom delay so dblclick fires immediately on touch.
+     user-select: none stops the second tap from selecting the digits. */
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.hero-feels-like {
+  font-size: 1rem;
+  color: var(--text-secondary);
+  margin-bottom: 20px;
+}
+
+.precip-message {
+  font-weight: 600;
+  font-size: 0.95rem;
+  margin-top: 20px;
+}
+
+/* Quick Stats Grid */
+/* Wrapper around the stats grid — the cube-flip pager binds here so the
+   cube perspective isn't placed as a single grid cell. */
+.stats-pager {
+  /* Vertical → browser scroll; horizontal → JS swipe-cube-pages. */
+  touch-action: pan-y;
+}
+
+.quick-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  padding: 16px;
+  gap: 16px 8px;
+  border-top: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+}
+/* Ensure trailing items center nicely on the second row when 4 or 5 stats
+   appear (e.g. Wind / Humidity / UV / Dew point, plus optional pressure). */
+.stat-item {
+  min-width: 0;
+}
+
+/* Invisible filler used to pad each stats page to exactly 6 cells so the
+   grid is always 2 rows — keeps the cube-flip animation from causing a
+   height change when pages have different real-cell counts. */
+.stat-item-placeholder {
+  visibility: hidden;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 4px;
+}
+
+.stat-label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.stat-value {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+/* Moon-phase stat — small illustration sits inline with the "Moon
+   phase" label text in the .stat-label row, so the value row underneath
+   shows just the phase name. The label is flex so the icon + text line
+   up centered on the same baseline (and on a long phase name like
+   "Waning crescent", the icon stays attached to "Moon phase" rather
+   than the wrapping value below). */
+.stat-label-with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: center;
+}
+.stat-label-with-icon img {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+/* Hourly Scroll */
+.hourly-scroll {
+  display: flex;
+  overflow-x: auto;
+  padding: 20px 16px;
+  gap: 20px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.hourly-scroll::-webkit-scrollbar { display: none; }
+
+.hourly-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 72px;       /* fits "12:00 PM" without wrapping */
+  padding: 6px 4px;
+  border-radius: 8px;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+  flex-shrink: 0;
+  cursor: pointer;       /* tapping pins this hour into the hero */
+}
+
+.hourly-time {
+  white-space: nowrap;
+}
+
+/* Tiles belonging to the currently-displayed day get a subtle highlight,
+   so as the user scrolls into another day's tiles it's clear which day
+   they're about to land on once the cube animation fires. */
+.hourly-tile.active-day {
+  background: var(--surface-color);
+}
+
+/* A specific tile the user has pinned into the hero gets a stronger
+   outline — sits on top of .active-day so the user can clearly see
+   "this is the exact hour whose data is in the big card right now". */
+.hourly-tile.active-hour {
+  background: var(--surface-color);
+  box-shadow: inset 0 0 0 2px var(--accent-color, #4aa3ff);
+}
+
+/* Thin vertical separator between adjacent days in the hourly scroll. */
+.hourly-day-divider {
+  width: 1px;
+  background: var(--border-color);
+  align-self: stretch;
+  margin: 0 12px;
+  flex-shrink: 0;
+}
+
+.hourly-time {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.hourly-icon svg,
+.hourly-icon img {
+  width: 32px;
+  height: 32px;
+  fill: #fff;
+}
+
+.hourly-temp {
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+/* Daily Forecast List */
+.daily-list {
+  padding: 0 16px;
+}
+
+.daily-item {
+  display: flex;
+  align-items: center;
+  padding: 14px 12px;
+  border-bottom: 1px solid var(--border-color);
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background 0.15s ease;
+}
+
+.daily-item.active {
+  background: var(--surface-color);
+  border-bottom-color: transparent;
+}
+
+.daily-day-date {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.daily-day {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.daily-date {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.daily-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.daily-temps {
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+.daily-icon svg,
+.daily-icon img {
+  width: 28px;
+  height: 28px;
+  fill: #fff;
+}
+
+/* Ghost clone that flies from a daily-list row up into the hero's high/low
+   + icon slot. JS anchors the ghost on the hero's center and animates the
+   transform back to (0,0) from a (src-dest) offset, while simultaneously
+   animating the inner element's real font-size / svg dimensions so the
+   text reflows smoothly and lands pixel-perfect on the hero (no end-pop). */
+.day-slide-ghost {
+  position: fixed;
+  z-index: 50;
+  pointer-events: none;
+  will-change: transform;
+  color: #fff;
+}
+.day-slide-ghost > * {
+  margin: 0;
+  white-space: nowrap;
+  display: inline-block;
+  line-height: 1;
+}
+.day-slide-ghost > .daily-icon,
+.day-slide-ghost > .hourly-icon { line-height: 0; }
+/* Same transition rules apply whether the ghost was sourced from the
+   daily hi/lo row (daily-temps / daily-icon) or from an hourly tile
+   (hourly-temp / hourly-icon) — both fly up to the hero. */
+.day-slide-ghost > .daily-temps,
+.day-slide-ghost > .hourly-temp,
+.day-slide-ghost > .daily-icon svg,
+.day-slide-ghost > .daily-icon img,
+.day-slide-ghost > .hourly-icon svg,
+.day-slide-ghost > .hourly-icon img {
+  transition: font-size 520ms cubic-bezier(.2, .7, .2, 1),
+              width     520ms cubic-bezier(.2, .7, .2, 1),
+              height    520ms cubic-bezier(.2, .7, .2, 1),
+              font-weight 520ms cubic-bezier(.2, .7, .2, 1);
+}
+.day-slide-ghost--flying {
+  transition: transform 520ms cubic-bezier(.2, .7, .2, 1);
+}
+.hero-slide-hidden {
+  visibility: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .day-slide-ghost--flying,
+  .day-slide-ghost > .daily-temps,
+  .day-slide-ghost > .hourly-temp,
+  .day-slide-ghost > .daily-icon svg,
+  .day-slide-ghost > .daily-icon img,
+  .day-slide-ghost > .hourly-icon svg,
+  .day-slide-ghost > .hourly-icon img { transition: none; }
+}
+
+/* Detailed Day Section (Expanded) */
+.day-detail-section {
+  padding: 20px 16px;
+}
+
+.graph-container {
+  height: 200px;
+  margin: 20px 0;
+  position: relative;
+  /* Let the browser keep vertical page scrolling; we capture horizontal
+     swipes ourselves to flip through forecast days. */
+  touch-action: pan-y;
+  cursor: grab;
+}
+.graph-container:active {
+  cursor: grabbing;
+}
+
+.graph-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.detail-rows {
+  margin-top: 20px;
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.detail-row:last-child { border-bottom: none; }
+
+.detail-label {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.detail-value {
+  font-weight: 600;
+}
+
+/* Overlays */
+.overlay-screen {
+  position: fixed;
+  top: 0;
+  left: 100%;
+  width: 100%;
+  height: 100%;
+  /* Original: background-color: var(--bg-color); */
+  background-color: rgba(18, 18, 18, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  z-index: 100;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+}
+
+.overlay-screen.open {
+  transform: translateX(-100%);
+}
+
+.overlay-header {
+  display: flex;
+  align-items: center;
+  /* Same iOS safe-area allowance as the main app header — overlays cover
+     the full screen so they're also affected by the notch / status bar. */
+  padding: calc(12px + env(safe-area-inset-top, 0px)) 16px 12px;
+  gap: 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.overlay-header h2 {
+  flex: 1;
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+
+.back-btn, .settings-icon-btn {
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 8px;
+}
+
+.overlay-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+/* Units Controls */
+.unit-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.segmented-control {
+  display: flex;
+  background: #2a2a2a;
+  border-radius: 8px;
+  padding: 2px;
+}
+
+.segmented-control button {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-family: inherit;
+  font-size: 0.9rem;
+}
+
+.segmented-control button.active {
+  background: #444;
+  color: var(--text-primary);
+}
+
+/* Locations List */
+.current-loc-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 16px;
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: 24px;
+}
+
+.saved-locations-title {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+#saved-locations-list {
+  position: relative;
+}
+
+.location-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 8px;
+  border-bottom: 1px solid var(--border-color);
+  cursor: pointer;
+  background: var(--bg-color);
+  transition: box-shadow 0.15s ease, transform 0.1s ease;
+  position: relative;
+  z-index: 1;
+}
+
+.location-card-name {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.delete-location-btn {
+  background: none;
+  border: none;
+  color: #ff5252;
+  padding: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.delete-location-btn:active {
+  background: rgba(255, 82, 82, 0.1);
+}
+
+.location-card.dragging {
+  background: var(--surface-color);
+  box-shadow: 0 10px 24px rgba(0,0,0,0.6);
+  z-index: 20;
+  touch-action: none;
+  cursor: grabbing;
+}
+
+.drop-indicator {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 3px;
+  background: var(--accent-color);
+  border-radius: 2px;
+  box-shadow: 0 0 8px rgba(255, 109, 0, 0.6);
+  pointer-events: none;
+  z-index: 15;
+  transition: transform 0.08s ease;
+}
+
+.menu-options {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 10px;
+}
+
+.menu-option-btn {
+  background: var(--surface-color);
+  border: none;
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: #fff;
+  cursor: pointer;
+  transition: background-color 0.2s, transform 0.1s;
+  font-size: 1.1rem;
+  font-weight: 500;
+  width: 100%;
+  text-align: left;
+}
+
+.menu-option-btn:active {
+  transform: scale(0.98);
+  background-color: #333;
+}
+
+.menu-option-btn svg {
+  color: var(--accent-color);
+  width: 28px;
+  height: 28px;
+}
+
+/* Search bar in Menu */
+.menu-search {
+  display: flex;
+  background: #2a2a2a;
+  border-radius: 8px;
+  padding: 4px 4px 4px 12px;
+  gap: 4px;
+  margin-bottom: 20px;
+  align-items: center;
+}
+
+.menu-search input {
+  width: 100%;
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 1rem;
+  outline: none;
+  padding: 8px 0;
+}
+
+.search-confirm-btn {
+  background: var(--accent-color);
+  border: none;
+  border-radius: 6px;
+  color: #000;
+  padding: 8px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.search-confirm-btn:active {
+  transform: scale(0.95);
+}
+
+
+/* === 3D cube transition between cities ===============================
+   When the user swipes to another saved city, both the outgoing and
+   incoming dashboards are placed on adjacent faces of a horizontal
+   cube and the cube rotates 90° so the next face slides into view. */
+.cube-perspective {
+  /* Half the cube width — used to push each face out from the center. */
+  --cube-half: min(50vw, 250px);
+  perspective: 1400px;
+  perspective-origin: 50% 30%;
+  position: relative;
+  overflow: hidden;
+  /* Height is set inline by JS to match the outgoing dashboard. */
+}
+.cube-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 0.55s cubic-bezier(0.4, 0, 0.2, 1);
+  /* Pulled back so the visible face sits exactly at z=0 (camera plane). */
+  transform: translateZ(calc(var(--cube-half) * -1));
+}
+.cube-face {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--bg-color);
+  backface-visibility: hidden;
+  overflow: hidden;
+}
+.cube-face-front { transform: translateZ(var(--cube-half)); }
+.cube-face-right { transform: rotateY( 90deg) translateZ(var(--cube-half)); }
+.cube-face-left  { transform: rotateY(-90deg) translateZ(var(--cube-half)); }
+.cube-stage.rotate-left  { transform: translateZ(calc(var(--cube-half) * -1)) rotateY(-90deg); }
+.cube-stage.rotate-right { transform: translateZ(calc(var(--cube-half) * -1)) rotateY( 90deg); }
+
+/* === Context menu (right-click / long-press) ========================= */
+.context-menu {
+  position: fixed;
+  min-width: 220px;
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: 4px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.65);
+  z-index: 250;
+  animation: contextMenuIn 0.12s ease-out;
+}
+.context-menu[hidden] { display: none; }
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  text-align: left;
+  font-family: inherit;
+}
+.context-menu-item:hover,
+.context-menu-item:focus-visible {
+  background: rgba(255, 255, 255, 0.07);
+  outline: none;
+}
+.context-menu-item:active {
+  background: rgba(255, 255, 255, 0.12);
+}
+.context-menu-item svg {
+  color: var(--accent-color);
+  flex-shrink: 0;
+}
+
+@keyframes contextMenuIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* === About overlay ==================================================== */
+.about-section {
+  margin-bottom: 28px;
+}
+.about-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+.about-blurb {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+.about-heading {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+.about-lede {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  margin-bottom: 14px;
+  line-height: 1.5;
+}
+.about-sources {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.about-sources li {
+  background: var(--surface-color);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.about-source-name {
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--accent-color);
+  text-decoration: none;
+}
+a.about-source-name:hover {
+  text-decoration: underline;
+}
+.about-source-desc {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+.about-source-desc a {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+.about-footer {
+  margin-top: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-color);
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  text-align: center;
+}
+
+/* Brand header styling */
+.about-header-brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.about-logo {
+  border-radius: 14px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  flex-shrink: 0;
+}
+.about-brand-text {
+  flex: 1;
+  min-width: 0;
+}
+.about-version {
+  font-size: 0.8rem;
+  font-weight: 500;
+  padding: 2px 8px;
+  background: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+/* Accordion styling */
+.about-accordion {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.accordion-item {
+  background: var(--surface-color);
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+.accordion-item.open {
+  border-color: var(--accent-color);
+}
+.accordion-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  padding: 14px 16px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-align: left;
+  font-family: inherit;
+}
+.accordion-icon {
+  color: var(--accent-color);
+  flex-shrink: 0;
+}
+.accordion-chevron {
+  margin-left: auto;
+  color: var(--text-secondary);
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+.accordion-item.open .accordion-chevron {
+  transform: rotate(180deg);
+  color: var(--accent-color);
+}
+.accordion-content {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.accordion-content p {
+  padding: 0 16px 14px 48px;
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+
+/* === NWS alert detail cards (inside the alerts overlay) ============== */
+.alert-card {
+  background: var(--surface-color);
+  border-left: 4px solid #ff5252;
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.alert-card-event {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #ff8a8a;
+  margin-bottom: 6px;
+}
+.alert-card-headline {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 14px;
+  line-height: 1.4;
+}
+.alert-card-section {
+  margin-bottom: 12px;
+}
+.alert-card-section-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+.alert-card-section-body {
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+.alert-card-section-body p {
+  margin: 0 0 8px;
+}
+.alert-card-section-body p:last-child {
+  margin-bottom: 0;
+}
+.alert-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+  margin-top: 12px;
+}
+.alert-card-meta strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.alert-card-link {
+  display: inline-block;
+  margin-top: 12px;
+  color: var(--accent-color);
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+.alert-card-link:hover { text-decoration: underline; }
+
+/* === NWS alert bar ====================================================
+   Fixed across the bottom of the viewport whenever there is an active
+   alert. Severity styles the left border / icon color. Whole bar is an
+   <a> so tapping it opens the official NWS detail page in a new tab. */
+.alert-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: #2a0e0e;
+  border: none;
+  border-top: 3px solid #ff5252;
+  color: #fff;
+  text-decoration: none;
+  font: 500 0.92rem/1.4 inherit;
+  text-align: left;
+  cursor: pointer;
+  z-index: 90;
+  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.5);
+  width: 100%;
+}
+.alert-bar[hidden] { display: none; }
+.alert-bar:active { background: #381212; }
+.alert-bar-icon {
+  display: inline-flex;
+  align-items: center;
+  color: #ff5252;
+  flex-shrink: 0;
+}
+.alert-bar-text {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.alert-bar-cta {
+  flex-shrink: 0;
+  font-weight: 700;
+  color: #ff8a8a;
+}
+/* Severity tints — Severe / Extreme keep the red, Moderate uses amber,
+   Minor / Unknown use a quieter gray-red. */
+.alert-bar.sev-moderate { background: #2a1c0e; border-top-color: #ffa726; }
+.alert-bar.sev-moderate .alert-bar-icon { color: #ffa726; }
+.alert-bar.sev-moderate .alert-bar-cta  { color: #ffc480; }
+.alert-bar.sev-minor    { background: #1e1e1e; border-top-color: #888; }
+.alert-bar.sev-minor    .alert-bar-icon { color: #ccc; }
+.alert-bar.sev-minor    .alert-bar-cta  { color: #aaa; }
+
+/* When the alert bar is visible, lift the A2HS prompt above it so they
+   don't overlap. Body class is toggled by JS. */
+body.has-alert .a2hs-prompt {
+  bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+}
+
+/* === Add-to-Home-Screen prompt (iOS Safari) ==========================
+   Bottom-anchored card showing the share-sheet shortcut. Hidden by
+   default; the JS in App.maybeShowA2HSPrompt() reveals it only when:
+     - the browser is iOS Safari (no native install API)
+     - the app isn't already running in standalone mode
+     - the user hasn't dismissed it before */
+.a2hs-prompt {
+  position: fixed;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%) translateY(120%);
+  width: min(92vw, 440px);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.55);
+  color: var(--text-primary);
+  z-index: 200;
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.35s ease;
+}
+.a2hs-prompt.visible {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+.a2hs-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.a2hs-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+.a2hs-text strong {
+  font-weight: 700;
+}
+.a2hs-text span {
+  color: var(--text-secondary);
+}
+.a2hs-share-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-block;
+  vertical-align: -3px;
+  color: #4ea0ff;             /* iOS share-blue */
+  margin: 0 2px;
+}
+.a2hs-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.a2hs-close:hover { color: var(--text-primary); }
+
+/* Loader */
+.loader {
+  display: flex;
+  justify-content: center;
+  padding: 100px 0;
+  font-size: 1.2rem;
+  color: var(--text-secondary);
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 0.5; }
+  50% { opacity: 1; }
+  100% { opacity: 0.5; }
+}
+
+/* Graph SVG Styles */
+.graph-svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.graph-path {
+  fill: none;
+  stroke: var(--accent-color);
+  stroke-width: 3;
+}
+
+.graph-time-text {
+  fill: var(--text-secondary);
+  font-size: 10px;
+  text-anchor: middle;
+}
+
+.save-loc-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s, transform 0.2s;
+  margin-top: 8px;
+}
+
+.save-loc-btn.saved {
+  color: var(--accent-color);
+}
+
+.save-loc-btn:hover {
+  transform: scale(1.1);
+}
+
+.save-loc-btn svg {
+  width: 28px;
+  height: 28px;
+}
+
+
+
+.graph-precip-bar {
+  fill: #4db6ac;
+  opacity: 0.6;
+}
+
+.graph-badge {
+  fill: #ff7043;
+}
+
+.graph-temp-badge-text {
+  fill: #fff;
+  font-size: 10px;
+  font-weight: bold;
+  text-anchor: middle;
+}
+
+.graph-y-axis-label {
+  fill: #4db6ac;
+  font-size: 10px;
+  font-weight: bold;
+}
+
+.graph-guideline {
+  stroke: rgba(255, 255, 255, 0.1);
+  stroke-dasharray: 2,2;
+}
+
+/* City Autocomplete Dropdown */
+.search-input-wrapper {
+  position: relative;
+  flex: 1;
+}
+
+#city-autocomplete {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 10px;
+  max-height: 260px;
+  overflow-y: auto;
+  z-index: 300;
+  list-style: none;
+  padding: 4px 0;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  animation: acDropIn 0.15s ease;
+  scrollbar-width: thin;
+  scrollbar-color: #444 transparent;
+}
+
+#city-autocomplete:empty {
+  display: none;
+}
+
+#city-autocomplete li {
+  padding: 11px 16px;
+  font-size: 0.97rem;
+  color: #e0e0e0;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  transition: background 0.12s;
+}
+
+#city-autocomplete li:last-child {
+  border-bottom: none;
+}
+
+#city-autocomplete li:hover,
+#city-autocomplete li.ac-active {
+  background: rgba(255, 109, 0, 0.18);
+  color: #fff;
+}
+
+#city-autocomplete li strong {
+  color: var(--accent-color);
+  font-weight: 700;
+}
+
+@keyframes acDropIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* City loading spinner */
+.city-load-spinner {
+  display: none;
+  width: 18px;
+  height: 18px;
+  border: 2.5px solid rgba(255,255,255,0.15);
+  border-top-color: var(--accent-color);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.city-load-spinner.visible {
+  display: block;
+}
+
+/* nudge input text so it doesn't overlap spinner */
+.search-input-wrapper #city-input {
+  padding-right: 32px;
+}
+
+@keyframes spin {
+  to { transform: translateY(-50%) rotate(360deg); }
+}
+
+/* Refresh button spin */
+#refresh-btn.spinning svg {
+  animation: refreshSpin 0.8s linear;
+}
+@keyframes refreshSpin {
+  from { transform: rotate(0); }
+  to   { transform: rotate(360deg); }
+}
+
+.location-card {
+  gap: 12px;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.location-card-name {
+  flex: 1;
+}
+
+/* -------------------------------------------------------------------------
+   BYOK — bring-your-own OpenWeatherMap key (About → API key)
+   ------------------------------------------------------------------------- */
+.byok-section { margin-top: 8px; }
+
+.byok-steps {
+  margin: 8px 0 14px;
+  padding-left: 20px;
+  color: var(--text-secondary);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+.byok-steps li { margin-bottom: 4px; }
+.byok-steps a {
+  color: var(--accent-color);
+  text-decoration: none;
+}
+.byok-steps a:hover { text-decoration: underline; }
+
+/* Status badge — dot + text, color-swapped by mode class on parent */
+.byok-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--surface-color);
+  font-size: 0.85rem;
+  font-weight: 500;
+  margin-bottom: 16px;
+}
+.byok-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  box-shadow: 0 0 0 0 currentColor;
+}
+@keyframes pulse-green {
+  0% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.4); }
+  70% { box-shadow: 0 0 0 8px rgba(52, 199, 89, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0); }
+}
+@keyframes pulse-grey {
+  0% { box-shadow: 0 0 0 0 rgba(154, 160, 166, 0.4); }
+  70% { box-shadow: 0 0 0 8px rgba(154, 160, 166, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(154, 160, 166, 0); }
+}
+.byok-status.is-default .byok-status-dot {
+  background: #9aa0a6;
+  animation: pulse-grey 2.5s infinite;
+}
+.byok-status.is-custom  .byok-status-dot {
+  background: #34c759;
+  animation: pulse-green 2s infinite;
+}
+.byok-status.is-custom  .byok-status-text { color: #34c759; }
+
+.byok-label {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.byok-input-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.byok-input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color, #2a2a2a);
+  border-radius: 8px;
+  background: var(--surface-color);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  letter-spacing: 0.02em;
+}
+.byok-input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+}
+.byok-toggle {
+  flex: 0 0 auto;
+  width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-color);
+  border: 1px solid var(--border-color, #2a2a2a);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.byok-toggle:hover { color: var(--text-primary); }
+
+.byok-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.byok-btn {
+  flex: 1 1 auto;
+  min-width: 120px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+.byok-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.byok-btn-primary {
+  background: var(--accent-color);
+  color: #fff;
+}
+.byok-btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
+.byok-btn-secondary {
+  background: transparent;
+  color: var(--text-primary);
+  border-color: var(--border-color, #2a2a2a);
+}
+.byok-btn-secondary:hover:not(:disabled) { background: var(--surface-color); }
+
+.byok-feedback {
+  font-size: 0.85rem;
+  margin: 10px 0 0;
+  min-height: 1.2em;
+  color: var(--text-secondary);
+}
+.byok-feedback.is-success { color: #34c759; }
+.byok-feedback.is-error   { color: #ff453a; }
+
+/* -------------------------------------------------------------------------
+   Phone in landscape orientation
+   -------------------------------------------------------------------------
+   Phones held sideways have ~360-430px of vertical space but 600-932px of
+   horizontal space. Stacking the dashboard vertically (the default mobile
+   layout) means almost nothing is visible above the fold. Re-layout into
+   two columns:
+     LEFT:  hero block + quick-stats + temperature graph
+     RIGHT: hourly scroll + 8-day hi/lo list
+   This puts the current conditions + graph on the same screen as the
+   forecast list, and the user can scroll either column independently.
+
+   Targeted via `max-height: 500px` so tablets and desktops in landscape
+   (which have plenty of vertical room) keep the single-column layout.
+   ------------------------------------------------------------------------- */
+@media (orientation: landscape) and (max-height: 500px) {
+  /* Open the column up — single-column 500px cap looks lost on a wide
+     landscape phone. Cap to a generous 960px so on the biggest landscape
+     phones the layout doesn't sprawl out to the bezels. */
+  .app-container {
+    max-width: 960px;
+    padding: 0 8px;
+  }
+
+  /* Tighter header so we don't burn a third of the viewport on chrome. */
+  .app-header {
+    padding: calc(8px + env(safe-area-inset-top, 0px)) 12px 8px;
+    gap: 8px;
+  }
+  #location-name { font-size: 1.1rem; }
+
+  /* Two grid cells, one per column wrapper. The wrappers contain the
+     section blocks in normal flow, so we don't have to wire up
+     grid-rows on every individual section — and the swipe-between-
+     cities cube transition can target each wrapper independently. */
+  #weather-view {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 16px;
+    align-items: start;
+    padding-bottom: 16px;
+  }
+  #weather-view > .dashboard-left  { grid-column: 1; grid-row: 1; min-width: 0; }
+  #weather-view > .dashboard-right { grid-column: 2; grid-row: 1; min-width: 0; }
+  /* Cube perspectives spawned by the per-column transition live in the
+     same two grid cells — JS sets grid-column inline, so we just need
+     to make sure they participate in the grid (no display override). */
+
+  /* Compact hero — 4.5rem temp is huge in a half-width column. Drop padding
+     and shrink the number so the graph below it also fits on screen. */
+  .hero-section {
+    padding: 12px 8px 8px;
+  }
+  .hero-when {
+    margin-bottom: 8px;
+    font-size: 0.7rem;
+  }
+  .hero-icon-large svg,
+  .hero-icon-large img {
+    width: 44px;
+    height: 44px;
+    margin-bottom: 4px;
+  }
+  .hero-desc { font-size: 1rem; }
+  .hero-temp-large {
+    font-size: 3rem;
+    margin: 4px 0;
+  }
+  .hero-feels-like {
+    font-size: 0.85rem;
+    margin-bottom: 10px;
+  }
+  .precip-message {
+    font-size: 0.85rem;
+    margin-top: 8px;
+  }
+
+  /* Stats grid in a narrow column gets cramped at 3 cols — keep 3 but
+     reduce gaps and font slightly so the labels don't wrap awkwardly. */
+  .quick-stats-grid {
+    padding: 10px;
+    gap: 10px 4px;
+  }
+  .stat-label { font-size: 0.75rem; }
+  .stat-value { font-size: 0.95rem; }
+
+  /* Tighten the graph block. */
+  .day-detail-section { padding: 10px 8px; }
+
+  /* Right-column polish: keep the hourly bar's native horizontal scroll
+     but stop the daily list from pushing the page taller than necessary.
+     Reduce row padding for density. */
+  .hourly-scroll {
+    padding: 10px 8px;
+    gap: 16px;
+  }
+  .daily-list { padding: 0 8px 8px; }
+  .daily-item { padding: 8px 8px; }
+
+  /* The slide-to-hero animation lands ghosts on the hero's actual rect
+     via getBoundingClientRect, so the diagonal right-column-row →
+     left-column-hero flight already works without any JS changes. The
+     only thing worth tuning here is the easing duration: a slightly
+     longer travel deserves a touch more time. */
+  .day-slide-ghost--flying {
+    transition-duration: 600ms;
+  }
+}
+
+/* Even tighter scaling for very short landscape windows (e.g. iPhone SE
+   landscape at 320×568 → 568×320). Keep the two-column structure but
+   drop hero padding further so the graph stays visible. */
+@media (orientation: landscape) and (max-height: 380px) {
+  .hero-section { padding: 8px 6px 4px; }
+  .hero-temp-large { font-size: 2.5rem; }
+  .hero-icon-large svg,
+  .hero-icon-large img { width: 36px; height: 36px; }
+  .app-header {
+    padding: calc(4px + env(safe-area-inset-top, 0px)) 10px 4px;
+  }
+  #location-name { font-size: 1rem; }
+}
+
+/* -------------------------------------------------------------------------
+   Tablet in landscape orientation (and wider laptop windows)
+   -------------------------------------------------------------------------
+   The phone-landscape block above only matches at max-height: 500px, so
+   tablets in landscape (iPad mini 1133×744, iPad Pro 12.9 1366×1024, etc.)
+   were falling back to the centered 500px single-column layout with huge
+   empty bands on either side.
+
+   This tier reuses the same left/right column split but keeps the normal
+   font sizes and spacing — there's plenty of vertical room here, so the
+   hero doesn't need to shrink and the columns can breathe.
+
+   Gated by min-height: 501px + min-width: 900px so phones never hit it
+   (they're caught by the block above) and desktops in landscape that
+   happen to be sized like a tablet also benefit.
+   ------------------------------------------------------------------------- */
+@media (orientation: landscape) and (min-height: 501px) and (min-width: 900px) {
+  .app-container {
+    max-width: 1200px;
+    padding: 0 16px;
+  }
+
+  /* Same grid skeleton as the phone-landscape block — explicit grid-row on
+     every child so the right column starts at the top instead of below the
+     left column (CSS Grid's sparse auto-placement bug). */
+  #weather-view {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto auto;
+    column-gap: 32px;
+    align-items: start;
+    padding-bottom: 24px;
+  }
+
+  #weather-view > .dashboard-left  { grid-column: 1; grid-row: 1; min-width: 0; }
+  #weather-view > .dashboard-right { grid-column: 2; grid-row: 1; min-width: 0; }
+  /* Per-column cubes (JS-injected) live in the same two grid cells. */
+
+  /* No size shrinking — keep the regular hero. A touch of vertical trim
+     so the graph below it stays comfortably visible. */
+  .hero-section {
+    padding: 32px 24px 24px;
+  }
+}
+
+/* -------------------------------------------------------------------------
+   Ambient weather effects layer
+   -------------------------------------------------------------------------
+   #weather-fx is a fixed-position container behind .app-container that
+   plays gentle animations matching whatever weather the dashboard is
+   showing — clouds drifting past, lightning flashes during a storm,
+   fog rolling through, rain streaks, snow falling, dust on the wind.
+
+   Rules of engagement:
+     - Always position:fixed + pointer-events:none, so it can never
+       block taps / drags / text selection on the real UI.
+     - Low opacity (12-20%) on every visible layer — the dashboard text
+       must stay perfectly legible.
+     - Pure CSS — JS only toggles the parent class. No timers, no
+       animation re-bind on day changes; the @keyframes loops cover
+       the "every ~20 s" cadence by spacing visible content far apart
+       in the cycle.
+     - Honors prefers-reduced-motion at the bottom (all animations off).
+   ------------------------------------------------------------------------- */
+#weather-fx {
+  position: fixed;
+  inset: 0;
+  z-index: 0;            /* behind .app-container (z-index: 1 below) */
+  pointer-events: none;
+  overflow: hidden;
+}
+
+#weather-fx .fx-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+/* Make sure the actual UI floats above the fx layer. .app-container is
+   already position:relative; just give it a higher stacking context. */
+.app-container { z-index: 1; }
+
+/* ── Clouds drifting (few / scattered / broken / cloudy-night) ──────── */
+/* CSS-drawn clouds using radial-gradient ellipses instead of SVG-as-
+   background-image. Two reasons:
+     1. No external file dependency — if the SVG path / cache / service
+        worker glitches, the effect still renders.
+     2. We can tune the visible alpha directly in the gradient stop,
+        instead of relying on filter:brightness + element opacity to
+        haul a darkly-painted SVG up to a visible value on a #121212
+        background.
+   Each .fx-layer is a 100vw × ~30vh band containing 2-3 soft-edged
+   ellipses; horizontal translation drifts the whole band across. The
+   gradient is wider than the viewport (300vw), so the band stays full
+   of clouds across the entire animation cycle. */
+.fx-clouds .fx-layer-1,
+.fx-clouds .fx-layer-2,
+.fx-clouds .fx-layer-3,
+.fx-clouds-many .fx-layer-1,
+.fx-clouds-many .fx-layer-2,
+.fx-clouds-many .fx-layer-3 {
+  background-repeat: no-repeat;
+  animation: fx-cloud-drift 36s linear infinite;
+  /* Direction is now encoded in the start/end translate values inside
+     the @keyframes (--fx-wind-{start,end}-{x,y}) set by JS. The old
+     animation-direction approach handled only 1D L↔R drift. */
+}
+
+/* Each layer is the full viewport (100vw × 100vh from `inset: 0` above).
+   We paint 1-3 cloud ellipses INSIDE that box via radial-gradient at
+   specific %-x positions, then animate the whole layer with the existing
+   fx-cloud-drift keyframes (transform: translateX from -15vw to 120vw)
+   to slide it across. Layer is `background-repeat: no-repeat` so the
+   ellipses don't tile. */
+
+/* Cloud vertical placement is deliberately spread across the MID and
+   LOWER half of the viewport — the top ~25% is covered by the sticky
+   #121212 app-header on most layouts, so painting clouds there hides
+   them. Bands at 35-90% height stay in the transparent dashboard area
+   where the user will actually see them drifting past. */
+
+/* Few-clouds layout: 1-2 clouds per layer, well spaced out vertically. */
+.fx-clouds .fx-layer-1 {
+  background-image:
+    radial-gradient(ellipse 160px 55px at 30% 38%, rgba(255,255,255,0.50), transparent 70%),
+    radial-gradient(ellipse 90px  38px at 70% 45%, rgba(255,255,255,0.42), transparent 75%);
+  background-size: 100% 100%;
+  animation-duration: calc(38s / var(--fx-wind-speed, 1));
+}
+.fx-clouds .fx-layer-2 {
+  background-image:
+    radial-gradient(ellipse 200px 65px at 55% 62%, rgba(255,255,255,0.46), transparent 70%);
+  background-size: 100% 100%;
+  animation-duration: calc(48s / var(--fx-wind-speed, 1));
+  animation-delay: -18s;
+}
+.fx-clouds .fx-layer-3 {
+  background-image:
+    radial-gradient(ellipse 130px 45px at 40% 85%, rgba(255,255,255,0.48), transparent 75%);
+  background-size: 100% 100%;
+  animation-duration: calc(28s / var(--fx-wind-speed, 1));
+  animation-delay: -10s;
+}
+
+/* Many-clouds layout (scattered / broken): 2-3 clouds per layer for a
+   busier sky, slightly higher alpha. */
+.fx-clouds-many .fx-layer-1 {
+  background-image:
+    radial-gradient(ellipse 170px 58px at 20% 38%, rgba(255,255,255,0.58), transparent 70%),
+    radial-gradient(ellipse 130px 45px at 55% 45%, rgba(255,255,255,0.54), transparent 75%),
+    radial-gradient(ellipse 150px 50px at 82% 40%, rgba(255,255,255,0.56), transparent 70%);
+  background-size: 100% 100%;
+  animation-duration: calc(34s / var(--fx-wind-speed, 1));
+}
+.fx-clouds-many .fx-layer-2 {
+  background-image:
+    radial-gradient(ellipse 220px 75px at 30% 62%, rgba(255,255,255,0.50), transparent 70%),
+    radial-gradient(ellipse 160px 55px at 70% 65%, rgba(255,255,255,0.48), transparent 75%);
+  background-size: 100% 100%;
+  animation-duration: calc(46s / var(--fx-wind-speed, 1));
+  animation-delay: -18s;
+}
+.fx-clouds-many .fx-layer-3 {
+  background-image:
+    radial-gradient(ellipse 150px 50px at 25% 86%, rgba(255,255,255,0.54), transparent 70%),
+    radial-gradient(ellipse 190px 65px at 65% 82%, rgba(255,255,255,0.50), transparent 75%);
+  background-size: 100% 100%;
+  animation-duration: calc(30s / var(--fx-wind-speed, 1));
+  animation-delay: -9s;
+}
+@keyframes fx-cloud-drift {
+  /* Two-phase drift: travel from start position to end position during
+     the FIRST ~30% of the cycle, then hold off-screen at the end for
+     the remaining ~70%. The 0% → 100% jump is invisible because both
+     endpoints are off-screen. Net effect: clouds appear in a burst,
+     then there's a long gap before the next pass — "occasional"
+     rather than constant.
+
+     Start / end positions come from CSS custom properties set by JS
+     (applyWeatherFX). They encode both x AND y components of the wind,
+     so clouds can drift diagonally — e.g. a SE wind blows clouds up
+     and to the left, not just left. Fallback values keep clouds
+     drifting roughly L→R when wind data is missing. */
+  0%      { transform: translate(var(--fx-wind-start-x, -200vmax), var(--fx-wind-start-y, 0)); }
+  30%     { transform: translate(var(--fx-wind-end-x,    200vmax), var(--fx-wind-end-y,   0)); }
+  100%    { transform: translate(var(--fx-wind-end-x,    200vmax), var(--fx-wind-end-y,   0)); }
+}
+
+/* ── Thunderstorm: occasional white flash ──────────────────────────── */
+/* The flash is ~0.6 s of mostly-imperceptible whiteness inside a 22 s
+   cycle, with a two-pulse pattern so it reads as real lightning rather
+   than a screen blink. */
+.fx-thunder .fx-layer-1 {
+  background: #ffffff;
+  opacity: 0;
+  animation: fx-lightning 22s ease-out infinite;
+}
+@keyframes fx-lightning {
+  0%, 92%, 100% { opacity: 0; }
+  92.3% { opacity: 0.30; }
+  92.8% { opacity: 0.05; }
+  93.2% { opacity: 0.42; }
+  93.7% { opacity: 0; }
+}
+
+/* Rain — discrete drops, not stripes. Each rain layer paints a handful
+   of small elongated ellipses at scattered (%-x, %-y) positions inside
+   the layer; the layer then translates vertically from above-viewport
+   to below, so the drops fall together. Three layers with different
+   drop positions + fall durations make the drops look like they're at
+   slightly varied speeds. Drops are 3×14 px with the bright center
+   fading to transparent, so they read as raindrops on the #121212
+   background rather than a solid stripe.
+
+   .fx-rain uses all three rain layers.
+   .fx-thunder reuses two of them on top of its lightning flash layer. */
+.fx-rain .fx-layer-1,
+.fx-rain .fx-layer-2,
+.fx-rain .fx-layer-3,
+.fx-thunder .fx-layer-2,
+.fx-thunder .fx-layer-3 {
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  animation: fx-rain-fall 2s linear infinite;
+}
+
+.fx-rain .fx-layer-1,
+.fx-thunder .fx-layer-2 {
+  background-image:
+    radial-gradient(ellipse 3px 14px at  8% 12%, rgba(200,225,255,0.80), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 22% 38%, rgba(200,225,255,0.80), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 36% 64%, rgba(200,225,255,0.80), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 51% 22%, rgba(200,225,255,0.80), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 65% 78%, rgba(200,225,255,0.80), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 79% 48%, rgba(200,225,255,0.80), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 92% 90%, rgba(200,225,255,0.80), transparent 70%);
+  animation-duration: 2.2s;
+}
+
+.fx-rain .fx-layer-2,
+.fx-thunder .fx-layer-3 {
+  background-image:
+    radial-gradient(ellipse 3px 14px at  4% 70%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 17% 24%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 30% 92%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 46%  6%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 60% 50%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 74% 28%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 88% 62%, rgba(200,225,255,0.70), transparent 70%);
+  animation-duration: 1.7s;
+  animation-delay: -0.6s;
+}
+
+.fx-rain .fx-layer-3 {
+  background-image:
+    radial-gradient(ellipse 2px 12px at 12% 44%, rgba(200,225,255,0.65), transparent 70%),
+    radial-gradient(ellipse 2px 12px at 27% 80%, rgba(200,225,255,0.65), transparent 70%),
+    radial-gradient(ellipse 2px 12px at 42% 18%, rgba(200,225,255,0.65), transparent 70%),
+    radial-gradient(ellipse 2px 12px at 56% 64%, rgba(200,225,255,0.65), transparent 70%),
+    radial-gradient(ellipse 2px 12px at 71% 36%, rgba(200,225,255,0.65), transparent 70%),
+    radial-gradient(ellipse 2px 12px at 86% 84%, rgba(200,225,255,0.65), transparent 70%);
+  animation-duration: 1.4s;
+  animation-delay: -0.3s;
+}
+
+@keyframes fx-rain-fall {
+  from { transform: translateY(-100vh); }
+  to   { transform: translateY(100vh); }
+}
+
+/* Light rain / drizzle — just a handful of drops on a single active
+   layer, falling slowly. Two extra layers contribute a couple more
+   drops on slow cycles so the user still gets the "every few seconds"
+   feel without a continuous downpour. Used for OWM ids 300/301/310/
+   311/500/520 (see LIGHT_RAIN_IDS in ui.js). */
+.fx-rain-light .fx-layer-1,
+.fx-rain-light .fx-layer-2,
+.fx-rain-light .fx-layer-3 {
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  animation: fx-rain-fall 3s linear infinite;
+}
+.fx-rain-light .fx-layer-1 {
+  background-image:
+    radial-gradient(ellipse 3px 14px at 18% 30%, rgba(200,225,255,0.75), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 56% 62%, rgba(200,225,255,0.75), transparent 70%),
+    radial-gradient(ellipse 3px 14px at 82% 18%, rgba(200,225,255,0.75), transparent 70%);
+  animation-duration: 3.4s;
+}
+.fx-rain-light .fx-layer-2 {
+  background-image:
+    radial-gradient(ellipse 2px 12px at 35% 80%, rgba(200,225,255,0.65), transparent 70%),
+    radial-gradient(ellipse 2px 12px at 72% 42%, rgba(200,225,255,0.65), transparent 70%);
+  animation-duration: 2.8s;
+  animation-delay: -1.4s;
+}
+.fx-rain-light .fx-layer-3 {
+  background-image:
+    radial-gradient(ellipse 2px 12px at  9% 55%, rgba(200,225,255,0.65), transparent 70%),
+    radial-gradient(ellipse 2px 12px at 92% 88%, rgba(200,225,255,0.65), transparent 70%);
+  animation-duration: 3.8s;
+  animation-delay: -0.9s;
+}
+
+/* ── Snow falling: layered dot patterns drifting downward ─────────── */
+.fx-snow .fx-layer-1,
+.fx-snow .fx-layer-2,
+.fx-snow .fx-layer-3 {
+  opacity: 0.55;
+  animation: fx-snow-fall 14s linear infinite;
+}
+.fx-snow .fx-layer-1 {
+  background-image: radial-gradient(circle, rgba(255,255,255,0.55) 1px, transparent 1.6px);
+  background-size: 26px 26px;
+  animation-duration: 12s;
+}
+.fx-snow .fx-layer-2 {
+  background-image: radial-gradient(circle, rgba(255,255,255,0.45) 1.5px, transparent 2.4px);
+  background-size: 48px 48px;
+  animation-duration: 20s;
+  animation-delay: -7s;
+  opacity: 0.45;
+}
+.fx-snow .fx-layer-3 {
+  background-image: radial-gradient(circle, rgba(255,255,255,0.7) 2px, transparent 3px);
+  background-size: 90px 90px;
+  animation-duration: 32s;
+  animation-delay: -14s;
+  opacity: 0.35;
+}
+@keyframes fx-snow-fall {
+  from { background-position-y: 0; }
+  to   { background-position-y: 110vh; }
+}
+
+/* ── Fog / mist / smoke / haze: drifting hazy bands ───────────────── */
+/* A wide soft white gradient that pans horizontally — like a low cloud
+   blowing through. Two staggered bands at different vertical positions
+   give the "every 20s or so" impression. */
+.fx-fog .fx-layer-1,
+.fx-fog .fx-layer-2,
+.fx-fog .fx-layer-3,
+.fx-haze .fx-layer-1,
+.fx-haze .fx-layer-2,
+.fx-smoke .fx-layer-1,
+.fx-smoke .fx-layer-2 {
+  background-repeat: no-repeat;
+  animation: fx-haze-drift 28s linear infinite;
+}
+/* Mist — radial-gradient ellipses (not linear) so the fade is soft on
+   ALL sides instead of having a hard horizontal top/bottom edge. Alpha
+   dropped roughly in half from the original values so the mist reads
+   as a faint drifting haze rather than a bright stripe across the
+   dashboard.
+   Movement: layer translates via the shared fx-haze-drift keyframes,
+   which now use the 2D wind vector (--fx-wind-start-x/y → end-x/y)
+   set by JS — so mist drifts in whatever direction the wind is
+   blowing toward, not just left → right. Background-position keeps
+   the gradient at a fixed vertical band within the layer so the
+   three layers occupy top / middle / bottom thirds. */
+.fx-fog .fx-layer-1 {
+  background-image: radial-gradient(
+    ellipse closest-side at 50% 50%,
+    rgba(220, 230, 240, 0.22),
+    rgba(220, 230, 240, 0.13) 45%,
+    transparent 78%
+  );
+  background-size: 75vw 32vh;
+  background-position: 50% 28%;
+  animation-duration: 26s;
+}
+.fx-fog .fx-layer-2 {
+  background-image: radial-gradient(
+    ellipse closest-side at 50% 50%,
+    rgba(220, 230, 240, 0.18),
+    rgba(220, 230, 240, 0.10) 45%,
+    transparent 80%
+  );
+  background-size: 90vw 28vh;
+  background-position: 50% 58%;
+  animation-duration: 38s;
+  animation-delay: -16s;
+}
+.fx-fog .fx-layer-3 {
+  background-image: radial-gradient(
+    ellipse closest-side at 50% 50%,
+    rgba(220, 230, 240, 0.16),
+    rgba(220, 230, 240, 0.09) 45%,
+    transparent 80%
+  );
+  background-size: 65vw 22vh;
+  background-position: 50% 80%;
+  animation-duration: 22s;
+  animation-delay: -10s;
+}
+/* Haze — matched to mist: radial-gradient ellipses (soft on all four
+   sides) rather than linear-gradients (hard horizontal edges). Three
+   stops for a long, smooth fade. Tan tint kept to differentiate from
+   mist's neutral grey-white. */
+.fx-haze .fx-layer-1 {
+  background-image: radial-gradient(
+    ellipse closest-side at 50% 50%,
+    rgba(240, 210, 140, 0.26),
+    rgba(240, 210, 140, 0.15) 45%,
+    transparent 80%
+  );
+  background-size: 90vw 60vh;
+  background-position: 50% 30%;
+  animation-duration: 36s;
+}
+.fx-haze .fx-layer-2 {
+  background-image: radial-gradient(
+    ellipse closest-side at 50% 50%,
+    rgba(240, 210, 140, 0.20),
+    rgba(240, 210, 140, 0.11) 45%,
+    transparent 80%
+  );
+  background-size: 80vw 50vh;
+  background-position: 50% 65%;
+  animation-duration: 28s;
+  animation-delay: -14s;
+}
+.fx-smoke .fx-layer-1 {
+  background-image: linear-gradient(90deg, transparent, rgba(110, 110, 110, 0.22), transparent);
+  background-size: 80vw 55vh;
+  background-position: 50% 35%;
+  animation-duration: 30s;
+}
+.fx-smoke .fx-layer-2 {
+  background-image: linear-gradient(90deg, transparent, rgba(80, 80, 80, 0.18), transparent);
+  background-size: 100vw 45vh;
+  background-position: 50% 70%;
+  animation-duration: 40s;
+  animation-delay: -20s;
+}
+@keyframes fx-haze-drift {
+  /* 2D wind drift, same custom properties the cloud-drift keyframes use
+     (set by JS in applyWeatherFX). Mist / haze / smoke / dust now
+     follow the actual wind direction — diagonally if the wind isn't
+     purely horizontal. Unlike the cloud keyframes, this is a smooth
+     0% → 100% drift (no off-screen "hold"), so atmospheric haze is
+     continuous rather than bursty. Layers stagger via per-layer
+     animation-duration / -delay. */
+  from { transform: translate(var(--fx-wind-start-x, -200vmax), var(--fx-wind-start-y, 0)); }
+  to   { transform: translate(var(--fx-wind-end-x,    200vmax), var(--fx-wind-end-y,   0)); }
+}
+
+/* ── Sand / dust: tan-tinted blowing bands ────────────────────────── */
+.fx-dust .fx-layer-1,
+.fx-dust .fx-layer-2 {
+  background-repeat: no-repeat;
+  animation: fx-haze-drift 22s linear infinite;
+}
+.fx-dust .fx-layer-1 {
+  background-image: linear-gradient(90deg, transparent, rgba(220, 180, 130, 0.35), transparent);
+  background-size: 70vw 70vh;
+  background-position: 50% 25%;
+}
+.fx-dust .fx-layer-2 {
+  background-image: linear-gradient(90deg, transparent, rgba(200, 160, 110, 0.30), transparent);
+  background-size: 85vw 60vh;
+  background-position: 50% 65%;
+  animation-duration: 30s;
+  animation-delay: -12s;
+}
+
+/* Reduced-motion: disable every background animation. The layers are
+   still rendered but stay parked at their initial transform/position,
+   so users who opted out of motion get the static dashboard. */
+@media (prefers-reduced-motion: reduce) {
+  /* Reduced motion: kill the drift / fall / flash animations but leave
+     the painted clouds / fog bands at their starting position so the
+     ambient layer is still SEEN (just not animated). Without resetting
+     transform here, layers driven by translateX keyframes get parked
+     off-screen at the keyframe's `from` state and the user sees
+     nothing at all. */
+  #weather-fx .fx-layer {
+    animation: none !important;
+    transform: translateX(0) !important;
+  }
+}
