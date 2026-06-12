@@ -1930,6 +1930,74 @@ body.has-alert .a2hs-prompt {
   animation-delay: -0.9s;
 }
 
+/* Heavy rain — dense drops falling rapidly. Drops are longer (3px wide,
+   24px tall for layers 1 & 2; 2px wide, 20px tall for layer 3) and slightly
+   more opaque (up to 0.85 opacity). Many more drops per layer (12-14 drops
+   per layer) to give a thick, heavy curtain appearance. The animation
+   duration is significantly shortened (0.7s to 1.2s) so the rain lashes
+   down quickly. Used for OWM heavy rain/drizzle IDs (see HEAVY_RAIN_IDS in ui.js). */
+.fx-rain-heavy .fx-layer-1,
+.fx-rain-heavy .fx-layer-2,
+.fx-rain-heavy .fx-layer-3 {
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  animation: fx-rain-fall 1s linear infinite;
+}
+.fx-rain-heavy .fx-layer-1 {
+  background-image:
+    radial-gradient(ellipse 3px 24px at  8% 12%, rgba(200,225,255,0.85), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 15% 45%, rgba(200,225,255,0.85), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 22% 38%, rgba(200,225,255,0.85), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 29% 82%, rgba(200,225,255,0.85), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 36% 64%, rgba(200,225,255,0.85), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 43% 15%, rgba(200,225,255,0.85), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 51% 22%, rgba(200,225,255,0.85), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 58% 70%, rgba(200,225,255,0.85), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 65% 78%, rgba(200,225,255,0.85), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 72% 30%, rgba(200,225,255,0.85), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 79% 48%, rgba(200,225,255,0.85), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 86% 92%, rgba(200,225,255,0.85), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 92% 90%, rgba(200,225,255,0.85), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 98% 55%, rgba(200,225,255,0.85), transparent 70%);
+  animation-duration: 1.2s;
+}
+.fx-rain-heavy .fx-layer-2 {
+  background-image:
+    radial-gradient(ellipse 3px 24px at  4% 70%, rgba(200,225,255,0.75), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 11% 12%, rgba(200,225,255,0.75), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 17% 24%, rgba(200,225,255,0.75), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 24% 85%, rgba(200,225,255,0.75), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 30% 92%, rgba(200,225,255,0.75), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 38% 40%, rgba(200,225,255,0.75), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 46%  6%, rgba(200,225,255,0.75), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 53% 58%, rgba(200,225,255,0.75), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 60% 50%, rgba(200,225,255,0.75), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 67% 18%, rgba(200,225,255,0.75), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 74% 28%, rgba(200,225,255,0.75), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 81% 72%, rgba(200,225,255,0.75), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 88% 62%, rgba(200,225,255,0.75), transparent 70%),
+    radial-gradient(ellipse 3px 24px at 95% 33%, rgba(200,225,255,0.75), transparent 70%);
+  animation-duration: 0.9s;
+  animation-delay: -0.3s;
+}
+.fx-rain-heavy .fx-layer-3 {
+  background-image:
+    radial-gradient(ellipse 2px 20px at 12% 44%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 2px 20px at 20% 10%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 2px 20px at 27% 80%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 2px 20px at 35% 50%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 2px 20px at 42% 18%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 2px 20px at 49% 90%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 2px 20px at 56% 64%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 2px 20px at 63% 30%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 2px 20px at 71% 36%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 2px 20px at 78% 75%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 2px 20px at 86% 84%, rgba(200,225,255,0.70), transparent 70%),
+    radial-gradient(ellipse 2px 20px at 93% 22%, rgba(200,225,255,0.70), transparent 70%);
+  animation-duration: 0.7s;
+  animation-delay: -0.15s;
+}
+
 /* ── Snow falling: layered dot patterns drifting downward ─────────── */
 .fx-snow .fx-layer-1,
 .fx-snow .fx-layer-2,

@@ -700,13 +700,29 @@ const UI = {
     520, // light intensity shower rain
   ]),
 
+  HEAVY_RAIN_IDS: new Set([
+    302, // heavy intensity drizzle
+    312, // heavy intensity drizzle rain
+    314, // heavy shower rain and drizzle
+    502, // heavy intensity rain
+    503, // very heavy rain
+    504, // extreme rain
+    522, // heavy intensity shower rain
+    531, // ragged shower rain
+  ]),
+
   _fxClassFor(assetName, weatherId) {
     if (!assetName) return null;
     if (assetName.startsWith('thunderstorm'))         return 'fx-thunder';
     if (assetName.startsWith('shower-rain')) {
-      return this.LIGHT_RAIN_IDS.has(Number(weatherId))
-        ? 'fx-rain-light'
-        : 'fx-rain';
+      const wid = Number(weatherId);
+      if (this.LIGHT_RAIN_IDS.has(wid)) {
+        return 'fx-rain-light';
+      } else if (this.HEAVY_RAIN_IDS.has(wid)) {
+        return 'fx-rain-heavy';
+      } else {
+        return 'fx-rain';
+      }
     }
     if (assetName.startsWith('snow'))                 return 'fx-snow';
     if (assetName === 'broken-clouds' ||
@@ -1059,6 +1075,38 @@ const UI = {
     return m[code] || 'unknown';
   },
 
+  // Map WMO weather codes (used by Open-Meteo) onto OWM-style IDs
+  wmoToOwmId(code) {
+    if (code == null) return 800;
+    const m = {
+      0: 800,  // clear sky -> clear
+      1: 801,  // mainly clear -> few clouds
+      2: 802,  // partly cloudy -> scattered clouds
+      3: 804,  // overcast -> broken clouds
+      45: 741, // fog -> fog (mist)
+      48: 741, // depositing rime fog -> fog
+      51: 300, // light drizzle
+      53: 301, // drizzle
+      55: 302, // dense drizzle
+      56: 310, // light freezing drizzle
+      57: 311, // freezing drizzle
+      61: 500, // light rain
+      63: 501, // rain
+      65: 502, // heavy rain
+      66: 511, // light freezing rain
+      67: 511, // freezing rain
+      80: 520, // light showers
+      81: 521, // showers
+      82: 522, // violent showers
+      85: 600, // light snow showers
+      86: 601, // snow showers
+      95: 211, // thunderstorm
+      96: 212, // thunderstorm with hail
+      99: 212  // thunderstorm with heavy hail
+    };
+    return m[code] || 800;
+  },
+
   // Convert an Open-Meteo hourly entry into the OWM 3h-slot shape the rest
   // of the UI expects. Marks rain via the '3h' field by multiplying mm/h × 3
   // so per-day totals still come out correct (we sum '3h' / 3 ≈ mm/h elsewhere).
@@ -1072,6 +1120,7 @@ const UI = {
         pressure: 1013 // not requested from Open-Meteo; benign default
       },
       weather: [{
+        id: this.wmoToOwmId(h.weatherCode),
         icon: this.wmoToIcon(h.weatherCode, h.isDay),
         description: this.wmoDescription(h.weatherCode)
       }],
