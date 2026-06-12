@@ -916,6 +916,10 @@ const App = {
     } else {
       this.renderAll();
     }
+
+    // 6. Clear textbox and disable import button
+    UI.importExportTextarea.value = '';
+    UI.updateImportButtonState();
   },
 
   registerServiceWorker() {
