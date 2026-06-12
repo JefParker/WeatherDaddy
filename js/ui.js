@@ -3428,8 +3428,31 @@ const UI = {
     let isValid = false;
     if (text) {
       try {
-        JSON.parse(text);
-        isValid = true;
+        const data = JSON.parse(text);
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+          const hasLocations = Array.isArray(data.locations);
+          const hasCurrentLoc = data.currentLocation && typeof data.currentLocation === 'object';
+          const hasApiKey = typeof data.apiKey === 'string';
+
+          if (hasLocations || hasCurrentLoc || hasApiKey) {
+            isValid = true;
+
+            if (hasLocations) {
+              for (const loc of data.locations) {
+                if (loc && (typeof loc.lat !== 'number' || typeof loc.lon !== 'number' || typeof loc.name !== 'string')) {
+                  isValid = false;
+                  break;
+                }
+              }
+            }
+            if (hasCurrentLoc && isValid) {
+              const loc = data.currentLocation;
+              if (typeof loc.lat !== 'number' || typeof loc.lon !== 'number' || typeof loc.name !== 'string') {
+                isValid = false;
+              }
+            }
+          }
+        }
       } catch (e) {
         isValid = false;
       }
