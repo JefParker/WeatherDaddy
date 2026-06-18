@@ -1,3 +1,44 @@
+// Feature Toggle: Set to true to use a dynamic temperature-based color gradient,
+// or false to revert to the default orange temperature line style.
+const CONFIG_TEMP_LINE_COLOR = {
+  enabled: true, // Set to false to revert to the original orange style
+  keyframes: [
+    { temp: 10, color: [13, 71, 161] },   // Deep Blue (#0d47a1) - 50°F
+    { temp: 15, color: [0, 172, 193] },   // Cool Teal (#00acc1) - 59°F
+    { temp: 20, color: [139, 195, 74] },  // Soft Green/T-shirt weather (#8bc34a) - 68°F
+    { temp: 25, color: [255, 179, 0] },   // Warm Amber (#ffb300) - 77°F
+    { temp: 30, color: [183, 28, 28] }    // Deep Red (#b71c1c) - 86°F
+  ]
+};
+
+// Interpolates a temperature (in Celsius) to an RGB color based on keyframes.
+function getTempColor(tempC) {
+  const kf = CONFIG_TEMP_LINE_COLOR.keyframes;
+  if (!kf || kf.length === 0) return '#ff7043';
+  
+  if (tempC <= kf[0].temp) {
+    const c = kf[0].color;
+    return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+  }
+  if (tempC >= kf[kf.length - 1].temp) {
+    const c = kf[kf.length - 1].color;
+    return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+  }
+  
+  for (let i = 0; i < kf.length - 1; i++) {
+    const k1 = kf[i];
+    const k2 = kf[i+1];
+    if (tempC >= k1.temp && tempC <= k2.temp) {
+      const ratio = (tempC - k1.temp) / (k2.temp - k1.temp);
+      const r = Math.round(k1.color[0] + (k2.color[0] - k1.color[0]) * ratio);
+      const g = Math.round(k1.color[1] + (k2.color[1] - k1.color[1]) * ratio);
+      const b = Math.round(k1.color[2] + (k2.color[2] - k1.color[2]) * ratio);
+      return `rgb(${r}, ${g}, ${b})`;
+    }
+  }
+  return '#ff7043';
+}
+
 const UI = {
   // Screens & Overlays
   mainMenuScreen: document.getElementById('main-menu-screen'),
@@ -3187,6 +3228,18 @@ const UI = {
 
     container.innerHTML = `
       <svg class="graph-svg" viewBox="0 0 ${width} ${height}">
+        ${CONFIG_TEMP_LINE_COLOR.enabled ? `
+        <defs>
+          <linearGradient id="temp-line-gradient" gradientUnits="userSpaceOnUse" x1="${paddingX}" y1="0" x2="${width - paddingX}" y2="0">
+            ${points.map((p, i) => {
+              const offset = (i / (points.length - 1)) * 100;
+              const color = getTempColor(p.temp);
+              return `<stop offset="${offset}%" stop-color="${color}"></stop>`;
+            }).join('')}
+          </linearGradient>
+        </defs>
+        ` : ''}
+
         <line class="graph-guideline" x1="${paddingX}" y1="${height - paddingY}" x2="${width - paddingX}" y2="${height - paddingY}"></line>
         <line class="graph-guideline" x1="${paddingX}" y1="${paddingY}" x2="${width - paddingX}" y2="${paddingY}"></line>
 
@@ -3212,13 +3265,14 @@ const UI = {
           return `<rect class="graph-precip-bar" x="${p.x - barWidth/2}" y="${p.yPrecip}" width="${barWidth + 0.5}" height="${height - paddingY - p.yPrecip}"></rect>`;
         }).join('')}
 
-        <path class="graph-path" d="${pathD}" fill="none" stroke="#ff7043" stroke-width="3"></path>
+        <path class="graph-path" d="${pathD}" fill="none" stroke="${CONFIG_TEMP_LINE_COLOR.enabled ? 'url(#temp-line-gradient)' : '#ff7043'}" style="${CONFIG_TEMP_LINE_COLOR.enabled ? 'stroke: url(#temp-line-gradient) !important;' : ''}" stroke-width="3"></path>
 
         ${points.map(p => {
           if (!p.isOriginal) return '';
+          const badgeColor = CONFIG_TEMP_LINE_COLOR.enabled ? getTempColor(p.temp) : '#ff7043';
           return `
-            <rect class="graph-badge" x="${p.x - 12}" y="${p.yTemp - 25}" width="24" height="18" rx="4"></rect>
-            <path d="M ${p.x - 4} ${p.yTemp - 7} L ${p.x} ${p.yTemp - 2} L ${p.x + 4} ${p.yTemp - 7} Z" fill="#ff7043"></path>
+            <rect class="graph-badge" x="${p.x - 12}" y="${p.yTemp - 25}" width="24" height="18" rx="4" style="fill: ${badgeColor} !important;"></rect>
+            <path d="M ${p.x - 4} ${p.yTemp - 7} L ${p.x} ${p.yTemp - 2} L ${p.x + 4} ${p.yTemp - 7} Z" fill="${badgeColor}"></path>
             <text class="graph-temp-badge-text" x="${p.x}" y="${p.yTemp - 12}">${this.formatTemp(p.temp)}°</text>
             <text class="graph-time-text" x="${p.x}" y="${height - 10}">${p.time}</text>
           `;
