@@ -2059,12 +2059,15 @@ const UI = {
               const nowActive =
                 currentDayIdx === 0 && selectedHourDt == null
                   ? 'active-hour' : '';
+              const nowStyle = CONFIG_TEMP_LINE_COLOR.enabled && nowActive
+                ? `style="box-shadow: inset 0 0 0 2px ${getTempColor(cw.main.temp)} !important;"`
+                : '';
               const w0 = cw.weather && cw.weather[0] ? cw.weather[0] : null;
               const nowIcon = w0
                 ? this.getWeatherIconSVG(w0.icon, 28, w0.id, cw.dt)
                 : '';
               out += `
-                <div class="hourly-tile active-day ${nowActive}" data-day-index="0" data-now="1">
+                <div class="hourly-tile active-day ${nowActive}" data-day-index="0" data-now="1" ${nowStyle}>
                   <span class="hourly-time">Now</span>
                   <span class="hourly-icon">${nowIcon}</span>
                   <span class="hourly-temp">${this.formatTemp(cw.main.temp)}°</span>
@@ -2072,11 +2075,15 @@ const UI = {
             }
 
             for (const h of slots) {
+              const isActive = selectedHourDt === h.dt;
               const cls =
                 (dayIdx === currentDayIdx ? 'active-day ' : '') +
-                (selectedHourDt === h.dt ? 'active-hour' : '');
+                (isActive ? 'active-hour' : '');
+              const tileStyle = CONFIG_TEMP_LINE_COLOR.enabled && isActive
+                ? `style="box-shadow: inset 0 0 0 2px ${getTempColor(h.main.temp)} !important;"`
+                : '';
               out += `
-                <div class="hourly-tile ${cls.trim()}" data-day-index="${dayIdx}" data-dt="${h.dt}">
+                <div class="hourly-tile ${cls.trim()}" data-day-index="${dayIdx}" data-dt="${h.dt}" ${tileStyle}>
                   <span class="hourly-time">${this.formatTime(h.dt, true, state.timezone)}</span>
                   <span class="hourly-icon">${this.getWeatherIconSVG(h.weather[0].icon, 28, h.weather[0].id, h.dt)}</span>
                   <span class="hourly-temp">${this.formatTemp(h.main.temp)}°</span>
