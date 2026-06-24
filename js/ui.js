@@ -120,6 +120,13 @@ const UI = {
       this.toggleScreen('main-menu', false);
       this.toggleScreen('about', true);
     });
+    const copyUrlBtn = document.getElementById('copy-url-btn');
+    if (copyUrlBtn) {
+      copyUrlBtn.addEventListener('click', () => {
+        this.toggleScreen('main-menu', false);
+        this.handleCopyURL();
+      });
+    }
     if (this.aboutBackBtn) this.aboutBackBtn.addEventListener('click', () => {
       this.closeOverlayWithCube('about-screen');
     });
@@ -418,6 +425,7 @@ const UI = {
       else if (action === 'units') this.toggleScreen('units', true);
       else if (action === 'import-export') this.toggleScreen('import-export', true);
       else if (action === 'about') this.toggleScreen('about', true);
+      else if (action === 'copy-url') this.handleCopyURL();
     });
   },
 
@@ -3625,5 +3633,64 @@ const UI = {
         feedback.className = 'byok-feedback is-error';
       }
     }
+  },
+
+  async handleCopyURL() {
+    const loc = Storage.getLocation();
+    if (!loc) {
+      this.showToast('No active location to copy URL for.', true);
+      return;
+    }
+    
+    const url = new URL(window.location.origin + window.location.pathname);
+    url.searchParams.set('lat', loc.lat);
+    url.searchParams.set('lon', loc.lon);
+    url.searchParams.set('name', loc.name);
+    
+    const shareUrl = url.toString();
+    
+    if (!navigator.clipboard || !navigator.clipboard.writeText) {
+      this.showToast('Copy not supported by browser.', true);
+      return;
+    }
+    
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      this.showToast('URL copied to clipboard!');
+    } catch (err) {
+      console.error('Failed to copy URL:', err);
+      this.showToast('Could not copy URL.', true);
+    }
+  },
+
+  showToast(message, isError = false) {
+    const toast = document.getElementById('toast-notification');
+    const toastMsg = document.getElementById('toast-message');
+    if (!toast || !toastMsg) return;
+    
+    toastMsg.textContent = message;
+    
+    const icon = toast.querySelector('svg');
+    if (icon) {
+      if (isError) {
+        icon.innerHTML = `<line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>`;
+        icon.style.color = '#ff5252';
+      } else {
+        icon.innerHTML = `<polyline points="20 6 9 17 4 12"></polyline>`;
+        icon.style.color = 'var(--accent-color)';
+      }
+    }
+    
+    toast.classList.add('visible');
+    toast.setAttribute('aria-hidden', 'false');
+    
+    if (this._toastTimeout) {
+      clearTimeout(this._toastTimeout);
+    }
+    
+    this._toastTimeout = setTimeout(() => {
+      toast.classList.remove('visible');
+      toast.setAttribute('aria-hidden', 'true');
+    }, 3000);
   }
 };

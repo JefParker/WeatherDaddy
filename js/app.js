@@ -431,6 +431,29 @@ const App = {
   },
 
   async loadInitialWeather() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const latParam = urlParams.get('lat');
+    const lonParam = urlParams.get('lon');
+    const nameParam = urlParams.get('name');
+
+    if (latParam && lonParam) {
+      const lat = parseFloat(latParam);
+      const lon = parseFloat(lonParam);
+      if (!isNaN(lat) && !isNaN(lon)) {
+        const name = nameParam || 'Shared Location';
+        await this.fetchAndDisplay(lat, lon, name);
+
+        try {
+          const cleanUrl = window.location.origin + window.location.pathname;
+          window.history.replaceState(null, '', cleanUrl);
+        } catch (e) {
+          console.warn('Failed to clear URL query parameters:', e);
+        }
+
+        return null;
+      }
+    }
+
     const saved = Storage.getLocation();
     if (saved) {
       await this.fetchAndDisplay(saved.lat, saved.lon, saved.name);
