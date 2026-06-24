@@ -3635,6 +3635,26 @@ const UI = {
     }
   },
 
+  fallbackCopyTextToClipboard(text) {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.top = '0';
+    textArea.style.left = '0';
+    textArea.style.opacity = '0';
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    let successful = false;
+    try {
+      successful = document.execCommand('copy');
+    } catch (err) {
+      console.error('Fallback copy failed:', err);
+    }
+    document.body.removeChild(textArea);
+    return successful;
+  },
+
   async handleCopyURL() {
     const loc = Storage.getLocation();
     if (!loc) {
@@ -3649,16 +3669,19 @@ const UI = {
     
     const shareUrl = url.toString();
     
-    if (!navigator.clipboard || !navigator.clipboard.writeText) {
-      this.showToast('Copy not supported by browser.', true);
-      return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        this.showToast('URL copied to clipboard!');
+        return;
+      } catch (err) {
+        console.warn('Clipboard API write failed, trying fallback:', err);
+      }
     }
     
-    try {
-      await navigator.clipboard.writeText(shareUrl);
+    if (this.fallbackCopyTextToClipboard(shareUrl)) {
       this.showToast('URL copied to clipboard!');
-    } catch (err) {
-      console.error('Failed to copy URL:', err);
+    } else {
       this.showToast('Could not copy URL.', true);
     }
   },
