@@ -3666,6 +3666,20 @@ const UI = {
     url.searchParams.set('lat', loc.lat);
     url.searchParams.set('lon', loc.lon);
     url.searchParams.set('name', loc.name);
+
+    const state = App.state;
+    if (state && (state.selectedDayIndex !== -1 || state.selectedHourDt !== null)) {
+      const dayKey = App.getDayKey(state.selectedDayIndex);
+      if (dayKey) {
+        url.searchParams.set('day', dayKey);
+      }
+      if (state.selectedHourDt !== null) {
+        url.searchParams.set('dt', state.selectedHourDt);
+        const timezone = state.currentWeather.timezone;
+        const localDate = new Date((state.selectedHourDt + timezone) * 1000);
+        url.searchParams.set('hour', localDate.getUTCHours());
+      }
+    }
     
     const shareUrl = url.toString();
     

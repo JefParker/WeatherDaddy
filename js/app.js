@@ -436,6 +436,18 @@ const App = {
     const lonParam = urlParams.get('lon');
     const nameParam = urlParams.get('name');
 
+    const dayParam = urlParams.get('day');
+    const dtParam = urlParams.get('dt');
+    const hourParam = urlParams.get('hour');
+
+    if (dayParam || dtParam || hourParam) {
+      this._sharedStateToRestore = {
+        day: dayParam,
+        dt: dtParam ? parseInt(dtParam, 10) : null,
+        hour: hourParam ? parseInt(hourParam, 10) : null
+      };
+    }
+
     if (latParam && lonParam) {
       const lat = parseFloat(latParam);
       const lon = parseFloat(lonParam);
@@ -571,6 +583,11 @@ const App = {
     this.state.timezone         = cached.currentWeather.timezone;
     this.state.selectedDayIndex = -1;
     this.state.selectedHourDt   = null;
+
+    if (this._sharedStateToRestore) {
+      this._resolveSharedDayAndHour(false);
+    }
+
     this.renderAll();
     return true;
   },
@@ -609,6 +626,7 @@ const App = {
       Storage.saveLocation(lat, lon, cityName);
 
       const keepDay = hadCache ? this.state.selectedDayIndex : -1;
+      const keepHour = hadCache ? this.state.selectedHourDt : null;
 
       this.state.currentWeather   = currentWeather;
       this.state.forecast         = forecast;
@@ -620,10 +638,11 @@ const App = {
       this.state.cityName         = cityName;
       this.state.timezone         = currentWeather.timezone;
       this.state.selectedDayIndex = keepDay;
-      // A pinned hour is tied to an exact dt that no longer exists in the
-      // fresh forecast (slots roll forward), so clearing keeps the hero
-      // honest after a refresh / city change.
-      this.state.selectedHourDt   = null;
+      this.state.selectedHourDt   = keepHour;
+
+      if (this._sharedStateToRestore) {
+        this._resolveSharedDayAndHour(true);
+      }
 
       this.renderAll();
     } catch (e) {
@@ -943,6 +962,140 @@ const App = {
     // 6. Clear textbox and disable import button
     UI.importExportTextarea.value = '';
     UI.updateImportButtonState();
+  },
+
+  getDayKey(index) {
+    if (!this.state.currentWeather || !this.state.forecast) return null;
+    const timezone = this.state.currentWeather.timezone;
+    const dayKeyFor = (unixSec) => {
+      const local = new Date((unixSec + timezone) * 1000);
+      return `${local.getUTCFullYear()}-${local.getUTCMonth()}-${local.getUTCDate()}`;
+    };
+
+    const allDaysMap = new Map();
+    this.state.forecast.list.forEach(item => {
+      const key = dayKeyFor(item.dt);
+      if (!allDaysMap.has(key)) {
+        allDaysMap.set(key, { key, dt: item.dt });
+      }
+    });
+
+    const omDaily = this.state.omDaily || [];
+    for (const dayInfo of omDaily) {
+      const key = dayKeyFor(dayInfo.dt);
+      if (allDaysMap.has(key)) continue;
+      allDaysMap.set(key, { key, dt: dayInfo.dt });
+    }
+
+    const dailyData = Array.from(allDaysMap.values())
+      .sort((a, b) => a.dt - b.dt)
+      .slice(0, 8);
+
+    const targetIdx = index === -1 ? 0 : index;
+    if (targetIdx >= 0 && targetIdx < dailyData.length) {
+      return dailyData[targetIdx].key;
+    }
+    return null;
+  },
+
+  _resolveSharedDayAndHour(consume = false) {
+    if (!this._sharedStateToRestore) return;
+    if (!this.state.currentWeather || !this.state.forecast) return;
+
+    const { day, dt, hour } = this._sharedStateToRestore;
+    if (consume) {
+      this._sharedStateToRestore = null;
+    }
+
+    const currentWeather = this.state.currentWeather;
+    const forecast = this.state.forecast;
+    const timezone = currentWeather.timezone;
+
+    const dayKeyFor = (unixSec) => {
+      const local = new Date((unixSec + timezone) * 1000);
+      return `${local.getUTCFullYear()}-${local.getUTCMonth()}-${local.getUTCDate()}`;
+    };
+
+    const allDaysMap = new Map();
+    forecast.list.forEach(item => {
+      const key = dayKeyFor(item.dt);
+      if (!allDaysMap.has(key)) {
+        allDaysMap.set(key, { key, hourly: [], dt: item.dt });
+      }
+      allDaysMap.get(key).hourly.push(item);
+    });
+
+    const omDaily = this.state.omDaily || [];
+    const omHourly = this.state.omHourly || [];
+    for (const dayInfo of omDaily) {
+      const key = dayKeyFor(dayInfo.dt);
+      if (allDaysMap.has(key)) continue;
+
+      const dayStart = dayInfo.dt;
+      const dayEnd = dayStart + 24 * 3600;
+      const slots = omHourly
+        .filter(h => h.dt >= dayStart && h.dt < dayEnd && (Math.floor(h.dt / 3600) % 3 === 0))
+        .map(h => UI._omHourToOwmSlot(h));
+      if (!slots.length) continue;
+
+      allDaysMap.set(key, { key, hourly: slots, dt: dayStart });
+    }
+
+    const dailyData = Array.from(allDaysMap.values())
+      .sort((a, b) => a.dt - b.dt)
+      .slice(0, 8);
+
+    let resolvedDayIdx = -1;
+
+    if (day !== null) {
+      const matchedIdx = dailyData.findIndex(d => d.key === day);
+      if (matchedIdx !== -1) {
+        resolvedDayIdx = matchedIdx;
+      } else {
+        const idx = parseInt(day, 10);
+        if (!isNaN(idx) && idx >= -1 && idx < dailyData.length) {
+          resolvedDayIdx = idx;
+        }
+      }
+    }
+
+    let resolvedHourDt = null;
+    const targetDay = dailyData[resolvedDayIdx === -1 ? 0 : resolvedDayIdx];
+
+    if (targetDay && targetDay.hourly && targetDay.hourly.length > 0) {
+      if (dt !== null) {
+        const parsedDt = parseInt(dt, 10);
+        const found = targetDay.hourly.find(h => h.dt === parsedDt);
+        if (found) {
+          resolvedHourDt = found.dt;
+        }
+      }
+
+      if (resolvedHourDt === null && hour !== null) {
+        const targetHour = parseInt(hour, 10);
+        if (!isNaN(targetHour)) {
+          let closestSlot = null;
+          let minDiff = Infinity;
+
+          targetDay.hourly.forEach(slot => {
+            const localDate = new Date((slot.dt + timezone) * 1000);
+            const slotHour = localDate.getUTCHours();
+            const diff = Math.abs(slotHour - targetHour);
+            if (diff < minDiff) {
+              minDiff = diff;
+              closestSlot = slot;
+            }
+          });
+
+          if (closestSlot) {
+            resolvedHourDt = closestSlot.dt;
+          }
+        }
+      }
+    }
+
+    this.state.selectedDayIndex = resolvedDayIdx;
+    this.state.selectedHourDt = resolvedHourDt;
   },
 
   registerServiceWorker() {
