@@ -1,4 +1,4 @@
-const CACHE_NAME = 'weatherdaddy-v172';
+const CACHE_NAME = 'weatherdaddy-v173';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
