@@ -1325,6 +1325,9 @@ const UI = {
     if (!alerts || alerts.length === 0) {
       bar.hidden = true;
       document.body.classList.remove('has-alert');
+      bar.classList.remove('alert-bar-slide-in');
+      this._lastAnimatedAlertCity = '';
+      this._lastAnimatedAlertEvent = '';
       return;
     }
     const top = alerts[0];
@@ -1335,8 +1338,23 @@ const UI = {
         ? `${top.event} (+${extra} more)`
         : top.event;
     }
+
+    const currentCity = this._renderedCityName || '';
+    const currentEvent = top.event || '';
+    const shouldAnimate = bar.hidden ||
+                          (this._lastAnimatedAlertCity !== currentCity) ||
+                          (this._lastAnimatedAlertEvent !== currentEvent);
+
     bar.hidden = false;
     document.body.classList.add('has-alert');
+
+    if (shouldAnimate) {
+      bar.classList.remove('alert-bar-slide-in');
+      void bar.offsetWidth; // force layout reflow
+      bar.classList.add('alert-bar-slide-in');
+      this._lastAnimatedAlertCity = currentCity;
+      this._lastAnimatedAlertEvent = currentEvent;
+    }
   },
 
   // Populate the alerts overlay with one card per active warning, showing
@@ -1567,6 +1585,22 @@ const UI = {
     const isToday = selectedDayIndex === -1 || selectedDayIndex === 0;
     const todayData = dailyData[0];
 
+    // Determine if we should perform a 3D flip animation of the hero temperature
+    const cityChanged = this._renderedCityName !== cityName;
+    let shouldFlip = false;
+    let oldTempStr = '';
+    const prevHeroTempEl = this.weatherView ? this.weatherView.querySelector('.hero-temp-large') : null;
+    if (prevHeroTempEl &&
+        !cityChanged &&
+        this._lastIsToday &&
+        this._lastPinnedHour === null &&
+        isToday &&
+        selectedHourDt === null &&
+        this._lastTempUnit === Storage.getUnits().temp) {
+      const prevBackEl = this.weatherView.querySelector('.hero-temp-flip-back');
+      oldTempStr = (prevBackEl ? prevBackEl.textContent : prevHeroTempEl.textContent).trim();
+    }
+
     // Compute sunrise/sunset for a given calendar day at the city. For Today
     // we trust OWM's values (sub-minute accurate); for forecast days we compute
     // locally since OWM's free /forecast endpoint doesn't include them.
@@ -1782,7 +1816,20 @@ const UI = {
     if (pinnedHourSlot) {
       heroTempHTML = `<div class="hero-temp-large">${this.formatTemp(heroData.main.temp)}°</div>`;
     } else if (isToday) {
-      heroTempHTML = `<div class="hero-temp-large">${this.formatTemp(activeDay.main.temp)}°</div>`;
+      const newTempStr = `${this.formatTemp(activeDay.main.temp)}°`;
+      if (oldTempStr && oldTempStr !== newTempStr) {
+        shouldFlip = true;
+        heroTempHTML = `
+          <div class="hero-temp-flip-container">
+            <div class="hero-temp-flip-card">
+              <div class="hero-temp-flip-front hero-temp-large">${oldTempStr}</div>
+              <div class="hero-temp-flip-back hero-temp-large">${newTempStr}</div>
+            </div>
+          </div>
+        `;
+      } else {
+        heroTempHTML = `<div class="hero-temp-large">${newTempStr}</div>`;
+      }
     } else {
       const day = dailyData[selectedDayIndex];
       const hi = Math.round(this.convertTemp(Math.max(...day.temps)));
@@ -2149,10 +2196,18 @@ const UI = {
     // keep the user's scroll exactly where it was.
     const prevHourly = this.weatherView.querySelector('.hourly-scroll');
     const prevHourlyScrollLeft = prevHourly ? prevHourly.scrollLeft : null;
-    const cityChanged = this._renderedCityName !== cityName;
     this._renderedCityName = cityName;
 
     this.weatherView.innerHTML = html;
+
+    // Trigger flip animation if pending
+    if (shouldFlip) {
+      const flipCard = this.weatherView.querySelector('.hero-temp-flip-card');
+      if (flipCard) {
+        void flipCard.offsetHeight; // force reflow
+        flipCard.classList.add('animate-flip');
+      }
+    }
 
     // Drive the ambient background-effects layer from whatever icon the
     // hero just landed on. Picks among fx-clouds / fx-rain / fx-snow /
@@ -2182,23 +2237,25 @@ const UI = {
     // standard dblclick event because the element has
     // `touch-action: manipulation` in CSS, which suppresses the browser's
     // default double-tap-to-zoom and lets dblclick fire reliably.
-    const heroTempEl = this.weatherView.querySelector('.hero-temp-large');
-    if (heroTempEl && this._onUnitChange) {
-      heroTempEl.addEventListener('dblclick', (e) => {
-        e.preventDefault();
-        const current = Storage.getUnits().temp;
-        const next = current === 'F' ? 'C' : 'F';
-        // Keep the Units screen's segmented control visually in sync so
-        // when the user opens that screen it reflects the new choice.
-        const seg = document.querySelector('.segmented-control[data-setting="temp"]');
-        if (seg) {
-          seg.querySelectorAll('button').forEach(b => {
-            b.classList.toggle('active', b.getAttribute('data-value') === next);
-          });
-        }
-        this._onUnitChange('temp', next);
-      });
-    }
+    const heroTempEls = this.weatherView.querySelectorAll('.hero-temp-large');
+    heroTempEls.forEach(el => {
+      if (this._onUnitChange) {
+        el.addEventListener('dblclick', (e) => {
+          e.preventDefault();
+          const current = Storage.getUnits().temp;
+          const next = current === 'F' ? 'C' : 'F';
+          // Keep the Units screen's segmented control visually in sync so
+          // when the user opens that screen it reflects the new choice.
+          const seg = document.querySelector('.segmented-control[data-setting="temp"]');
+          if (seg) {
+            seg.querySelectorAll('button').forEach(b => {
+              b.classList.toggle('active', b.getAttribute('data-value') === next);
+            });
+          }
+          this._onUnitChange('temp', next);
+        });
+      }
+    });
 
     this.weatherView.querySelectorAll('.daily-item').forEach(el => {
       el.addEventListener('click', () => {
@@ -2328,6 +2385,10 @@ const UI = {
     // Horizontal swipe on the quick-stats grid pages through extra items
     // (anything beyond the first 6) using a 3D cube transition. Loops.
     this._bindStatsSwipe();
+
+    this._lastIsToday = isToday;
+    this._lastPinnedHour = selectedHourDt;
+    this._lastTempUnit = Storage.getUnits().temp;
   },
 
   // Horizontal swipe on the quick-stats pager → cube-flip to next/prev page.
