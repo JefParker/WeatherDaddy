@@ -39,14 +39,14 @@
     },
     {
       "src": "./assets/screenshot-vertical-2.png",
-      "sizes": "976x2048",
+      "sizes": "707x1626",
       "type": "image/png",
       "form_factor": "narrow",
       "label": "Hourly timeline and 8-day forecast"
     },
     {
       "src": "./assets/screenshot-vertical-3.png",
-      "sizes": "978x2048",
+      "sizes": "707x1626",
       "type": "image/png",
       "form_factor": "narrow",
       "label": "Saved locations and per-city weather"
