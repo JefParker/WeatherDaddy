@@ -1,3 +1,19 @@
+const FULL_MOONS_2026 = [
+  { name: 'Wolf Moon', dt: 1767434520 },
+  { name: 'Snow Moon', dt: 1769983740 },
+  { name: 'Worm Moon', dt: 1772537820 },
+  { name: 'Pink Moon', dt: 1775095860 },
+  { name: 'Flower Moon', dt: 1777656180 },
+  { name: 'Blue Moon', dt: 1780217100 },
+  { name: 'Strawberry Moon', dt: 1782777360 },
+  { name: 'Buck Moon', dt: 1785335700 },
+  { name: 'Sturgeon Moon', dt: 1787890680 },
+  { name: 'Harvest Moon', dt: 1790441340 },
+  { name: 'Hunter\'s Moon', dt: 1792987860 },
+  { name: 'Beaver Moon', dt: 1795531980 },
+  { name: 'Cold Moon', dt: 1798075680 }
+];
+
 // Feature Toggle: Set to true to use a dynamic temperature-based color gradient,
 // or false to revert to the default orange temperature line style.
 const CONFIG_TEMP_LINE_COLOR = {
@@ -931,6 +947,19 @@ const UI = {
     const unit = Storage.getUnits().precip;
     if (unit === 'in') return (mm / 25.4).toFixed(2) + ' in';
     return mm.toFixed(1) + ' mm';
+  },
+
+  formatTideHeight(meters) {
+    if (meters == null) return '—';
+    const unit = Storage.getUnits().precip;
+    if (unit === 'in') {
+      const feet = meters * 3.28084;
+      const sign = feet >= 0 ? '+' : '';
+      return `${sign}${feet.toFixed(2)} ft`;
+    } else {
+      const sign = meters >= 0 ? '+' : '';
+      return `${sign}${meters.toFixed(2)} m`;
+    }
   },
 
   // Returns a temperature converted to the user's unit but NOT rounded.
@@ -1945,10 +1974,133 @@ const UI = {
     if ((activeDay.pop || 0) > 0) {
       page1Candidates.push(item('Precip chance', `${Math.round(activeDay.pop * 100)}%`));
     }
-    // UV when noteworthy (Moderate+) OR during the day; otherwise the
-    // moon phase. The complement always lives on page 2 — see below.
     page1Candidates.push(uvOnPage1 ? uvStatItem : moonStatHTML);
     page1Candidates.push(item('Air quality', this.esc(this.aqiLabel(aq.aqi))));
+
+    const getSunTimesForTimestamp = (ts) => {
+      const local = new Date((ts + (state.timezone || 0)) * 1000);
+      return this._solarTimes(
+        local.getUTCFullYear(),
+        local.getUTCMonth() + 1,
+        local.getUTCDate(),
+        currentWeather.coord.lat,
+        currentWeather.coord.lon,
+        state.timezone || 0
+      );
+    };
+
+    let activeFullMoon = null;
+    let optimalTimeStr = '';
+    let moonFilter = '';
+    const currentDt = heroData.dt;
+
+    for (const fm of FULL_MOONS_2026) {
+      const fmSun = getSunTimesForTimestamp(fm.dt);
+      const nextDaySun = getSunTimesForTimestamp(fm.dt + 86400);
+
+      if (fmSun.sunset && nextDaySun.sunrise) {
+        const startDt = fmSun.sunset - 12 * 3600;
+        const endDt = nextDaySun.sunrise;
+
+        if (currentDt >= startDt && currentDt <= endDt) {
+          activeFullMoon = fm;
+
+          let optimalDt = fm.dt;
+          const fmPeakIsAtNight = fm.dt >= fmSun.sunset && fm.dt <= nextDaySun.sunrise;
+          
+          if (!fmPeakIsAtNight) {
+            optimalDt = fmSun.sunset + (nextDaySun.sunrise - fmSun.sunset) / 2;
+          }
+
+          optimalTimeStr = this.formatTime(optimalDt, true, state.timezone);
+
+          switch (fm.name) {
+            case 'Wolf Moon':
+            case 'Snow Moon':
+              moonFilter = 'drop-shadow(0 0 10px rgba(255, 255, 255, 0.25))';
+              break;
+            case 'Worm Moon':
+              moonFilter = 'drop-shadow(0 0 10px rgba(255, 220, 150, 0.35)) saturate(1.2) hue-rotate(15deg)';
+              break;
+            case 'Pink Moon':
+              moonFilter = 'drop-shadow(0 0 12px rgba(255, 105, 180, 0.45)) saturate(1.4) hue-rotate(320deg)';
+              break;
+            case 'Flower Moon':
+              moonFilter = 'drop-shadow(0 0 12px rgba(255, 182, 193, 0.35)) saturate(1.3) hue-rotate(340deg)';
+              break;
+            case 'Blue Moon':
+              moonFilter = 'drop-shadow(0 0 12px rgba(30, 144, 255, 0.5)) saturate(1.6) hue-rotate(180deg)';
+              break;
+            case 'Strawberry Moon':
+              moonFilter = 'drop-shadow(0 0 14px rgba(255, 100, 100, 0.55)) saturate(1.5) hue-rotate(345deg)';
+              break;
+            case 'Buck Moon':
+              moonFilter = 'drop-shadow(0 0 12px rgba(218, 165, 32, 0.45)) saturate(1.4) hue-rotate(10deg)';
+              break;
+            case 'Sturgeon Moon':
+              moonFilter = 'drop-shadow(0 0 10px rgba(176, 196, 222, 0.35))';
+              break;
+            case 'Harvest Moon':
+              moonFilter = 'drop-shadow(0 0 14px rgba(255, 140, 0, 0.6)) saturate(1.7) hue-rotate(15deg)';
+              break;
+            case 'Hunter\'s Moon':
+              moonFilter = 'drop-shadow(0 0 14px rgba(255, 69, 0, 0.6)) saturate(1.6) hue-rotate(5deg)';
+              break;
+            case 'Beaver Moon':
+              moonFilter = 'drop-shadow(0 0 12px rgba(205, 133, 63, 0.4)) saturate(1.1)';
+              break;
+            case 'Cold Moon':
+              moonFilter = 'drop-shadow(0 0 12px rgba(0, 255, 255, 0.45)) saturate(1.3) hue-rotate(150deg)';
+              break;
+            default:
+              moonFilter = 'drop-shadow(0 0 10px rgba(255, 255, 255, 0.25))';
+          }
+          break;
+        }
+      }
+    }
+
+    let moonCardHTML = '';
+    if (activeFullMoon) {
+      moonCardHTML = `
+        <div class="stat-item full-moon-card" style="grid-column: span 3; display: flex; flex-direction: row; align-items: center; text-align: left; padding: 16px 20px; background: rgba(255, 255, 255, 0.03); border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.08); gap: 16px;">
+          <img src="assets/icons/weather/moon-full.svg" alt="Full Moon" style="width: 48px; height: 48px; flex-shrink: 0; filter: ${moonFilter};" />
+          <div style="min-width: 0;">
+            <div style="font-size: 1.25rem; font-weight: 700; color: #eaeaea; line-height: 1.2;">${this.esc(activeFullMoon.name)}</div>
+            <div style="font-size: 0.95rem; color: #a0a0a0; margin-top: 4px;">Most Pronounced: ${optimalTimeStr}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    let nextHighItem = null;
+    let nextLowItem = null;
+
+    if (state.tideExtrema && state.tideExtrema.length > 0) {
+      const currentDt = heroData.dt;
+      const nextHigh = state.tideExtrema.find(e => e.type === 'High' && e.dt > currentDt);
+      const nextLow = state.tideExtrema.find(e => e.type === 'Low' && e.dt > currentDt);
+      if (nextHigh) {
+        nextHighItem = item('Next high tide', `${this.formatTime(nextHigh.dt, true, state.timezone)} (${this.formatTideHeight(nextHigh.h)})`);
+      }
+      if (nextLow) {
+        nextLowItem = item('Next low tide', `${this.formatTime(nextLow.dt, true, state.timezone)} (${this.formatTideHeight(nextLow.h)})`);
+      }
+    }
+
+    let touchesWater = false;
+    if (currentWeather.coord && state.tideCoords) {
+      const dLat = state.tideCoords.lat - currentWeather.coord.lat;
+      const dLon = state.tideCoords.lon - currentWeather.coord.lon;
+      const degDiff = Math.sqrt(dLat * dLat + dLon * dLon);
+      touchesWater = degDiff <= 0.065;
+    }
+
+    if (touchesWater) {
+      if (nextHighItem) page1Candidates.push(nextHighItem);
+      if (nextLowItem) page1Candidates.push(nextLowItem);
+    }
+
     if (hasPressure)        page1Candidates.push(item('Pressure',   this.formatPressure(activeDay.main.pressure)));
     if (hasVisibility)      page1Candidates.push(item('Visibility', this.formatDist(activeDay.visibility)));
     if (aq.pollen != null)  page1Candidates.push(item('Pollen',     this.esc(this.pollenLabel(aq.pollen))));
@@ -2006,13 +2158,31 @@ const UI = {
     pushPollen('Grass pollen', aq.grassPollen);
     pushPollen('Weed pollen',  aq.weedPollen);
 
-    const page1 = page1Candidates.slice(0, STATS_PER_PAGE);
-    const overflow = page1Candidates.slice(STATS_PER_PAGE);
-    const page2AndAfter = [...page2Forced, ...overflow, ...lowPriority];
+    if (!touchesWater) {
+      if (nextHighItem) lowPriority.push(nextHighItem);
+      if (nextLowItem) lowPriority.push(nextLowItem);
+    }
 
-    const statsPages = [padToFull(page1)];
-    for (let i = 0; i < page2AndAfter.length; i += STATS_PER_PAGE) {
-      statsPages.push(padToFull(page2AndAfter.slice(i, i + STATS_PER_PAGE)));
+    let statsPages = [];
+
+    if (activeFullMoon) {
+      const page1Items = [moonCardHTML, ...page1Candidates.slice(0, 3)];
+      statsPages.push(page1Items.join(''));
+
+      const overflow = page1Candidates.slice(3);
+      const page2AndAfter = [...page2Forced, ...overflow, ...lowPriority];
+      for (let i = 0; i < page2AndAfter.length; i += STATS_PER_PAGE) {
+        statsPages.push(padToFull(page2AndAfter.slice(i, i + STATS_PER_PAGE)));
+      }
+    } else {
+      const page1 = page1Candidates.slice(0, STATS_PER_PAGE);
+      const overflow = page1Candidates.slice(STATS_PER_PAGE);
+      const page2AndAfter = [...page2Forced, ...overflow, ...lowPriority];
+
+      statsPages.push(padToFull(page1));
+      for (let i = 0; i < page2AndAfter.length; i += STATS_PER_PAGE) {
+        statsPages.push(padToFull(page2AndAfter.slice(i, i + STATS_PER_PAGE)));
+      }
     }
     // Reset to page 0 whenever the city changes; otherwise preserve.
     if (this._renderedCityName !== cityName) this._statsPageIdx = 0;

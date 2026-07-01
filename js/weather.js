@@ -348,5 +348,22 @@ const WeatherAPI = {
     } catch (_) {
       return empty;
     }
+  },
+
+  async getTides(lat, lon) {
+    const url = `https://marine-api.open-meteo.com/v1/marine?latitude=${enc(lat)}&longitude=${enc(lon)}&hourly=sea_level_height_msl`;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const data = await res.json();
+      return {
+        latitude: data.latitude,
+        longitude: data.longitude,
+        hourly: data.hourly || null
+      };
+    } catch (_) {
+      return null;
+    }
   }
 };
+

@@ -233,12 +233,13 @@ const App = {
 
     const promise = (async () => {
       try {
-        const [currentWeather, forecast, enrichment, airQuality, alerts] = await Promise.all([
+        const [currentWeather, forecast, enrichment, airQuality, alerts, tides] = await Promise.all([
           WeatherAPI.getCurrentWeather(lat, lon),
           WeatherAPI.getForecast(lat, lon),
           WeatherAPI.getEnrichment(lat, lon).catch(() => ({ uv: { current: null, daily: [] }, hourly: [], daily: [] })),
           WeatherAPI.getAirQuality(lat, lon).catch(() => ({ aqi: null, pollen: null, treePollen: null, grassPollen: null, weedPollen: null })),
-          WeatherAPI.getAlerts(lat, lon).catch(() => [])
+          WeatherAPI.getAlerts(lat, lon).catch(() => []),
+          WeatherAPI.getTides(lat, lon).catch(() => null)
         ]);
         Storage.setWeatherCache(lat, lon, {
           currentWeather,
@@ -248,6 +249,8 @@ const App = {
           omDaily: enrichment.daily,
           airQuality,
           alerts,
+          tides: tides ? tides.hourly : null,
+          tideCoords: tides ? { lat: tides.latitude, lon: tides.longitude } : null,
           cityName: name || currentWeather.name
         });
       } catch (_) {
@@ -579,6 +582,9 @@ const App = {
     this.state.omDaily          = cached.omDaily || [];
     this.state.airQuality       = cached.airQuality || { aqi: null, pollen: null, treePollen: null, grassPollen: null, weedPollen: null };
     this.state.alerts           = cached.alerts || [];
+    this.state.tides            = cached.tides || null;
+    this.state.tideCoords       = cached.tideCoords || null;
+    this.state.tideExtrema      = this.state.tides ? this.findTideExtrema(this.state.tides) : [];
     this.state.cityName         = cityName;
     this.state.timezone         = cached.currentWeather.timezone;
     this.state.selectedDayIndex = -1;
@@ -601,12 +607,13 @@ const App = {
     }
 
     try {
-      const [currentWeather, forecast, enrichment, airQuality, alerts] = await Promise.all([
+      const [currentWeather, forecast, enrichment, airQuality, alerts, tides] = await Promise.all([
         WeatherAPI.getCurrentWeather(lat, lon),
         WeatherAPI.getForecast(lat, lon),
         WeatherAPI.getEnrichment(lat, lon).catch(() => ({ uv: { current: null, daily: [] }, hourly: [], daily: [] })),
         WeatherAPI.getAirQuality(lat, lon).catch(() => ({ aqi: null, pollen: null, treePollen: null, grassPollen: null, weedPollen: null })),
-        WeatherAPI.getAlerts(lat, lon).catch(() => [])
+        WeatherAPI.getAlerts(lat, lon).catch(() => []),
+        WeatherAPI.getTides(lat, lon).catch(() => null)
       ]);
 
       if (token !== this._fetchToken) return;
@@ -621,6 +628,8 @@ const App = {
         omDaily: enrichment.daily,
         airQuality,
         alerts,
+        tides: tides ? tides.hourly : null,
+        tideCoords: tides ? { lat: tides.latitude, lon: tides.longitude } : null,
         cityName
       });
       Storage.saveLocation(lat, lon, cityName);
@@ -635,6 +644,9 @@ const App = {
       this.state.omDaily          = enrichment.daily;
       this.state.airQuality       = airQuality;
       this.state.alerts           = alerts;
+      this.state.tides            = tides ? tides.hourly : null;
+      this.state.tideCoords       = tides ? { lat: tides.latitude, lon: tides.longitude } : null;
+      this.state.tideExtrema      = this.state.tides ? this.findTideExtrema(this.state.tides) : [];
       this.state.cityName         = cityName;
       this.state.timezone         = currentWeather.timezone;
       this.state.selectedDayIndex = keepDay;
@@ -1096,6 +1108,82 @@ const App = {
 
     this.state.selectedDayIndex = resolvedDayIdx;
     this.state.selectedHourDt = resolvedHourDt;
+  },
+
+  findTideExtrema(hourlyData) {
+    if (!hourlyData || !hourlyData.time || !hourlyData.sea_level_height_msl) {
+      return [];
+    }
+    const times = hourlyData.time;
+    const heights = hourlyData.sea_level_height_msl;
+    const tides = [];
+    for (let i = 0; i < times.length; i++) {
+      const h = heights[i];
+      if (h !== null && h !== undefined) {
+        const dt = Date.parse(times[i] + 'Z') / 1000;
+        tides.push({ dt, h });
+      }
+    }
+
+    const extrema = [];
+    const n = tides.length;
+    if (n < 3) return extrema;
+
+    // Group contiguous equal values to handle flat peaks/troughs
+    const blocks = [];
+    let i = 0;
+    while (i < n) {
+      const startIdx = i;
+      const val = tides[i].h;
+      while (i < n && tides[i].h === val) {
+        i++;
+      }
+      const endIdx = i - 1;
+      blocks.push({
+        val,
+        start: startIdx,
+        end: endIdx,
+        mid: Math.floor((startIdx + endIdx) / 2)
+      });
+    }
+
+    const numBlocks = blocks.length;
+    for (let j = 1; j < numBlocks - 1; j++) {
+      const prevVal = blocks[j-1].val;
+      const currVal = blocks[j].val;
+      const nextVal = blocks[j+1].val;
+
+      const isHigh = currVal > prevVal && currVal > nextVal;
+      const isLow = currVal < prevVal && currVal < nextVal;
+
+      if (isHigh || isLow) {
+        const midIdx = blocks[j].mid;
+        let dt = tides[midIdx].dt;
+        let height = currVal;
+
+        // Quadratic interpolation if single point block
+        if (blocks[j].start === blocks[j].end && midIdx > 0 && midIdx < n - 1) {
+          const prevH = tides[midIdx-1].h;
+          const nextH = tides[midIdx+1].h;
+          const a = (prevH + nextH - 2 * currVal) / 2.0;
+          const b = (nextH - prevH) / 2.0;
+          if (Math.abs(a) > 1e-9) {
+            const x_m = -b / (2.0 * a);
+            if (x_m >= -1.0 && x_m <= 1.0) {
+              dt = tides[midIdx].dt + x_m * 3600;
+              height = a * (x_m * x_m) + b * x_m + currVal;
+            }
+          }
+        }
+
+        extrema.push({
+          type: isHigh ? 'High' : 'Low',
+          dt,
+          h: height
+        });
+      }
+    }
+    return extrema;
   },
 
   registerServiceWorker() {
