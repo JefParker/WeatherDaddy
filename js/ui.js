@@ -2081,10 +2081,14 @@ const UI = {
       const nextHigh = state.tideExtrema.find(e => e.type === 'High' && e.dt > currentDt);
       const nextLow = state.tideExtrema.find(e => e.type === 'Low' && e.dt > currentDt);
       if (nextHigh) {
-        nextHighItem = item('Next high tide', `${this.formatTime(nextHigh.dt, true, state.timezone)} (${this.formatTideHeight(nextHigh.h)})`);
+        const showHeight = Math.abs(nextHigh.h) > 1.5;
+        const heightStr = showHeight ? ` (${this.formatTideHeight(nextHigh.h)})` : '';
+        nextHighItem = item('Next high tide', `${this.formatTime(nextHigh.dt, true, state.timezone)}${heightStr}`);
       }
       if (nextLow) {
-        nextLowItem = item('Next low tide', `${this.formatTime(nextLow.dt, true, state.timezone)} (${this.formatTideHeight(nextLow.h)})`);
+        const showHeight = Math.abs(nextLow.h) > 1.5;
+        const heightStr = showHeight ? ` (${this.formatTideHeight(nextLow.h)})` : '';
+        nextLowItem = item('Next low tide', `${this.formatTime(nextLow.dt, true, state.timezone)}${heightStr}`);
       }
     }
 
