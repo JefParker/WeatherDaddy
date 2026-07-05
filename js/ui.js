@@ -1522,9 +1522,13 @@ const UI = {
 
     this.locationName.textContent = this.prettifyLocationName(cityName);
 
-    // Header Save Button
+    // Header Save Button. Include cityName so name-match catches
+    // entries that already sit in the saved list but whose stored
+    // coords drifted more than SAME_LOCATION_DEG from what /weather
+    // just returned — otherwise the star would flicker between saved
+    // and unsaved for the same place.
     const savedList = Storage.getSavedList();
-    const isSaved = Storage.isDuplicate(savedList, currentWeather.coord.lat, currentWeather.coord.lon);
+    const isSaved = Storage.isDuplicate(savedList, currentWeather.coord.lat, currentWeather.coord.lon, cityName);
 
     this.saveBtnContainer.innerHTML = `
       <button class="save-loc-btn ${isSaved ? 'saved' : ''}" id="save-btn" aria-label="Save Location">

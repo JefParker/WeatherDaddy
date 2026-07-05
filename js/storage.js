@@ -22,6 +22,26 @@ const Storage = {
       }
       toRemove.forEach(k => { try { localStorage.removeItem(k); } catch (_) {} });
     } catch (_) { /* localStorage unavailable — nothing to clean */ }
+
+    // Also dedupe the saved-locations list: users who ran the app
+    // before the tolerance widening + name-match landed may already
+    // have duplicate entries (same city stored twice with slightly
+    // different coords). Run the current isDuplicate() over the
+    // stored list, keeping the FIRST occurrence of each place.
+    try {
+      const list = this._read('weather_list', []);
+      if (Array.isArray(list) && list.length > 1) {
+        const deduped = [];
+        for (const item of list) {
+          if (!item || typeof item.lat !== 'number' || typeof item.lon !== 'number') continue;
+          if (this.isDuplicate(deduped, item.lat, item.lon, item.name)) continue;
+          deduped.push(item);
+        }
+        if (deduped.length !== list.length) {
+          localStorage.setItem('weather_list', JSON.stringify(deduped));
+        }
+      }
+    } catch (_) { /* leave the list alone if anything goes wrong */ }
   },
 
   _read(key, fallback) {
@@ -132,27 +152,50 @@ const Storage = {
   },
 
   // How close two locations must be to be considered the same place.
-  // ~0.001° ≈ 100 m — tight enough that a landmark inside a saved city
-  // (e.g. Hollywood Bowl inside Los Angeles) is its own distinct entry,
-  // loose enough to dedupe minor geocoder rounding differences.
-  SAME_LOCATION_DEG: 0.001,
+  // ~0.005° ≈ 500 m — loose enough to absorb the coordinate drift you
+  // see when OWM's /weather rounds a geocoder point to its own nearest
+  // known city center (previously 0.001° = 100 m, which was too tight
+  // and let the same city get saved twice with slightly different
+  // coords, and made the header star flicker between "saved" and
+  // "unsaved" for the same place).
+  SAME_LOCATION_DEG: 0.005,
 
-  // True when any saved entry is within SAME_LOCATION_DEG of (lat, lon).
-  // Name-only matching collides across the world (e.g. Springfield, IL vs MA),
-  // so we compare coordinates only.
-  isDuplicate(list, lat, lon /* name no longer used */) {
-    return this.findIndexByCoords(list, lat, lon) !== -1;
+  // Normalise a display name for equality checks. Trims whitespace and
+  // lowercases so "Paris, FR" and " paris, fr " collapse to one.
+  _normName(name) {
+    return (name || '').trim().toLowerCase();
   },
-  // Index of the saved entry at (lat, lon), or -1 if none match.
-  findIndexByCoords(list, lat, lon) {
-    return list.findIndex(item =>
-      Math.abs(item.lat - lat) < this.SAME_LOCATION_DEG &&
-      Math.abs(item.lon - lon) < this.SAME_LOCATION_DEG
-    );
+
+  // True when the list already contains an entry considered "the same
+  // place." Match is (coords within SAME_LOCATION_DEG) OR (exact
+  // display-name match once normalised). The name fallback catches
+  // cases where the geocoder-side and /weather-side coords drift by
+  // more than the tolerance but the user is looking at what's clearly
+  // the same city ("Springfield, IL" saved twice with different
+  // rounding on the same actual town). Different cities with the same
+  // bare name (Springfield, IL vs Springfield, MO) never collide
+  // because their display names include the state.
+  isDuplicate(list, lat, lon, name) {
+    return this.findIndexByCoords(list, lat, lon, name) !== -1;
+  },
+  // Index of the saved entry at (lat, lon) or with a matching display
+  // name, or -1 if none. When `name` is omitted we fall back to
+  // coordinates-only (used by callers that only have a lat/lon in hand,
+  // e.g. cycleCity comparing Storage.getLocation() against the list).
+  findIndexByCoords(list, lat, lon, name) {
+    const nameKey = name != null ? this._normName(name) : null;
+    return list.findIndex(item => {
+      const coordMatch =
+        Math.abs(item.lat - lat) < this.SAME_LOCATION_DEG &&
+        Math.abs(item.lon - lon) < this.SAME_LOCATION_DEG;
+      if (coordMatch) return true;
+      if (nameKey && this._normName(item.name) === nameKey) return true;
+      return false;
+    });
   },
   addSavedList(lat, lon, name) {
     let list = this.getSavedList();
-    if (!this.isDuplicate(list, lat, lon)) {
+    if (!this.isDuplicate(list, lat, lon, name)) {
       list.unshift({ lat, lon, name });
       localStorage.setItem('weather_list', JSON.stringify(list));
     }

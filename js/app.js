@@ -134,7 +134,7 @@ const App = {
 
     const currentLoc = Storage.getLocation();
     const currentIdx = currentLoc
-      ? Storage.findIndexByCoords(list, currentLoc.lat, currentLoc.lon)
+      ? Storage.findIndexByCoords(list, currentLoc.lat, currentLoc.lon, currentLoc.name)
       : -1;
 
     let nextIdx;
@@ -185,7 +185,7 @@ const App = {
     const list = Storage.getSavedList();
     const currentLoc = Storage.getLocation();
     if (!list || list.length < 2 || !currentLoc) return;
-    const idx = Storage.findIndexByCoords(list, currentLoc.lat, currentLoc.lon);
+    const idx = Storage.findIndexByCoords(list, currentLoc.lat, currentLoc.lon, currentLoc.name);
     if (idx === -1) {
       // Current city isn't in the saved list — just pre-warm the first
       // and last so swipes in either direction are ready.
@@ -730,7 +730,7 @@ const App = {
     const name = this.state.cityName;
 
     const list = Storage.getSavedList();
-    const idx = Storage.findIndexByCoords(list, lat, lon);
+    const idx = Storage.findIndexByCoords(list, lat, lon, name);
     if (idx !== -1) {
       Storage.removeSavedList(idx);
       // The user explicitly unsaved this city — drop its weather cache
@@ -936,7 +936,7 @@ const App = {
     
     for (const loc of importedLocations) {
       if (loc && typeof loc.lat === 'number' && typeof loc.lon === 'number' && loc.name) {
-        if (!Storage.isDuplicate(currentList, loc.lat, loc.lon)) {
+        if (!Storage.isDuplicate(currentList, loc.lat, loc.lon, loc.name)) {
           currentList.push({ lat: loc.lat, lon: loc.lon, name: loc.name });
           addedCount++;
         }
