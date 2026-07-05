@@ -1,18 +1,59 @@
-const FULL_MOONS_2026 = [
-  { name: 'Wolf Moon', dt: 1767434520 },
-  { name: 'Snow Moon', dt: 1769983740 },
-  { name: 'Worm Moon', dt: 1772537820 },
-  { name: 'Pink Moon', dt: 1775095860 },
-  { name: 'Flower Moon', dt: 1777656180 },
-  { name: 'Blue Moon', dt: 1780217100 },
-  { name: 'Strawberry Moon', dt: 1782777360 },
-  { name: 'Buck Moon', dt: 1785335700 },
-  { name: 'Sturgeon Moon', dt: 1787890680 },
-  { name: 'Harvest Moon', dt: 1790441340 },
-  { name: 'Hunter\'s Moon', dt: 1792987860 },
-  { name: 'Beaver Moon', dt: 1795531980 },
-  { name: 'Cold Moon', dt: 1798075680 }
+// Traditional Farmer's Almanac full-moon names by Gregorian month
+// (0-indexed). A second full moon in the SAME UTC month is called a
+// Blue Moon regardless of its own month position — that override is
+// applied by _fullMoonAt() below.
+const FULL_MOON_NAMES = [
+  'Wolf Moon',       // Jan
+  'Snow Moon',       // Feb
+  'Worm Moon',       // Mar
+  'Pink Moon',       // Apr
+  'Flower Moon',     // May
+  'Strawberry Moon', // Jun
+  'Buck Moon',       // Jul
+  'Sturgeon Moon',   // Aug
+  'Harvest Moon',    // Sep
+  "Hunter's Moon",   // Oct
+  'Beaver Moon',     // Nov
+  'Cold Moon'        // Dec
 ];
+
+// Synodic month, matching moonPhaseName(). Anchored to a known full
+// moon so we can derive any other full moon's timestamp by adding
+// integer multiples of the synodic period. 2000-01-21 04:41 UTC was a
+// full moon (peak).
+const FULL_MOON_SYNODIC_DAYS = 29.530588853;
+const FULL_MOON_REF_MS = Date.UTC(2000, 0, 21, 4, 41);
+
+// Return the full moon at index k (relative to FULL_MOON_REF_MS) with
+// its traditional name and Blue-Moon override. k=0 → 2000-01-21;
+// k=326 → the Wolf Moon of 2026, etc. Pure function of k, so we can
+// compute the two nearest to `now` in O(1) instead of iterating a
+// 13-entry per-year table.
+function _fullMoonAt(k) {
+  const dtMs = FULL_MOON_REF_MS + k * FULL_MOON_SYNODIC_DAYS * 86400000;
+  const d = new Date(dtMs);
+  const month = d.getUTCMonth();
+  // Blue Moon = second full moon inside the same UTC calendar month.
+  // We only need to look back one synodic period since two full moons
+  // in the same month is the only Blue-Moon condition.
+  const prevMs = FULL_MOON_REF_MS + (k - 1) * FULL_MOON_SYNODIC_DAYS * 86400000;
+  const prevMonth = new Date(prevMs).getUTCMonth();
+  const name = (prevMonth === month) ? 'Blue Moon' : FULL_MOON_NAMES[month];
+  return { name, dt: Math.round(dtMs / 1000) };
+}
+
+// The renderer only cares whether the CURRENT time is inside any
+// full-moon-visible window; that window brackets a single full-moon
+// peak. Return the 3 candidates closest to `nowDt` (prev / nearest /
+// next) — one of them will always be the right one to test, regardless
+// of what side of the peak `nowDt` lands on.
+function getRelevantFullMoons(nowDtSec) {
+  const nowMs = nowDtSec * 1000;
+  const kNear = Math.round(
+    (nowMs - FULL_MOON_REF_MS) / (FULL_MOON_SYNODIC_DAYS * 86400000)
+  );
+  return [_fullMoonAt(kNear - 1), _fullMoonAt(kNear), _fullMoonAt(kNear + 1)];
+}
 
 // Feature Toggle: Set to true to use a dynamic temperature-based color gradient,
 // or false to revert to the default orange temperature line style.
@@ -1994,7 +2035,10 @@ const UI = {
     let moonFilter = '';
     const currentDt = heroData.dt;
 
-    for (const fm of FULL_MOONS_2026) {
+    // Only the 3 full moons closest to currentDt can possibly bracket
+    // it (previous / nearest / next by index). No year-scoped table
+    // needed and no fixed 13-entry scan per render.
+    for (const fm of getRelevantFullMoons(currentDt)) {
       const fmSun = getSunTimesForTimestamp(fm.dt);
       const nextDaySun = getSunTimesForTimestamp(fm.dt + 86400);
 
@@ -2411,25 +2455,30 @@ const UI = {
     // standard dblclick event because the element has
     // `touch-action: manipulation` in CSS, which suppresses the browser's
     // default double-tap-to-zoom and lets dblclick fire reliably.
-    const heroTempEls = this.weatherView.querySelectorAll('.hero-temp-large');
-    heroTempEls.forEach(el => {
-      if (this._onUnitChange) {
-        el.addEventListener('dblclick', (e) => {
-          e.preventDefault();
-          const current = Storage.getUnits().temp;
-          const next = current === 'F' ? 'C' : 'F';
-          // Keep the Units screen's segmented control visually in sync so
-          // when the user opens that screen it reflects the new choice.
-          const seg = document.querySelector('.segmented-control[data-setting="temp"]');
-          if (seg) {
-            seg.querySelectorAll('button').forEach(b => {
-              b.classList.toggle('active', b.getAttribute('data-value') === next);
-            });
-          }
-          this._onUnitChange('temp', next);
-        });
-      }
-    });
+    //
+    // Bind ONE delegated listener on the stable .hero-section parent —
+    // during the temp flip animation there are TWO .hero-temp-large
+    // elements (flip-front and flip-back), so attaching directly to
+    // each would toggle F↔C twice on a rapid double-tap and net out
+    // to no change.
+    const heroSection = this.weatherView.querySelector('.hero-section');
+    if (heroSection && this._onUnitChange) {
+      heroSection.addEventListener('dblclick', (e) => {
+        if (!e.target.closest('.hero-temp-large')) return;
+        e.preventDefault();
+        const current = Storage.getUnits().temp;
+        const next = current === 'F' ? 'C' : 'F';
+        // Keep the Units screen's segmented control visually in sync so
+        // when the user opens that screen it reflects the new choice.
+        const seg = document.querySelector('.segmented-control[data-setting="temp"]');
+        if (seg) {
+          seg.querySelectorAll('button').forEach(b => {
+            b.classList.toggle('active', b.getAttribute('data-value') === next);
+          });
+        }
+        this._onUnitChange('temp', next);
+      });
+    }
 
     this.weatherView.querySelectorAll('.daily-item').forEach(el => {
       el.addEventListener('click', () => {
@@ -3908,7 +3957,11 @@ const UI = {
       if (dayKey) {
         url.searchParams.set('day', dayKey);
       }
-      if (state.selectedHourDt !== null) {
+      // Guard against state.currentWeather being null (mid-cityswitch,
+      // after a failed fetch, etc.) — without this, .timezone throws
+      // a TypeError and the toast never appears. Skip the hour param
+      // in that case; the receiver's day-only URL still round-trips.
+      if (state.selectedHourDt !== null && state.currentWeather) {
         url.searchParams.set('dt', state.selectedHourDt);
         const timezone = state.currentWeather.timezone;
         const localDate = new Date((state.selectedHourDt + timezone) * 1000);

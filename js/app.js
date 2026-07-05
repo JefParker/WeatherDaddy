@@ -443,18 +443,22 @@ const App = {
     const dtParam = urlParams.get('dt');
     const hourParam = urlParams.get('hour');
 
-    if (dayParam || dtParam || hourParam) {
-      this._sharedStateToRestore = {
-        day: dayParam,
-        dt: dtParam ? parseInt(dtParam, 10) : null,
-        hour: hourParam ? parseInt(hourParam, 10) : null
-      };
-    }
-
+    // Only honour day/dt/hour params when the URL ALSO carries a valid
+    // lat/lon. A bookmark like ?day=X&hour=Y with no coordinates has no
+    // way to name the city those params refer to, and applying them to
+    // whatever Storage.getLocation() happens to return silently pins
+    // day/hour onto the wrong city (possibly in a different timezone).
     if (latParam && lonParam) {
       const lat = parseFloat(latParam);
       const lon = parseFloat(lonParam);
       if (!isNaN(lat) && !isNaN(lon)) {
+        if (dayParam || dtParam || hourParam) {
+          this._sharedStateToRestore = {
+            day: dayParam,
+            dt: dtParam ? parseInt(dtParam, 10) : null,
+            hour: hourParam ? parseInt(hourParam, 10) : null
+          };
+        }
         const name = nameParam || 'Shared Location';
         await this.fetchAndDisplay(lat, lon, name);
 
@@ -635,7 +639,17 @@ const App = {
       Storage.saveLocation(lat, lon, cityName);
 
       const keepDay = hadCache ? this.state.selectedDayIndex : -1;
-      const keepHour = hadCache ? this.state.selectedHourDt : null;
+      // A pinned hour is a specific dt in the OLD forecast. When slots
+      // roll forward (auto-refresh, city switch) that dt may no longer
+      // be a real slot — hero would then silently unpin visually while
+      // state.selectedHourDt still holds the stale dt, and Copy URL
+      // would emit a dt no receiver can resolve. So we keep the pin
+      // only if the incoming forecast still contains it.
+      const oldHourDt = hadCache ? this.state.selectedHourDt : null;
+      const keepHour = (oldHourDt != null &&
+                       forecast && forecast.list &&
+                       forecast.list.some(h => h.dt === oldHourDt))
+        ? oldHourDt : null;
 
       this.state.currentWeather   = currentWeather;
       this.state.forecast         = forecast;
@@ -976,8 +990,20 @@ const App = {
     UI.updateImportButtonState();
   },
 
-  getDayKey(index) {
-    if (!this.state.currentWeather || !this.state.forecast) return null;
+  // Canonical daily-data builder. Groups OWM 3h slots and Open-Meteo
+  // filler days into a single 8-entry array keyed by CITY-local
+  // calendar day. One implementation owns the merge rules so
+  // getDayKey (sender) and _resolveSharedDayAndHour (receiver) can't
+  // disagree on which days exist — mismatch used to cause Copy-URL
+  // for an om-only day to silently resolve to day 0 on paste.
+  //
+  // Every returned entry has `{ key, dt, hourly }` where hourly is
+  // an array of OWM-shaped slots (possibly empty if the day is an
+  // om-only day whose om-hourly points don't line up on 3h boundaries
+  // — previously we dropped those days entirely; now they're kept
+  // with an empty hourly array so their key is still resolvable).
+  _buildDailyData() {
+    if (!this.state.currentWeather || !this.state.forecast) return [];
     const timezone = this.state.currentWeather.timezone;
     const dayKeyFor = (unixSec) => {
       const local = new Date((unixSec + timezone) * 1000);
@@ -986,50 +1012,6 @@ const App = {
 
     const allDaysMap = new Map();
     this.state.forecast.list.forEach(item => {
-      const key = dayKeyFor(item.dt);
-      if (!allDaysMap.has(key)) {
-        allDaysMap.set(key, { key, dt: item.dt });
-      }
-    });
-
-    const omDaily = this.state.omDaily || [];
-    for (const dayInfo of omDaily) {
-      const key = dayKeyFor(dayInfo.dt);
-      if (allDaysMap.has(key)) continue;
-      allDaysMap.set(key, { key, dt: dayInfo.dt });
-    }
-
-    const dailyData = Array.from(allDaysMap.values())
-      .sort((a, b) => a.dt - b.dt)
-      .slice(0, 8);
-
-    const targetIdx = index === -1 ? 0 : index;
-    if (targetIdx >= 0 && targetIdx < dailyData.length) {
-      return dailyData[targetIdx].key;
-    }
-    return null;
-  },
-
-  _resolveSharedDayAndHour(consume = false) {
-    if (!this._sharedStateToRestore) return;
-    if (!this.state.currentWeather || !this.state.forecast) return;
-
-    const { day, dt, hour } = this._sharedStateToRestore;
-    if (consume) {
-      this._sharedStateToRestore = null;
-    }
-
-    const currentWeather = this.state.currentWeather;
-    const forecast = this.state.forecast;
-    const timezone = currentWeather.timezone;
-
-    const dayKeyFor = (unixSec) => {
-      const local = new Date((unixSec + timezone) * 1000);
-      return `${local.getUTCFullYear()}-${local.getUTCMonth()}-${local.getUTCDate()}`;
-    };
-
-    const allDaysMap = new Map();
-    forecast.list.forEach(item => {
       const key = dayKeyFor(item.dt);
       if (!allDaysMap.has(key)) {
         allDaysMap.set(key, { key, hourly: [], dt: item.dt });
@@ -1048,14 +1030,37 @@ const App = {
       const slots = omHourly
         .filter(h => h.dt >= dayStart && h.dt < dayEnd && (Math.floor(h.dt / 3600) % 3 === 0))
         .map(h => UI._omHourToOwmSlot(h));
-      if (!slots.length) continue;
-
+      // Keep the day even when we couldn't produce 3h slots — its key
+      // still needs to be shareable via Copy URL.
       allDaysMap.set(key, { key, hourly: slots, dt: dayStart });
     }
 
-    const dailyData = Array.from(allDaysMap.values())
+    return Array.from(allDaysMap.values())
       .sort((a, b) => a.dt - b.dt)
       .slice(0, 8);
+  },
+
+  getDayKey(index) {
+    const dailyData = this._buildDailyData();
+    if (!dailyData.length) return null;
+    const targetIdx = index === -1 ? 0 : index;
+    if (targetIdx >= 0 && targetIdx < dailyData.length) {
+      return dailyData[targetIdx].key;
+    }
+    return null;
+  },
+
+  _resolveSharedDayAndHour(consume = false) {
+    if (!this._sharedStateToRestore) return;
+    if (!this.state.currentWeather || !this.state.forecast) return;
+
+    const { day, dt, hour } = this._sharedStateToRestore;
+    if (consume) {
+      this._sharedStateToRestore = null;
+    }
+
+    const timezone = this.state.currentWeather.timezone;
+    const dailyData = this._buildDailyData();
 
     let resolvedDayIdx = -1;
 
@@ -1089,10 +1094,16 @@ const App = {
           let closestSlot = null;
           let minDiff = Infinity;
 
+          // Distance is CIRCULAR on the 24-hour clock: |21 - 23| = 2
+          // straight-line, but |0 - 23| wrapping = 1 — 0 is the nearer
+          // wall-clock hour to 23. Without the min(d, 24-d) fold, a
+          // hour=23 URL restored against slots {0, 21} would incorrectly
+          // pick 21.
           targetDay.hourly.forEach(slot => {
             const localDate = new Date((slot.dt + timezone) * 1000);
             const slotHour = localDate.getUTCHours();
-            const diff = Math.abs(slotHour - targetHour);
+            const raw = Math.abs(slotHour - targetHour);
+            const diff = Math.min(raw, 24 - raw);
             if (diff < minDiff) {
               minDiff = diff;
               closestSlot = slot;
@@ -1116,73 +1127,106 @@ const App = {
     }
     const times = hourlyData.time;
     const heights = hourlyData.sea_level_height_msl;
-    const tides = [];
+
+    // Split the series into contiguous non-null RUNS keyed by hourly
+    // spacing. Marine data can have null holes (offshore points, edge
+    // of bathymetry coverage); previously we compacted nulls out and
+    // treated the resulting neighbors as time-adjacent, producing
+    // phantom extrema across gaps and quadratic interpolation across
+    // multi-hour holes. Now each run is scanned independently, and
+    // extrema at run boundaries are skipped (an extremum only counts
+    // when we can see values on BOTH sides in the SAME run).
+    const runs = [];
+    let currentRun = null;
+    let lastDt = null;
+    const HOUR_SEC = 3600;
     for (let i = 0; i < times.length; i++) {
       const h = heights[i];
-      if (h !== null && h !== undefined) {
-        const dt = Date.parse(times[i] + 'Z') / 1000;
-        tides.push({ dt, h });
+      if (h === null || h === undefined) {
+        currentRun = null; // gap → end the current run
+        continue;
       }
+      const dt = Date.parse(times[i] + 'Z') / 1000;
+      // Guard against future API format changes that would produce
+      // NaN (e.g. an offset-suffixed time colliding with our 'Z').
+      if (!isFinite(dt)) { currentRun = null; continue; }
+      // Non-hourly gap (e.g. missed sample) also ends the run.
+      if (currentRun && lastDt != null && (dt - lastDt) > HOUR_SEC * 1.5) {
+        currentRun = null;
+      }
+      if (!currentRun) {
+        currentRun = [];
+        runs.push(currentRun);
+      }
+      currentRun.push({ dt, h });
+      lastDt = dt;
     }
 
     const extrema = [];
-    const n = tides.length;
-    if (n < 3) return extrema;
+    for (const tides of runs) {
+      const n = tides.length;
+      if (n < 3) continue;
 
-    // Group contiguous equal values to handle flat peaks/troughs
-    const blocks = [];
-    let i = 0;
-    while (i < n) {
-      const startIdx = i;
-      const val = tides[i].h;
-      while (i < n && tides[i].h === val) {
-        i++;
-      }
-      const endIdx = i - 1;
-      blocks.push({
-        val,
-        start: startIdx,
-        end: endIdx,
-        mid: Math.floor((startIdx + endIdx) / 2)
-      });
-    }
-
-    const numBlocks = blocks.length;
-    for (let j = 1; j < numBlocks - 1; j++) {
-      const prevVal = blocks[j-1].val;
-      const currVal = blocks[j].val;
-      const nextVal = blocks[j+1].val;
-
-      const isHigh = currVal > prevVal && currVal > nextVal;
-      const isLow = currVal < prevVal && currVal < nextVal;
-
-      if (isHigh || isLow) {
-        const midIdx = blocks[j].mid;
-        let dt = tides[midIdx].dt;
-        let height = currVal;
-
-        // Quadratic interpolation if single point block
-        if (blocks[j].start === blocks[j].end && midIdx > 0 && midIdx < n - 1) {
-          const prevH = tides[midIdx-1].h;
-          const nextH = tides[midIdx+1].h;
-          const a = (prevH + nextH - 2 * currVal) / 2.0;
-          const b = (nextH - prevH) / 2.0;
-          if (Math.abs(a) > 1e-9) {
-            const x_m = -b / (2.0 * a);
-            if (x_m >= -1.0 && x_m <= 1.0) {
-              dt = tides[midIdx].dt + x_m * 3600;
-              height = a * (x_m * x_m) + b * x_m + currVal;
-            }
-          }
+      // Group contiguous equal values to handle flat peaks/troughs
+      const blocks = [];
+      let i = 0;
+      while (i < n) {
+        const startIdx = i;
+        const val = tides[i].h;
+        while (i < n && tides[i].h === val) {
+          i++;
         }
-
-        extrema.push({
-          type: isHigh ? 'High' : 'Low',
-          dt,
-          h: height
+        const endIdx = i - 1;
+        blocks.push({
+          val,
+          start: startIdx,
+          end: endIdx,
+          mid: Math.floor((startIdx + endIdx) / 2)
         });
       }
+
+      const numBlocks = blocks.length;
+      for (let j = 1; j < numBlocks - 1; j++) {
+        const prevVal = blocks[j-1].val;
+        const currVal = blocks[j].val;
+        const nextVal = blocks[j+1].val;
+
+        const isHigh = currVal > prevVal && currVal > nextVal;
+        const isLow = currVal < prevVal && currVal < nextVal;
+
+        if (isHigh || isLow) {
+          const midIdx = blocks[j].mid;
+          let dt = tides[midIdx].dt;
+          let height = currVal;
+
+          // Quadratic interpolation if single point block. Bounded to
+          // this run's array so we can't reach past a data gap.
+          if (blocks[j].start === blocks[j].end && midIdx > 0 && midIdx < n - 1) {
+            const prevH = tides[midIdx-1].h;
+            const nextH = tides[midIdx+1].h;
+            const a = (prevH + nextH - 2 * currVal) / 2.0;
+            const b = (nextH - prevH) / 2.0;
+            if (Math.abs(a) > 1e-9) {
+              const x_m = -b / (2.0 * a);
+              if (x_m >= -1.0 && x_m <= 1.0) {
+                dt = tides[midIdx].dt + x_m * 3600;
+                height = a * (x_m * x_m) + b * x_m + currVal;
+              }
+            }
+          }
+
+          extrema.push({
+            type: isHigh ? 'High' : 'Low',
+            dt,
+            h: height
+          });
+        }
+      }
     }
+    // Sort across runs so downstream `.find(e => e.dt > currentDt)`
+    // returns the earliest upcoming extremum regardless of which run
+    // it came from.
+    extrema.sort((a, b) => a.dt - b.dt);
     return extrema;
   },
 
