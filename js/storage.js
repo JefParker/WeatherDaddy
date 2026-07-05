@@ -185,9 +185,11 @@ const Storage = {
   findIndexByCoords(list, lat, lon, name) {
     const nameKey = name != null ? this._normName(name) : null;
     return list.findIndex(item => {
+      let lonDiff = Math.abs(item.lon - lon);
+      if (lonDiff > 180) lonDiff = 360 - lonDiff;
       const coordMatch =
         Math.abs(item.lat - lat) < this.SAME_LOCATION_DEG &&
-        Math.abs(item.lon - lon) < this.SAME_LOCATION_DEG;
+        lonDiff < this.SAME_LOCATION_DEG;
       if (coordMatch) return true;
       if (nameKey && this._normName(item.name) === nameKey) return true;
       return false;

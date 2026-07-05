@@ -732,10 +732,11 @@ const App = {
     const list = Storage.getSavedList();
     const idx = Storage.findIndexByCoords(list, lat, lon, name);
     if (idx !== -1) {
+      const savedItem = list[idx];
       Storage.removeSavedList(idx);
       // The user explicitly unsaved this city — drop its weather cache
       // too so we're not holding stale data the user no longer wants.
-      Storage.removeWeatherCache(lat, lon);
+      Storage.removeWeatherCache(savedItem.lat, savedItem.lon);
     } else {
       Storage.addSavedList(lat, lon, name);
     }

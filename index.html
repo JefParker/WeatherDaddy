@@ -285,7 +285,7 @@
         <section class="about-section about-header-brand">
           <img class="about-logo" src="assets/icons/icon-192.png" alt="WeatherDaddy logo" width="64" height="64">
           <div class="about-brand-text">
-            <h3 class="about-title">WeatherDaddy <span class="about-version">v1.2.0</span></h3>
+            <h3 class="about-title">WeatherDaddy <span class="about-version">v1.2.1</span></h3>
             <p class="about-blurb">A fast, offline-capable progressive web app for 8-day weather forecasts, hourly graphs, severe-weather alerts, and your favorite saved locations.</p>
           </div>
         </section>
@@ -323,6 +323,17 @@
               </button>
               <div class="accordion-content">
                 <p>The first tile, <strong>Now</strong>, always shows live conditions. Tap any tile to project that hour's temperature, icon, and "feels like" into the hero card (e.g. "This evening at 8 PM"). Scroll the bar horizontally to look further ahead — scrolling into another day flips the whole dashboard to match. Past tiles drop off as time moves forward.</p>
+              </div>
+            </div>
+
+            <div class="accordion-item">
+              <button class="accordion-header" aria-expanded="false">
+                <svg class="accordion-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                <span>Tides &amp; Full Moons</span>
+                <svg class="accordion-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+              <div class="accordion-content">
+                <p>Coastal locations automatically display high and low tide information on the quick-stats grid. If a full moon is happening within 12 hours of nightfall, it takes center stage on the stats grid with its traditional name and optimal viewing time.</p>
               </div>
             </div>
 
@@ -426,7 +437,7 @@
             </li>
             <li>
               <a class="about-source-name" href="https://open-meteo.com" target="_blank" rel="noopener noreferrer">Open-Meteo ↗</a>
-              <span class="about-source-desc">Hourly precipitation, 8-day daily forecast extension, UV index, air quality (US&nbsp;AQI), and European pollen (broken out by tree, grass, and weed).</span>
+              <span class="about-source-desc">Hourly precipitation, 8-day daily forecast extension, UV index, air quality (US&nbsp;AQI), European pollen, and marine tides.</span>
             </li>
             <li>
               <a class="about-source-name" href="https://nominatim.openstreetmap.org" target="_blank" rel="noopener noreferrer">OpenStreetMap Nominatim ↗</a>
