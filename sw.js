@@ -1,4 +1,4 @@
-const CACHE_NAME = 'weatherdaddy-v176';
+const CACHE_NAME = 'weatherdaddy-v177';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -163,15 +163,20 @@ self.addEventListener('fetch', event => {
   event.respondWith(handleFetch(event.request));
 });
 
+const isWeatherURL = (urlOrRequest) => {
+  try {
+    const u = typeof urlOrRequest === 'string'
+      ? new URL(urlOrRequest, self.location.href)
+      : new URL(urlOrRequest.url);
+    return u.hostname === 'api.openweathermap.org' ||
+           u.hostname.endsWith('open-meteo.com') ||
+           u.pathname.startsWith('/api/owm/');
+  } catch (_) { return false; }
+};
+
 async function handleFetch(request) {
   try {
-    const reqUrl = new URL(request.url);
-    // Treat both direct-to-OWM (Path A, BYOK) and our own Pages
-    // Function proxy (Path B, /api/owm/...) as weather API calls.
-    const isWeatherAPI =
-      reqUrl.hostname === 'api.openweathermap.org' ||
-      reqUrl.pathname.startsWith('/api/owm/');
-    if (isWeatherAPI) return await handleWeatherAPI(request);
+    if (isWeatherURL(request)) return await handleWeatherAPI(request);
     return await handleStaticAsset(request);
   } catch (e) {
     // Unexpected error inside the SW itself (bad URL, storage quota,
@@ -184,23 +189,12 @@ async function handleFetch(request) {
 
 // Weather-API cache bounds. Each saved city makes ~5 endpoint calls,
 // and the URL varies by units / BYOK toggle, so the cache can grow
-// unbounded under stale-while-revalidate. We cap at WEATHER_CACHE_MAX
+// unbounded under network-first fallback caching. We cap at WEATHER_CACHE_MAX
 // entries (FIFO-evicted via Cache.keys() insertion order) and drop
 // any entry whose served Response.date header is older than
-// WEATHER_CACHE_MAX_AGE_MS, since the app always refreshes on view
-// and a stale snapshot from a week ago is just dead bytes.
+// WEATHER_CACHE_MAX_AGE_MS.
 const WEATHER_CACHE_MAX = 80;
 const WEATHER_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h
-
-const isWeatherURL = (urlOrRequest) => {
-  try {
-    const u = typeof urlOrRequest === 'string'
-      ? new URL(urlOrRequest, self.location.href)
-      : new URL(urlOrRequest.url);
-    return u.hostname === 'api.openweathermap.org' ||
-           u.pathname.startsWith('/api/owm/');
-  } catch (_) { return false; }
-};
 
 // Drop expired weather entries and FIFO-evict the oldest until the
 // total count is within WEATHER_CACHE_MAX. Best-effort; any storage
@@ -235,46 +229,35 @@ async function pruneWeatherCache(cache) {
   } catch (_) { /* non-fatal */ }
 }
 
-// Stale-while-revalidate for the weather APIs. Cache wins on display;
-// network refreshes in the background. When BOTH miss we return a 503
-// JSON body so the WeatherAPI layer's existing error path runs.
+// Network-first for the weather APIs. The app handles its own instant
+// stale render via localStorage; this layer ensures we fetch fresh data
+// if online, and fall back to the Cache API if offline. When BOTH miss
+// we return a 503 JSON body so the WeatherAPI layer's existing error path runs.
 async function handleWeatherAPI(request) {
-  let cached = null;
   try {
-    cached = await caches.match(request);
-  } catch (_) {}
-
-  const networkPromise = (async () => {
-    try {
-      const res = await fetch(request);
-      if (res && res.ok) {
+    const res = await fetch(request);
+    if (res && res.ok) {
+      const clone = res.clone();
+      caches.open(CACHE_NAME).then(async (cache) => {
         try {
-          const cache = await caches.open(CACHE_NAME);
-          await cache.put(request, res.clone());
-          // Housekeep AFTER the put so a new entry can immediately
-          // displace the oldest stale one. Runs in this same async
-          // closure but we don't block the caller on it.
+          await cache.put(request, clone);
           pruneWeatherCache(cache);
-        } catch (_) { /* quota / storage error — non-fatal */ }
-      }
-      return res;
-    } catch (_) {
-      return null;
+        } catch (_) {}
+      });
     }
-  })();
-
-  if (cached) {
-    // Let the refresh run; don't await it.
-    networkPromise.catch(() => {});
-    return cached;
+    return res;
+  } catch (_) {
+    try {
+      const cached = await caches.match(request);
+      if (cached) return cached;
+    } catch (_) {}
+    
+    return new Response(OFFLINE_API_JSON, {
+      status: 503,
+      statusText: 'Offline',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' }
+    });
   }
-  const network = await networkPromise;
-  if (network) return network;
-  return new Response(OFFLINE_API_JSON, {
-    status: 503,
-    statusText: 'Offline',
-    headers: { 'Content-Type': 'application/json; charset=utf-8' }
-  });
 }
 
 // Cache-first for static assets, falling back to network. If network
