@@ -37,6 +37,8 @@ body {
      viewport (even outside the centered column) scrolls the page. */
   min-height: 100vh;
   min-height: 100dvh;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .app-container {
@@ -70,6 +72,8 @@ body {
   padding: 8px 0;
   outline: none;
   text-overflow: ellipsis;
+  -webkit-user-select: auto;
+  user-select: auto;
 }
 
 .menu-btn {
