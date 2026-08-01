@@ -1913,10 +1913,20 @@ const UI = {
 
     // UV: current for today, daily-max for forecast days. Falls back to '—' if
     // Open-Meteo was unreachable or returned no data for this slot.
+    // The daily max is matched by city-local day KEY, not array index —
+    // Open-Meteo's daily[0] is "today", but rendered day 0 can already
+    // be tomorrow near local midnight (OWM's forecast window), which
+    // used to show every forecast day the previous day's UV max.
     const uv = state.uv || { current: null, daily: [] };
+    const uvForKey = (key) => {
+      const om = (state.omDaily || []).find(od => dayKeyFor(od.dt) === key);
+      return om && om.uvIndexMax != null ? om.uvIndexMax : null;
+    };
+    const activeDayEntry = isToday ? dailyData[0] : dailyData[selectedDayIndex];
+    const activeDayUvKey = activeDayEntry ? activeDayEntry.key : null;
     const uvValue = isToday
-      ? (uv.current != null ? uv.current : uv.daily[0])
-      : uv.daily[selectedDayIndex];
+      ? (uv.current != null ? uv.current : uvForKey(activeDayUvKey))
+      : uvForKey(activeDayUvKey);
 
     const sunriseStat = activeDay.sunrise != null ? `
       <div class="stat-item">
@@ -3450,6 +3460,14 @@ const UI = {
     // Remember the latest data so we can redraw on resize/visibility changes.
     this._lastGraph = { hourly: hourlyData, offset, hourlyPrecip };
 
+    // Interpolation and x-spacing both divide by (points - 1); a day
+    // with fewer than two slots would render NaN geometry. Clear the
+    // graph instead.
+    if (!hourlyData || hourlyData.length < 2) {
+      container.innerHTML = '';
+      return;
+    }
+
     const width = container.clientWidth;
     if (!width) return; // container hidden (e.g. behind an overlay); skip until visible
     const height = 180;
@@ -3816,7 +3834,10 @@ const UI = {
       this.exportApiKeyContainer.style.display = hasKey ? 'block' : 'none';
     }
     if (this.exportApiKeyCheckbox) {
-      this.exportApiKeyCheckbox.checked = hasKey;
+      // Default OFF — the key is a secret, and exports often get pasted
+      // into chats/pastebins. Including it must be an explicit opt-in
+      // each time the screen opens.
+      this.exportApiKeyCheckbox.checked = false;
     }
     if (this.importExportTextarea) {
       this.importExportTextarea.value = '';

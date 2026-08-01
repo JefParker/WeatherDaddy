@@ -18,6 +18,17 @@
 const PROXY_PREFIX = '/api/owm';
 const UPSTREAM     = 'https://api.openweathermap.org';
 
+// Only the endpoints the app actually calls. Without this allowlist the
+// proxy was an open, CORS-* relay to EVERY OpenWeatherMap endpoint with
+// our shared key attached — any third-party page or script could burn
+// the quota (including paid endpoints the key may be entitled to).
+const ALLOWED_PATHS = new Set([
+  'data/2.5/weather',
+  'data/2.5/forecast',
+  'geo/1.0/direct',
+  'geo/1.0/reverse',
+]);
+
 export default {
   async fetch(request, env /* , ctx */) {
     const url = new URL(request.url);
@@ -52,6 +63,9 @@ export default {
     while (path.startsWith('/')) path = path.slice(1);
     if (!path) {
       return jsonResponse({ error: 'Missing upstream path' }, 400);
+    }
+    if (!ALLOWED_PATHS.has(path)) {
+      return jsonResponse({ error: 'Path not allowed' }, 403);
     }
 
     // ── 2. API KEY RESOLUTION ────────────────────────────────────────

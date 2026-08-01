@@ -1,4 +1,9 @@
-const CACHE_NAME = 'weatherdaddy-v177';
+// DEPLOY RITUAL: static assets are served cache-first with no
+// revalidation, so shipping ANY change to index.html / css / js requires
+// bumping BOTH this CACHE_NAME and the ?v= query strings in index.html.
+// (The ?v= strip in cacheKey() means a forgotten CACHE_NAME bump keeps
+// serving the old file to installed clients forever.)
+const CACHE_NAME = 'weatherdaddy-v178';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -160,7 +165,7 @@ self.addEventListener('activate', event => {
 // browser shows its own "no internet" page.
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
-  event.respondWith(handleFetch(event.request));
+  event.respondWith(handleFetch(event));
 });
 
 const isWeatherURL = (urlOrRequest) => {
@@ -174,9 +179,10 @@ const isWeatherURL = (urlOrRequest) => {
   } catch (_) { return false; }
 };
 
-async function handleFetch(request) {
+async function handleFetch(event) {
+  const request = event.request;
   try {
-    if (isWeatherURL(request)) return await handleWeatherAPI(request);
+    if (isWeatherURL(request)) return await handleWeatherAPI(request, event);
     return await handleStaticAsset(request);
   } catch (e) {
     // Unexpected error inside the SW itself (bad URL, storage quota,
@@ -233,17 +239,21 @@ async function pruneWeatherCache(cache) {
 // stale render via localStorage; this layer ensures we fetch fresh data
 // if online, and fall back to the Cache API if offline. When BOTH miss
 // we return a 503 JSON body so the WeatherAPI layer's existing error path runs.
-async function handleWeatherAPI(request) {
+async function handleWeatherAPI(request, event) {
   try {
     const res = await fetch(request);
     if (res && res.ok) {
       const clone = res.clone();
-      caches.open(CACHE_NAME).then(async (cache) => {
+      // Tie the cache write to the event's lifetime — once respondWith
+      // settles, the browser may terminate the SW, silently dropping a
+      // floating put() and leaving the offline fallback cache stale.
+      const putDone = caches.open(CACHE_NAME).then(async (cache) => {
         try {
           await cache.put(request, clone);
-          pruneWeatherCache(cache);
+          await pruneWeatherCache(cache);
         } catch (_) {}
       });
+      if (event && event.waitUntil) event.waitUntil(putDone);
     }
     return res;
   } catch (_) {

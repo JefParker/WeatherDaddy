@@ -62,7 +62,7 @@ const App = {
     // first swipe in either direction shows fresh data.
     this._prefetchNeighborsOfCurrent();
 
-    // Auto-refresh weather every 60 minutes
+    // Auto-refresh weather every 15 minutes (see startAutoRefresh)
     this.startAutoRefresh();
 
     // Show iOS Add-to-Home-Screen prompt if appropriate.
@@ -333,7 +333,14 @@ const App = {
       spinner.classList.remove('visible');
       input.disabled = false;
       input.placeholder = 'Search for a city or landmark...';
-      input.focus(); // ready to type immediately
+      // Only steal focus when the Locations screen is actually open —
+      // cities usually finish loading during app init, when this input
+      // sits inside a closed overlay. Focusing it then parks the user's
+      // keyboard in an invisible field (stray typing + Enter would fire
+      // a surprise search).
+      if (UI.locationsScreen && UI.locationsScreen.classList.contains('open')) {
+        input.focus(); // ready to type immediately
+      }
       if (this._resolveCitiesReady) { this._resolveCitiesReady(); this._resolveCitiesReady = null; }
     };
 
@@ -410,6 +417,10 @@ const App = {
         items[activeIdx].classList.add('ac-active');
         input.value = items[activeIdx].textContent;
       } else if (e.key === 'Escape') {
+        // Consume the key so the document-level Escape handler doesn't
+        // ALSO close the whole Locations overlay in the same press —
+        // first Escape closes the dropdown, a second closes the screen.
+        e.stopPropagation();
         close();
       }
     });
@@ -504,10 +515,26 @@ const App = {
     }
   },
 
+  // A failed lookup (geocode, geolocation, or a no-cache network fetch)
+  // must not destroy the dashboard: the previous city's data is still in
+  // state, so repaint it and surface the problem as a toast. Only fall
+  // back to the full-screen error when there's nothing to repaint
+  // (first launch, nothing loaded yet).
+  _showLookupError(msg) {
+    if (this.state.currentWeather && this.state.forecast) {
+      this.renderAll();
+      UI.showToast(msg, true);
+    } else {
+      UI.showError(msg);
+    }
+  },
+
   async handleSearch() {
     const city = UI.cityInput.value.trim();
     if (!city) return;
-    UI.showLoading();
+    // No showLoading() here — fetchAndDisplay swaps in cache/loader once
+    // the geocode succeeds. Blanking the dashboard before then meant a
+    // typo'd search destroyed the currently-displayed city.
     try {
       const coords = await WeatherAPI.getCoordinatesByCity(city);
       const name = this.buildLocationName(coords.name, coords.state, coords.country);
@@ -519,14 +546,13 @@ const App = {
       // the cube's back face captures the NEW city, not the old.
       UI.closeOverlayWithCube('locations-screen');
     } catch (e) {
-      UI.showError('Could not find that location. Please try again.');
+      this._showLookupError('Could not find that location. Please try again.');
     }
   },
 
   // Called when selecting an autocomplete suggestion (e.g. "Columbus, OH, US").
   // Uses the full label for accurate geocoding; builds "City, State" for display.
   async handleSearchByLabel(label) {
-    UI.showLoading();
     const parts = label.split(',').map(s => s.trim());
     const query = parts.join(','); // OWM accepts "City,StateCode,CountryCode"
     try {
@@ -536,12 +562,21 @@ const App = {
       UI.cityInput.value = '';
       UI.closeOverlayWithCube('locations-screen');
     } catch (e) {
-      UI.showError('Could not find that location. Please try again.');
+      this._showLookupError('Could not find that location. Please try again.');
     }
   },
 
   async handleLocation() {
-    UI.showLoading();
+    // Geolocation (permission prompt + fix) can take several seconds, so
+    // show progress ON the button itself — a spinner replaces the pin
+    // icon — rather than blanking the dashboard with the full-screen
+    // loader (which used to destroy the current city on failure).
+    const btn = UI.locationBtn;
+    if (btn && btn.classList.contains('loading')) return; // already in flight
+    if (btn) {
+      btn.classList.add('loading');
+      btn.disabled = true;
+    }
     try {
       const coords = await LocationService.getCurrentPosition();
       let name = 'Current Location';
@@ -552,7 +587,12 @@ const App = {
       await this.fetchAndDisplay(coords.lat, coords.lon, name);
       UI.closeOverlayWithCube('locations-screen');
     } catch (e) {
-      UI.showError('Could not get current location.');
+      this._showLookupError('Could not get current location.');
+    } finally {
+      if (btn) {
+        btn.classList.remove('loading');
+        btn.disabled = false;
+      }
     }
   },
 
@@ -570,11 +610,18 @@ const App = {
     await this._refreshCity(lat, lon, name, token, renderedFromCache);
   },
 
+  // How old a cached payload can be and still be worth rendering. Past
+  // this, "Right now" data is a lie and the hourly scroller is mostly
+  // empty (past slots are filtered out), so we show the loader and wait
+  // for the network instead.
+  WEATHER_CACHE_MAX_AGE_MS: 6 * 60 * 60 * 1000, // 6 hours
+
   // Synchronously apply a cached city to state + render, IF the cache is
   // fresh enough to be useful. Returns true on success.
   _applyCachedCity(lat, lon, name) {
     const cached = Storage.getWeatherCache(lat, lon);
     if (!cached) return false;
+    if (Date.now() - (cached.ts || 0) > this.WEATHER_CACHE_MAX_AGE_MS) return false;
 
     const cityName = name || cached.cityName;
     Storage.saveLocation(lat, lon, cityName);
@@ -646,10 +693,15 @@ const App = {
       // would emit a dt no receiver can resolve. So we keep the pin
       // only if the incoming forecast still contains it.
       const oldHourDt = hadCache ? this.state.selectedHourDt : null;
-      const keepHour = (oldHourDt != null &&
-                       forecast && forecast.list &&
-                       forecast.list.some(h => h.dt === oldHourDt))
-        ? oldHourDt : null;
+      // The pin may live on an OWM 3h slot OR an Open-Meteo-synthesised
+      // slot (days 6-8 and the top-up at the end of OWM's 5-day window),
+      // so check both incoming series — checking forecast.list alone
+      // silently unpinned OM hours on every refresh.
+      const hourStillExists = oldHourDt != null && (
+        (forecast && forecast.list && forecast.list.some(h => h.dt === oldHourDt)) ||
+        (enrichment.hourly || []).some(h => h.dt === oldHourDt)
+      );
+      const keepHour = hourStillExists ? oldHourDt : null;
 
       this.state.currentWeather   = currentWeather;
       this.state.forecast         = forecast;
@@ -681,12 +733,13 @@ const App = {
       } else if (!hadCache) {
         // No cache for this city means fetchAndDisplay() already replaced
         // the dashboard with the loader. We MUST replace it with something
-        // — either real data (success path above) or an error — otherwise
-        // the user is stuck on "Loading weather data..." forever. The
-        // previous condition also checked `!state.currentWeather`, which
-        // skipped this branch whenever any city had loaded earlier, so a
-        // failed second-city search left the loader on screen.
-        UI.showError('Failed to load weather data.');
+        // — real data (success path above), the previous city's dashboard
+        // + an error toast, or the full-screen error when nothing has ever
+        // loaded — otherwise the user is stuck on "Loading weather
+        // data..." forever. State still holds the previous city here
+        // (assignment only happens on success), so _showLookupError can
+        // repaint it.
+        this._showLookupError('Failed to load weather data.');
       }
       console.error(e);
     }
@@ -998,11 +1051,13 @@ const App = {
   // disagree on which days exist — mismatch used to cause Copy-URL
   // for an om-only day to silently resolve to day 0 on paste.
   //
-  // Every returned entry has `{ key, dt, hourly }` where hourly is
-  // an array of OWM-shaped slots (possibly empty if the day is an
-  // om-only day whose om-hourly points don't line up on 3h boundaries
-  // — previously we dropped those days entirely; now they're kept
-  // with an empty hourly array so their key is still resolvable).
+  // Every returned entry has `{ key, dt, hourly }` where hourly is an
+  // array of OWM-shaped slots. The day SET and ORDER here must match
+  // renderDashboard's day builder exactly — getDayKey() is called with
+  // an index from the RENDERED list, so any divergence shifts Copy-URL
+  // onto the wrong day. That's why om-only days with zero 3h slots are
+  // skipped below, just like the renderer skips them (a day that isn't
+  // rendered can't be selected, so it never needs a shareable key).
   _buildDailyData() {
     if (!this.state.currentWeather || !this.state.forecast) return [];
     const timezone = this.state.currentWeather.timezone;
@@ -1031,8 +1086,9 @@ const App = {
       const slots = omHourly
         .filter(h => h.dt >= dayStart && h.dt < dayEnd && (Math.floor(h.dt / 3600) % 3 === 0))
         .map(h => UI._omHourToOwmSlot(h));
-      // Keep the day even when we couldn't produce 3h slots — its key
-      // still needs to be shareable via Copy URL.
+      // Skip days with no 3h slots — renderDashboard drops them too,
+      // and the two arrays must stay index-aligned (see doc comment).
+      if (!slots.length) continue;
       allDaysMap.set(key, { key, hourly: slots, dt: dayStart });
     }
 

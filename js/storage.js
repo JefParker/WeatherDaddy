@@ -166,6 +166,14 @@ const Storage = {
     return (name || '').trim().toLowerCase();
   },
 
+  // Display names that don't identify a specific place. A name-only
+  // match between two of these would collide DIFFERENT cities — e.g.
+  // a "Current Location" saved on a trip matching today's "Current
+  // Location" somewhere else, so tapping save would unsave the old
+  // entry instead of adding the new one. These fall back to
+  // coordinate-only matching.
+  GENERIC_NAMES: new Set(['current location', 'shared location']),
+
   // True when the list already contains an entry considered "the same
   // place." Match is (coords within SAME_LOCATION_DEG) OR (exact
   // display-name match once normalised). The name fallback catches
@@ -183,7 +191,8 @@ const Storage = {
   // coordinates-only (used by callers that only have a lat/lon in hand,
   // e.g. cycleCity comparing Storage.getLocation() against the list).
   findIndexByCoords(list, lat, lon, name) {
-    const nameKey = name != null ? this._normName(name) : null;
+    let nameKey = name != null ? this._normName(name) : null;
+    if (nameKey && this.GENERIC_NAMES.has(nameKey)) nameKey = null;
     return list.findIndex(item => {
       let lonDiff = Math.abs(item.lon - lon);
       if (lonDiff > 180) lonDiff = 360 - lonDiff;

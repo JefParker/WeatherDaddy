@@ -588,6 +588,30 @@ body {
   margin-bottom: 24px;
 }
 
+/* Busy state while geolocation + weather lookup are in flight: the pin
+   icon is swapped for a spinner ring (same look as .city-load-spinner)
+   and the button is inert so it can't be double-tapped. */
+.current-loc-btn.loading {
+  pointer-events: none;
+  opacity: 0.7;
+}
+.current-loc-btn.loading > svg {
+  display: none;
+}
+.current-loc-btn.loading::before {
+  content: '';
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 2.5px solid rgba(255, 255, 255, 0.15);
+  border-top-color: var(--accent-color);
+  border-radius: 50%;
+  animation: locBtnSpin 0.7s linear infinite;
+}
+@keyframes locBtnSpin {
+  to { transform: rotate(360deg); }
+}
+
 .saved-locations-title {
   font-size: 0.9rem;
   color: var(--text-secondary);

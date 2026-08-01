@@ -102,17 +102,22 @@
   <link rel="apple-touch-startup-image" href="assets/splash/ipad-pro-12-landscape.png"
         media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
 
-  <!-- Open Graph / Twitter card for shareable links -->
+  <!-- Open Graph / Twitter card for shareable links.
+       NOTE: og:image / twitter:image should be a FULL absolute URL
+       (https://your-domain/assets/icons/icon-512.png) — most scrapers
+       won't resolve relative paths. Root-relative is the best we can do
+       without hardcoding the deploy domain; replace with the absolute
+       production URL once the domain is settled. -->
   <meta property="og:type" content="website">
   <meta property="og:title" content="WeatherDaddy">
   <meta property="og:description" content="Fast 8-day weather forecasts for your saved cities.">
-  <meta property="og:image" content="assets/icons/icon-512.png">
+  <meta property="og:image" content="/assets/icons/icon-512.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="WeatherDaddy">
   <meta name="twitter:description" content="Fast 8-day weather forecasts for your saved cities.">
-  <meta name="twitter:image" content="assets/icons/icon-512.png">
+  <meta name="twitter:image" content="/assets/icons/icon-512.png">
 
-  <link rel="stylesheet" href="css/style.css?v=154">
+  <link rel="stylesheet" href="css/style.css?v=155">
 </head>
 <body>
   <!-- Ambient weather effects layer. Three fx-layer children give the JS
@@ -528,7 +533,7 @@
           
           <div class="checkbox-container" id="export-api-key-container" style="display: none; margin-bottom: 20px;">
             <label class="custom-checkbox">
-              <input type="checkbox" id="export-api-key-checkbox" checked>
+              <input type="checkbox" id="export-api-key-checkbox">
               <span class="checkmark"></span>
               Include my custom API key in the export
             </label>
@@ -663,10 +668,10 @@
 
   </div>
 
-  <script src="js/storage.js?v=154"></script>
-  <script src="js/location.js?v=154"></script>
-  <script src="js/weather.js?v=154"></script>
-  <script src="js/ui.js?v=154"></script>
-  <script src="js/app.js?v=154"></script>
+  <script src="js/storage.js?v=155"></script>
+  <script src="js/location.js?v=155"></script>
+  <script src="js/weather.js?v=155"></script>
+  <script src="js/ui.js?v=155"></script>
+  <script src="js/app.js?v=155"></script>
 </body>
 </html>
