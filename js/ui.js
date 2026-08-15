@@ -1354,17 +1354,17 @@ const UI = {
   },
 
   // US AQI categories (EPA breakpoints).
+  // Band name only — the number is what the word already says, so it
+  // stays out of the UI.
   aqiLabel(aqi) {
     if (aqi == null) return 'N/A';
     const v = Math.round(aqi);
-    let label;
-    if (v <= 50)       label = 'Good';
-    else if (v <= 100) label = 'Moderate';
-    else if (v <= 150) label = 'Sensitive';
-    else if (v <= 200) label = 'Unhealthy';
-    else if (v <= 300) label = 'Very poor';
-    else               label = 'Hazardous';
-    return `${label} (${v})`;
+    if (v <= 50)  return 'Good';
+    if (v <= 100) return 'Moderate';
+    if (v <= 150) return 'Sensitive';
+    if (v <= 200) return 'Unhealthy';
+    if (v <= 300) return 'Very poor';
+    return 'Hazardous';
   },
 
   // Sum of CAMS pollen grains/m³ → coarse Low/Moderate/High band.
@@ -2344,10 +2344,10 @@ const UI = {
     // the air is fine, blaming a pollutant is noise. Headline placement
     // starts at Unhealthy-for-Sensitive-Groups (AQI > 100).
     const aqiText = (aq.aqi != null && aq.aqi > 50 && aq.aqiPollutant)
-      ? `${this.aqiLabel(aq.aqi)} · ${aq.aqiPollutant}`
+      ? `${this.aqiLabel(aq.aqi)}, ${aq.aqiPollutant}`
       : this.aqiLabel(aq.aqi);
     (aq.aqi != null && aq.aqi > 100 ? notable : routine)
-      .push(item('Air quality', this.esc(aqiText)));
+      .push(item('Air quality', `<span class="stat-chip-aqi">${this.esc(aqiText)}</span>`));
     // Whole-day max sustained wind — notable from Beaufort "strong
     // breeze" (10.7 m/s ≈ 24 mph) upward.
     if (activeOmDay && activeOmDay.windMax != null) {

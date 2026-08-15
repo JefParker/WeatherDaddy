@@ -2474,3 +2474,14 @@ body.has-alert .a2hs-prompt {
   border-top-color: #e6b84c;
 }
 .alert-bar.alert-bar-minor:active { background: #322709; }
+
+/* Air-quality value renders as an orange chip so it stands out from
+   the plain-text stats around it. */
+.stat-chip-aqi {
+  display: inline-block;
+  background: var(--accent-color);
+  color: #1a1a1a;
+  font-weight: 700;
+  padding: 1px 8px 2px;
+  border-radius: 999px;
+}
