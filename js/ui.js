@@ -3465,14 +3465,26 @@ const UI = {
   // graph so that only the chart itself rotates when the user swipes to
   // another day. oldHTML and newHTML are inner-HTML snapshots (pure SVG
   // markup, no event listeners to preserve), so we just swap text content.
+  //
+  // `direction` picks the rotation axis as well as the way round:
+  //   'next' / 'prev' — about the vertical axis (day changes, stats pager)
+  //   'up'   / 'down' — about the horizontal axis (the graph's rain/wind
+  //                     series flip, so a mode change doesn't read as
+  //                     another day change)
   async runElementCubeTransition(targetEl, oldHTML, newHTML, direction) {
     if (!targetEl) return;
-    const isNext = direction === 'next';
+    const BACK_FACE = { next: 'cube-face-right', prev: 'cube-face-left', up: 'cube-face-bottom', down: 'cube-face-top' };
+    const ROTATE    = { next: 'rotate-left',     prev: 'rotate-right',   up: 'rotate-up',        down: 'rotate-down' };
+    const isVerticalAxis = direction === 'up' || direction === 'down';
     const height = targetEl.offsetHeight || 200;
 
     const perspective = document.createElement('div');
     perspective.className = 'cube-perspective';
     perspective.style.height = `${height}px`;
+    // X-axis rotation: the face depth is half the face HEIGHT — the
+    // default --cube-half is sized for the wide Y-axis cubes and would
+    // make a 200px-tall graph fly absurdly far out of plane.
+    if (isVerticalAxis) perspective.style.setProperty('--cube-half', `${height / 2}px`);
 
     const stage = document.createElement('div');
     stage.className = 'cube-stage';
@@ -3485,7 +3497,7 @@ const UI = {
     this._prepCubeFace(front, false);
 
     const back = document.createElement('div');
-    back.className = 'cube-face ' + (isNext ? 'cube-face-right' : 'cube-face-left');
+    back.className = 'cube-face ' + (BACK_FACE[direction] || 'cube-face-right');
     back.innerHTML = newHTML;
     this._prepCubeFace(back, false);
 
@@ -3502,7 +3514,7 @@ const UI = {
       stage.offsetHeight; // force reflow so the transition actually plays
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          stage.classList.add(isNext ? 'rotate-left' : 'rotate-right');
+          stage.classList.add(ROTATE[direction] || 'rotate-left');
         });
       });
 
@@ -3983,7 +3995,9 @@ const UI = {
     if (newHTML === oldHTML) return; // hidden container etc. — mode saved, nothing to animate
 
     this._graphCubeAnimating = true;
-    this.runElementCubeTransition(graphEl, oldHTML, newHTML, next === 'wind' ? 'next' : 'prev')
+    // Horizontal-axis flip: wind rolls in from below, precip back from
+    // above — visually distinct from the vertical-axis day changes.
+    this.runElementCubeTransition(graphEl, oldHTML, newHTML, next === 'wind' ? 'up' : 'down')
       .finally(() => {
         this._graphCubeAnimating = false;
         if (hadFocus) {

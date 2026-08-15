@@ -791,6 +791,16 @@ body {
 .cube-stage.rotate-left  { transform: translateZ(calc(var(--cube-half) * -1)) rotateY(-90deg); }
 .cube-stage.rotate-right { transform: translateZ(calc(var(--cube-half) * -1)) rotateY( 90deg); }
 
+/* Vertical variant — rotation about the horizontal (X) axis. Used by the
+   graph's rain/wind series flip so a MODE change reads differently from
+   the day/city changes, which all spin about the vertical axis. NOTE:
+   --cube-half must be set to half the face HEIGHT by the JS that builds
+   one of these (the default above assumes the ~500px-wide city cube). */
+.cube-face-top    { transform: rotateX( 90deg) translateZ(var(--cube-half)); }
+.cube-face-bottom { transform: rotateX(-90deg) translateZ(var(--cube-half)); }
+.cube-stage.rotate-up   { transform: translateZ(calc(var(--cube-half) * -1)) rotateX( 90deg); }
+.cube-stage.rotate-down { transform: translateZ(calc(var(--cube-half) * -1)) rotateX(-90deg); }
+
 /* === Context menu (right-click / long-press) ========================= */
 .context-menu {
   position: fixed;
