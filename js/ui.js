@@ -1776,6 +1776,30 @@ const UI = {
       selectedDayIndex = -1;
     }
 
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    // ── Near-term 2h tiles ─────────────────────────────────────────────
+    // The hourly scroller shows 2-hour tiles for the next 24 hours,
+    // sourced from Open-Meteo's true 1h series (OWM only offers 3h),
+    // then continues on the regular 3h slots beyond that window —
+    // denser exactly where forecasts are sharpest. day.hourly itself
+    // stays on the 3h spine: the graph, the precip totals (which sum
+    // 3h buckets) and Copy-URL day/hour resolution all key off it, so
+    // only the scroller and the hour-pin lookup see these extra slots.
+    // When enrichment is down the map stays empty and the scroller
+    // renders exactly as before.
+    const NEAR_TERM_SEC = 24 * 3600;
+    const nearTermByKey = new Map(); // dayKey → 2h-spaced OWM-shaped slots
+    let lastNearTermDt = 0;
+    for (const h of (state.omHourly || [])) {
+      if (h.dt <= nowSec || h.dt > nowSec + NEAR_TERM_SEC) continue;
+      if (Math.floor(h.dt / 3600) % 2 !== 0) continue; // every 2nd hour
+      const k = dayKeyFor(h.dt);
+      if (!nearTermByKey.has(k)) nearTermByKey.set(k, []);
+      nearTermByKey.get(k).push(this._omHourToOwmSlot(h));
+      if (h.dt > lastNearTermDt) lastNearTermDt = h.dt;
+    }
+
     // Day totals for any forecast day: sum of rain+snow mm and max PoP across
     // the 3h slots in that day. Used identically for Today and forecast days
     // so the Precipitation / Probability rows update consistently.
@@ -1941,6 +1965,14 @@ const UI = {
         const found = d.hourly.find(h => h.dt === selectedHourDt);
         if (found) { pinnedHourSlot = found; break; }
       }
+      // Not on the 3h spine? The pin is one of the near-term 2h tiles —
+      // display-layer slots that never live in day.hourly. Resolve it
+      // straight from the Open-Meteo hourly series (which also keeps an
+      // older 2h pin alive after it drifts out of the 24h tile window).
+      if (!pinnedHourSlot) {
+        const om = (state.omHourly || []).find(h => h.dt === selectedHourDt);
+        if (om) pinnedHourSlot = this._omHourToOwmSlot(om);
+      }
     }
 
     // heroData mirrors the fields the hero card reads (main, weather, wind,
@@ -1972,7 +2004,6 @@ const UI = {
 
     // Hero subtitle clock: short city name (before any comma) + local time.
     const cityShort = (cityName || '').split(',')[0].trim() || cityName || '';
-    const nowSec = Math.floor(Date.now() / 1000);
     const cityClock = this.formatTime(nowSec, true, tz);
     this._clockTimezone = tz;
     this._ensureClockTimer();
@@ -2477,7 +2508,15 @@ const UI = {
           for (let dayIdx = 0; dayIdx < dailyData.length; dayIdx++) {
             const day = dailyData[dayIdx];
             if (!day || !day.hourly) continue;
-            const slots = day.hourly.filter(h => h.dt > nowSec);
+            let slots = day.hourly.filter(h => h.dt > nowSec);
+            // Swap in the denser near-term 2h tiles where they cover
+            // this day, keeping only 3h slots that start ≥2h after the
+            // last 2h tile so the seam doesn't produce near-duplicate
+            // neighbours.
+            const near = nearTermByKey.get(day.key);
+            if (near && near.length) {
+              slots = near.concat(slots.filter(h => h.dt >= lastNearTermDt + 2 * 3600));
+            }
             const isTodayCol = dayIdx === nowDayIdx;
             if (!slots.length && !isTodayCol) continue;
             if (!firstShown) out += '<div class="hourly-day-divider"></div>';
