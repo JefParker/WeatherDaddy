@@ -2790,6 +2790,11 @@ const UI = {
   // Wraps at both ends.
   _changeStatsPage(direction) {
     if (this._statsCubeAnimating) return;
+    // Mid city-swipe, #stats-pager resolves to the outgoing clone on the
+    // cube face (ids are duplicated for the 800ms spin) — running an
+    // inner cube against that dead DOM is pointless and racy. Swallow
+    // the gesture; the pager is fully rebuilt when the cube lands.
+    if (this._cubeAnimating) return;
     const total = this._statsPages.length;
     if (total <= 1) return;
 
@@ -3362,7 +3367,13 @@ const UI = {
   //   (right for scroll-driven day changes initiated from within the bar).
   changeDayWithGraphCube(newIdx, direction, onDayClick, snapHourly = true) {
     const graphEl = document.getElementById('graph-container');
-    if (!graphEl || this._graphCubeAnimating) {
+    // Mid city-swipe (this._cubeAnimating) two things break the cube
+    // path: #graph-container resolves to the outgoing clone on the cube
+    // face, and onDayClick's renderAll() is parked, so "re-renders
+    // dashboard" below doesn't hold. Take the no-animation path — the
+    // selection still lands and the deferred render paints the right
+    // day once the city cube resolves.
+    if (!graphEl || this._graphCubeAnimating || this._cubeAnimating) {
       this._snapHourlyToActiveDay = snapHourly;
       onDayClick(newIdx);
       return;
