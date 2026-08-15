@@ -2267,7 +2267,23 @@ const UI = {
           <span class="stat-value">${this.esc(phase)}</span>
         </div>`;
     })();
-    const uvStatItem = item('UV index', this.esc(this.uvLabel(uvValue)));
+    // The "UV index" LABEL gets a WHO-colored pill from Moderate up —
+    // same treatment as the Air quality label's EPA bands. Low UV gets
+    // no highlight. Cell built by hand because item() escapes its label.
+    const uvBandClass = (() => {
+      if (uvValue == null || isNaN(uvValue)) return '';
+      const v = Math.round(uvValue);
+      if (v >= 11) return ' uv-band-extreme';
+      if (v >= 8)  return ' uv-band-veryhigh';
+      if (v >= 6)  return ' uv-band-high';
+      if (v >= 3)  return ' uv-band-moderate';
+      return '';
+    })();
+    const uvStatItem = `
+      <div class="stat-item">
+        <span class="stat-label${uvBandClass}">UV index</span>
+        <span class="stat-value">${this.esc(this.uvLabel(uvValue))}</span>
+      </div>`;
 
     // Is it night-time at the city for the active day? Two parallel
     // checks, ORed together:
