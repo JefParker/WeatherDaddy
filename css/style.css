@@ -2475,13 +2475,19 @@ body.has-alert .a2hs-prompt {
 }
 .alert-bar.alert-bar-minor:active { background: #322709; }
 
-/* Air-quality value renders as an orange chip so it stands out from
-   the plain-text stats around it. */
-.stat-chip-aqi {
-  display: inline-block;
-  background: var(--accent-color);
-  color: #1a1a1a;
-  font-weight: 700;
+/* "Air quality" label pill, colored by EPA band once the reading is
+   health-relevant (nothing below Sensitive). The stat cell is a
+   centered flex column, so the pill shrinks to its text. */
+.stat-label.aqi-band-sensitive,
+.stat-label.aqi-band-unhealthy,
+.stat-label.aqi-band-veryunhealthy,
+.stat-label.aqi-band-hazardous {
   padding: 1px 8px 2px;
   border-radius: 999px;
+  color: #fff;
+  font-weight: 600;
 }
+.stat-label.aqi-band-sensitive     { background: #ff7e00; color: #1a1a1a; }
+.stat-label.aqi-band-unhealthy     { background: #d32f2f; }
+.stat-label.aqi-band-veryunhealthy { background: #8f3f97; }
+.stat-label.aqi-band-hazardous     { background: #7e0023; }

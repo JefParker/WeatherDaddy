@@ -2346,8 +2346,26 @@ const UI = {
     const aqiText = (aq.aqi != null && aq.aqi > 50 && aq.aqiPollutant)
       ? `${this.aqiLabel(aq.aqi)}, ${aq.aqiPollutant}`
       : this.aqiLabel(aq.aqi);
-    (aq.aqi != null && aq.aqi > 100 ? notable : routine)
-      .push(item('Air quality', `<span class="stat-chip-aqi">${this.esc(aqiText)}</span>`));
+    // The "Air quality" LABEL gets an EPA-colored pill once the band
+    // crosses into health-relevant territory: orange from Sensitive
+    // (>100), red from Unhealthy (>150), purple from Very Unhealthy
+    // (>200), maroon at Hazardous (>300). Below that, no highlight.
+    // Cell built by hand because item() escapes its label.
+    const aqiBandClass = (() => {
+      if (aq.aqi == null) return '';
+      const v = Math.round(aq.aqi);
+      if (v > 300) return ' aqi-band-hazardous';
+      if (v > 200) return ' aqi-band-veryunhealthy';
+      if (v > 150) return ' aqi-band-unhealthy';
+      if (v > 100) return ' aqi-band-sensitive';
+      return '';
+    })();
+    const airQualityItem = `
+      <div class="stat-item">
+        <span class="stat-label${aqiBandClass}">Air quality</span>
+        <span class="stat-value">${this.esc(aqiText)}</span>
+      </div>`;
+    (aq.aqi != null && aq.aqi > 100 ? notable : routine).push(airQualityItem);
     // Whole-day max sustained wind — notable from Beaufort "strong
     // breeze" (10.7 m/s ≈ 24 mph) upward.
     if (activeOmDay && activeOmDay.windMax != null) {
