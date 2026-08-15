@@ -560,6 +560,7 @@ const UI = {
     const overlayClone = overlay.cloneNode(true);
     overlayClone.style.transform = 'none'; // Ensure the clone is visible
     front.appendChild(overlayClone);
+    this._prepCubeFace(front, true); // clone — strip its duplicated ids
 
     const back = document.createElement('div');
     back.className = 'cube-face cube-face-left'; // We rotate right, so left face slides in
@@ -584,6 +585,10 @@ const UI = {
     fakeApp.appendChild(headerClone);
     fakeApp.appendChild(mainClone);
     back.appendChild(fakeApp);
+    // Clones of the whole header + main content: without stripping,
+    // #weather-view / #save-btn / #city-clock etc. are duplicated in
+    // document.body and getElementById can resolve to the dead copy.
+    this._prepCubeFace(back, true);
 
     stage.appendChild(front);
     stage.appendChild(back);
@@ -659,6 +664,7 @@ const UI = {
       // Front face already has overflow:hidden via .cube-face CSS, so
       // only the column-shaped slice of the overlay will be visible.
       front.appendChild(overlayClone);
+      this._prepCubeFace(front, true); // clone — strip its duplicated ids
 
       // ----- Back face: clone of the column wrapper -----
       const back = document.createElement('div');
@@ -667,6 +673,7 @@ const UI = {
       colClone.style.transform = 'none';
       // Fill the cube face so the clone matches the real column's render.
       back.appendChild(colClone);
+      this._prepCubeFace(back, true); // also a clone — strip ids
 
       stage.appendChild(front);
       stage.appendChild(back);
@@ -1578,6 +1585,18 @@ const UI = {
     }).join('');
   },
 
+  // Wire a div that acts as a button (role="button" tabindex="0"):
+  // click plus Enter/Space activation so the day-selection and
+  // hour-pinning UI is reachable by keyboard.
+  _bindActivate(el, handler) {
+    el.addEventListener('click', handler);
+    el.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault(); // keep Space from scrolling the page
+      handler(e);
+    });
+  },
+
   // Canonical daily-data builder — the ONE place the 8-day list is
   // assembled. Groups OWM 3h slots and Open-Meteo filler days into a
   // single array keyed by CITY-local calendar day, then tops up
@@ -1721,7 +1740,7 @@ const UI = {
     const isSaved = Storage.isDuplicate(savedList, currentWeather.coord.lat, currentWeather.coord.lon, cityName);
 
     this.saveBtnContainer.innerHTML = `
-      <button class="save-loc-btn ${isSaved ? 'saved' : ''}" id="save-btn" aria-label="Save Location">
+      <button class="save-loc-btn ${isSaved ? 'saved' : ''}" id="save-btn" aria-label="${isSaved ? 'Remove Saved Location' : 'Save Location'}">
         ${isSaved
           ? `<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>`
           : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>`
@@ -2355,10 +2374,19 @@ const UI = {
       ? `${Math.round(activeDay.pop * 100)}% chance of precipitation`
       : 'No precipitation expected';
 
+    // Index of the real "today" entry in dailyData, matched by day KEY
+    // instead of trusting array position (same rule as the daily list).
+    // Today is chronologically first whenever present, so this is 0 in
+    // practice — but near local midnight, when OWM's window has rolled
+    // past the city's calendar day AND enrichment couldn't fill it in,
+    // dailyData[0] is already tomorrow and no key matches. Fall back to
+    // 0 then so the Now tile still anchors the scroller.
+    const todayIdx = dailyData.findIndex(d => d.key === todayKey);
+    const nowDayIdx = todayIdx !== -1 ? todayIdx : 0;
     // Index of the currently-displayed day in dailyData, used by the
     // hourly-scroll to highlight its tiles and detect scroll-driven day
-    // changes. Both -1 (initial) and 0 (Today tab) map to 0.
-    const currentDayIdx = isToday ? 0 : selectedDayIndex;
+    // changes. Both -1 (initial) and 0 (Today tab) map to the Now day.
+    const currentDayIdx = isToday ? nowDayIdx : selectedDayIndex;
 
     let html = `
       <!-- Left-column wrapper: hero + stats + temperature graph. Pairs
@@ -2418,7 +2446,7 @@ const UI = {
           // sourced from the live currentWeather — its label and data
           // always reflect THIS moment, not a 3h-block snapshot. Tapping
           // it clears any pinned hour and returns the hero to the
-          // "Right now" view (via onDayClick(0), which is what
+          // "Right now" view (via onDayClick(nowDayIdx), which is what
           // handleDayClick does).
           //
           // We also skip any day that becomes empty after filtering and
@@ -2433,7 +2461,7 @@ const UI = {
             const day = dailyData[dayIdx];
             if (!day || !day.hourly) continue;
             const slots = day.hourly.filter(h => h.dt > nowSec);
-            const isTodayCol = dayIdx === 0;
+            const isTodayCol = dayIdx === nowDayIdx;
             if (!slots.length && !isTodayCol) continue;
             if (!firstShown) out += '<div class="hourly-day-divider"></div>';
             firstShown = false;
@@ -2444,7 +2472,7 @@ const UI = {
               // is selected AND no hour is pinned) so the user can see
               // at a glance which tile their hero card represents.
               const nowActive =
-                currentDayIdx === 0 && selectedHourDt == null
+                isToday && selectedHourDt == null
                   ? 'active-hour' : '';
               const nowStyle = CONFIG_TEMP_LINE_COLOR.enabled && nowActive
                 ? `style="box-shadow: inset 0 0 0 2px ${getTempColor(cw.main.temp)} !important;"`
@@ -2454,7 +2482,7 @@ const UI = {
                 ? this.getWeatherIconSVG(w0.icon, 28, w0.id, cw.dt)
                 : '';
               out += `
-                <div class="hourly-tile active-day ${nowActive}" data-day-index="0" data-now="1" ${nowStyle}>
+                <div class="hourly-tile active-day ${nowActive}" data-day-index="${nowDayIdx}" data-now="1" role="button" tabindex="0" aria-label="Now, ${this.formatTemp(cw.main.temp)}°" ${nowStyle}>
                   <span class="hourly-time">Now</span>
                   <span class="hourly-icon">${nowIcon}</span>
                   <span class="hourly-temp">${this.formatTemp(cw.main.temp)}°</span>
@@ -2470,7 +2498,7 @@ const UI = {
                 ? `style="box-shadow: inset 0 0 0 2px ${getTempColor(h.main.temp)} !important;"`
                 : '';
               out += `
-                <div class="hourly-tile ${cls.trim()}" data-day-index="${dayIdx}" data-dt="${h.dt}" ${tileStyle}>
+                <div class="hourly-tile ${cls.trim()}" data-day-index="${dayIdx}" data-dt="${h.dt}" role="button" tabindex="0" aria-label="${this.formatTime(h.dt, true, tz)}, ${this.formatTemp(h.main.temp)}°" ${tileStyle}>
                   <span class="hourly-time">${this.formatTime(h.dt, true, tz)}</span>
                   <span class="hourly-icon">${this.getWeatherIconSVG(h.weather[0].icon, 28, h.weather[0].id, h.dt)}</span>
                   <span class="hourly-temp">${this.formatTemp(h.main.temp)}°</span>
@@ -2504,10 +2532,10 @@ const UI = {
           const icon = (notable && notable.weather && notable.weather[0])
             ? this._weatherAssetName(notable.weather[0].icon, notable.weather[0].id)
             : (d.icons[Math.floor(d.icons.length / 2)] || d.icons[0]);
-          const isActive = selectedDayIndex === i || (isToday && i === 0);
+          const isActive = selectedDayIndex === i || (isToday && i === nowDayIdx);
 
           return `
-            <div class="daily-item ${isActive ? 'active' : ''}" data-index="${i}">
+            <div class="daily-item ${isActive ? 'active' : ''}" data-index="${i}" role="button" tabindex="0" aria-label="${dayName} ${dateStr}, high ${maxTemp}°, low ${minTemp}°">
               <div class="daily-day-date">
                 <span class="daily-day">${dayName}</span>
                 <span class="daily-date">${dateStr}</span>
@@ -2595,7 +2623,7 @@ const UI = {
     }
 
     this.weatherView.querySelectorAll('.daily-item').forEach(el => {
-      el.addEventListener('click', () => {
+      this._bindActivate(el, () => {
         const idx = parseInt(el.getAttribute('data-index'));
         // Same-day tap. Two sub-cases:
         //   (a) an hour is currently pinned → re-render to unpin (returns
@@ -2657,13 +2685,13 @@ const UI = {
     // selectedHourDt and sets selectedDayIndex to 0).
     if (onHourClick) {
       this.weatherView.querySelectorAll('.hourly-tile').forEach(el => {
-        el.addEventListener('click', () => {
+        this._bindActivate(el, () => {
           const isNow = el.hasAttribute('data-now');
           if (isNow) {
             // Already on "Right now"? Nothing to do.
-            if (currentDayIdx === 0 && selectedHourDt == null) return;
+            if (isToday && selectedHourDt == null) return;
             const finishHeroSlide = this.captureHourlyTileForHeroSlide(el);
-            onDayClick(0);
+            onDayClick(nowDayIdx);
             if (finishHeroSlide) finishHeroSlide();
             return;
           }
@@ -2893,6 +2921,24 @@ const UI = {
     if (deferred) deferred();
   },
 
+  // Hygiene for cube faces, applied for the duration of a spin:
+  //   - aria-hidden + inert so the face's copy of the app is invisible
+  //     to assistive tech and unreachable via the tab order (without
+  //     this, a screen reader sees the whole dashboard twice).
+  //   - stripIds=true additionally removes every id in the face so
+  //     getElementById can't resolve to dead DOM while both faces are
+  //     mounted (e.g. the clock timer ticking a stale #city-clock).
+  //     MUST stay false for faces holding LIVE nodes (city-cube back
+  //     faces — those nodes return to the document when the cube lands)
+  //     and for faces whose SVG needs its gradient id to paint.
+  _prepCubeFace(face, stripIds) {
+    if (stripIds) {
+      face.querySelectorAll('[id]').forEach(n => n.removeAttribute('id'));
+    }
+    face.setAttribute('aria-hidden', 'true');
+    face.inert = true;
+  },
+
   // Run a 3D cube-rotation transition between two dashboards. The current
   // contents of #weather-view (the NEW city, which the caller has already
   // rendered) are moved onto one side of the cube; the supplied snapshot of
@@ -2947,12 +2993,14 @@ const UI = {
     const front = document.createElement('div');
     front.className = 'cube-face cube-face-front';
     while (oldClone.firstChild) front.appendChild(oldClone.firstChild);
+    this._prepCubeFace(front, true); // clone — strip its duplicated ids
 
     const back = document.createElement('div');
     back.className = 'cube-face ' + (isNext ? 'cube-face-right' : 'cube-face-left');
     // Move the freshly-rendered NEW dashboard onto the cube's incoming face.
     // We move (not clone) the children so their event listeners survive.
     while (this.weatherView.firstChild) back.appendChild(this.weatherView.firstChild);
+    this._prepCubeFace(back, false); // LIVE nodes — ids must survive
 
     stage.appendChild(front);
     stage.appendChild(back);
@@ -3037,10 +3085,12 @@ const UI = {
       const front = document.createElement('div');
       front.className = 'cube-face cube-face-front';
       front.appendChild(oldCol);
+      this._prepCubeFace(front, true); // clone — strip its duplicated ids
 
       const back = document.createElement('div');
       back.className = 'cube-face ' + backFaceClass;
       back.appendChild(newCol);
+      this._prepCubeFace(back, false); // LIVE nodes — ids must survive
 
       stage.appendChild(front);
       stage.appendChild(back);
@@ -3410,10 +3460,14 @@ const UI = {
     const front = document.createElement('div');
     front.className = 'cube-face cube-face-front';
     front.innerHTML = oldHTML;
+    // Don't strip ids here: the graph SVG needs its (per-render unique)
+    // gradient id to paint during the spin. Hide from AT / tab order only.
+    this._prepCubeFace(front, false);
 
     const back = document.createElement('div');
     back.className = 'cube-face ' + (isNext ? 'cube-face-right' : 'cube-face-left');
     back.innerHTML = newHTML;
+    this._prepCubeFace(back, false);
 
     stage.appendChild(front);
     stage.appendChild(back);
@@ -3474,6 +3528,13 @@ const UI = {
       // The quick-stats pager has its own swipe handler that pages between
       // stat groups — don't also fire the city swipe from there.
       if (e.target.closest('.stats-pager, .quick-stats-grid')) return;
+      // Regions that own their own horizontal gestures. The geometric
+      // "above the graph" check below isn't enough in the landscape
+      // two-column layout, where the hourly scroller and daily list sit
+      // in the right column — geometrically above the left column's
+      // graph — and a drag meant to scroll the timeline would change
+      // city instead.
+      if (e.target.closest('.hourly-scroll, .daily-list, .graph-container')) return;
 
       // Only above the temperature graph counts.
       const graph = document.getElementById('graph-container');
@@ -3628,7 +3689,13 @@ const UI = {
     for (const h of hourlyPrecip) {
       precipByHour.set(Math.floor(h.dt / 3600), h.precipMM);
     }
-    const fallback3hPerHour = (p) => (p && p.rain && p.rain['3h']) ? p.rain['3h'] / 3 : 0;
+    // Count snow like dayTotals and the Precipitation stat do — without
+    // it, a snowstorm with no Open-Meteo hourly data graphs as bone dry.
+    const fallback3hPerHour = (p) => {
+      const r = (p && p.rain && p.rain['3h']) || 0;
+      const s = (p && p.snow && p.snow['3h']) || 0;
+      return (r + s) / 3;
+    };
 
     // Interpolate OWM's 3-hour temperature data to 1-hour steps. The precip
     // value for each 1h bar now comes from Open-Meteo's hourly series, not
@@ -3694,11 +3761,17 @@ const UI = {
 
     const barWidth = (width - 2 * paddingX) / (hourly.length - 1);
 
+    // Unique per render: during a cube transition BOTH graphs are mounted
+    // at once, and url(#id) resolves to the FIRST match in tree order — a
+    // shared id would stroke the incoming line with the outgoing day's
+    // gradient for the full spin.
+    const gradientId = 'temp-line-gradient-' + (this._gradSeq = (this._gradSeq || 0) + 1);
+
     container.innerHTML = `
       <svg class="graph-svg" viewBox="0 0 ${width} ${height}">
         ${CONFIG_TEMP_LINE_COLOR.enabled ? `
         <defs>
-          <linearGradient id="temp-line-gradient" gradientUnits="userSpaceOnUse" x1="${paddingX}" y1="0" x2="${width - paddingX}" y2="0">
+          <linearGradient id="${gradientId}" gradientUnits="userSpaceOnUse" x1="${paddingX}" y1="0" x2="${width - paddingX}" y2="0">
             ${points.map((p, i) => {
               const offset = (i / (points.length - 1)) * 100;
               const color = getTempColor(p.temp);
@@ -3733,7 +3806,7 @@ const UI = {
           return `<rect class="graph-precip-bar" x="${p.x - barWidth/2}" y="${p.yPrecip}" width="${barWidth + 0.5}" height="${height - paddingY - p.yPrecip}"></rect>`;
         }).join('')}
 
-        <path class="graph-path" d="${pathD}" fill="none" stroke="${CONFIG_TEMP_LINE_COLOR.enabled ? 'url(#temp-line-gradient)' : '#ff7043'}" style="${CONFIG_TEMP_LINE_COLOR.enabled ? 'stroke: url(#temp-line-gradient) !important;' : ''}" stroke-width="3"></path>
+        <path class="graph-path" d="${pathD}" fill="none" stroke="${CONFIG_TEMP_LINE_COLOR.enabled ? `url(#${gradientId})` : '#ff7043'}" style="${CONFIG_TEMP_LINE_COLOR.enabled ? `stroke: url(#${gradientId}) !important;` : ''}" stroke-width="3"></path>
 
         ${points.map(p => {
           if (!p.isOriginal) return '';

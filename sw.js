@@ -1,9 +1,11 @@
 // DEPLOY RITUAL: static assets are served cache-first with no
 // revalidation, so shipping ANY change to index.html / css / js requires
-// bumping BOTH this CACHE_NAME and the ?v= query strings in index.html.
-// (The ?v= strip in cacheKey() means a forgotten CACHE_NAME bump keeps
-// serving the old file to installed clients forever.)
-const CACHE_NAME = 'weatherdaddy-v180';
+// bumping this CACHE_NAME — it is the ONLY cache-bust mechanism.
+// (index.html used to also carry ?v= query strings, but cacheKey()
+// strips the query before caching, so they never did anything and were
+// removed. A forgotten CACHE_NAME bump keeps serving the old files to
+// installed clients forever.)
+const CACHE_NAME = 'weatherdaddy-v181';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',

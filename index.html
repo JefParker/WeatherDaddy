@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>WeatherDaddy</title>
   <meta name="description" content="Fast 8-day weather forecasts for your saved cities, with hourly graphs and offline support.">
   <meta name="theme-color" content="#121212">
@@ -117,7 +117,10 @@
   <meta name="twitter:description" content="Fast 8-day weather forecasts for your saved cities.">
   <meta name="twitter:image" content="/assets/icons/icon-512.png">
 
-  <link rel="stylesheet" href="css/style.css?v=155">
+  <!-- No ?v= cache-bust params: the service worker strips query strings
+       when caching (see cacheKey() in sw.js), so CACHE_NAME there is the
+       single version that matters — bump it on every deploy. -->
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
   <!-- Ambient weather effects layer. Three fx-layer children give the JS
@@ -668,10 +671,10 @@
 
   </div>
 
-  <script src="js/storage.js?v=155"></script>
-  <script src="js/location.js?v=155"></script>
-  <script src="js/weather.js?v=155"></script>
-  <script src="js/ui.js?v=155"></script>
-  <script src="js/app.js?v=155"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/location.js"></script>
+  <script src="js/weather.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/app.js"></script>
 </body>
 </html>
