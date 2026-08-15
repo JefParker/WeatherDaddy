@@ -2407,3 +2407,21 @@ body.has-alert .a2hs-prompt {
   outline: 2px solid var(--accent-color);
   outline-offset: 2px;
 }
+
+/* Wind mode on the day graph. Bars must read as a different series at a
+   glance, and the axis label follows the active mode's colour so the
+   gutter itself says which mode you're in. */
+.graph-wind-bar {
+  fill: #5c9ce6;
+  opacity: 0.6;
+}
+.graph-y-axis-label.wind {
+  fill: #5c9ce6;
+}
+.graph-mode-toggle {
+  cursor: pointer;
+}
+.graph-mode-toggle:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}

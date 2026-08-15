@@ -82,6 +82,22 @@ const Storage = {
   clearCustomApiKey() {
     try { localStorage.removeItem(this.CUSTOM_KEY_STORAGE); } catch (_) {}
   },
+  // Graph bar-series mode: 'precip' (default) or 'wind'. Global — not
+  // per-day or per-city — and persisted so the choice survives reloads.
+  // Validated on read so junk in localStorage can't leak into rendering.
+  GRAPH_MODE_STORAGE: 'graph_mode',
+  getGraphMode() {
+    try {
+      return localStorage.getItem(this.GRAPH_MODE_STORAGE) === 'wind' ? 'wind' : 'precip';
+    } catch (_) {
+      return 'precip';
+    }
+  },
+  setGraphMode(mode) {
+    if (mode !== 'precip' && mode !== 'wind') return false;
+    try { localStorage.setItem(this.GRAPH_MODE_STORAGE, mode); return true; }
+    catch (_) { return false; }
+  },
   getLocation() {
     return this._read('weather_loc', null);
   },

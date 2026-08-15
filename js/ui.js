@@ -239,7 +239,7 @@ const UI = {
         if (this._lastGraph) this.renderGraph(
           this._lastGraph.hourly,
           this._lastGraph.tz,
-          this._lastGraph.hourlyPrecip || []
+          this._lastGraph.omHourly || []
         );
       });
       this._resizeBound = true;
@@ -1022,11 +1022,19 @@ const UI = {
     return Math.round(this.convertTemp(celsius));
   },
 
-  formatWind(ms) {
+  // One conversion table for wind display. The graph's y-axis wants the
+  // bare number and unit on separate lines while formatWind wants them
+  // joined — both go through here so the factors can't drift.
+  _windToDisplay(ms) {
     const unit = Storage.getUnits().wind;
-    if (unit === 'mph') return (ms * 2.237).toFixed(1) + ' mph';
-    if (unit === 'ms')  return ms.toFixed(1) + ' m/s';
-    return (ms * 3.6).toFixed(1) + ' km/h';
+    if (unit === 'mph') return { value: ms * 2.237, unit: 'mph' };
+    if (unit === 'ms')  return { value: ms,         unit: 'm/s' };
+    return { value: ms * 3.6, unit: 'km/h' };
+  },
+
+  formatWind(ms) {
+    const { value, unit } = this._windToDisplay(ms);
+    return `${value.toFixed(1)} ${unit}`;
   },
 
   // 8-point compass bearing from a meteorological "wind FROM" degree.
@@ -3672,13 +3680,21 @@ const UI = {
   },
 
   // `tz` is a tz handle as accepted by formatTime (IANA zone name or
-  // fixed offset seconds).
-  renderGraph(hourlyData, tz = 0, hourlyPrecip = []) {
+  // fixed offset seconds). `omHourly` is the full Open-Meteo hourly
+  // array (state.omHourly) — it carries precipMM AND windSpeed, so both
+  // bar series come from the one argument.
+  renderGraph(hourlyData, tz = 0, omHourly = []) {
     const container = document.getElementById('graph-container');
     if (!container) return;
 
-    // Remember the latest data so we can redraw on resize/visibility changes.
-    this._lastGraph = { hourly: hourlyData, tz, hourlyPrecip };
+    // Remember the latest data so we can redraw on resize/visibility
+    // changes and on mode toggles.
+    this._lastGraph = { hourly: hourlyData, tz, omHourly };
+
+    // 'precip' | 'wind' — which bar series the graph shows. Global and
+    // persisted; lives on UI (not the DOM) because the graph's innerHTML
+    // is replaced wholesale on every render and cube transition.
+    const mode = this._graphMode || (this._graphMode = Storage.getGraphMode());
 
     // Interpolation and x-spacing both divide by (points - 1); a day
     // with fewer than two slots would render NaN geometry. Clear the
@@ -3694,12 +3710,17 @@ const UI = {
     const paddingX = 40;
     const paddingY = 40;
 
-    // Build an hour → mm lookup from Open-Meteo's hourly precipitation
-    // (true 1h resolution). Falls back to OWM's 3h-divided-by-3 estimate
-    // for any hour the lookup doesn't cover.
+    // Build hour → mm and hour → m/s lookups from Open-Meteo's hourly
+    // series (true 1h resolution). Fall back to OWM's 3h slots for any
+    // hour the lookups don't cover (e.g. enrichment failed).
     const precipByHour = new Map();
-    for (const h of hourlyPrecip) {
+    const windByHour = new Map();
+    for (const h of omHourly) {
       precipByHour.set(Math.floor(h.dt / 3600), h.precipMM);
+      // Only non-null wind counts as data — a null (column missing from
+      // the API response) must fall through to the OWM fallback rather
+      // than masquerading as a real sample.
+      if (h.windSpeed != null) windByHour.set(Math.floor(h.dt / 3600), h.windSpeed);
     }
     // Count snow like dayTotals and the Precipitation stat do — without
     // it, a snowstorm with no Open-Meteo hourly data graphs as bone dry.
@@ -3708,6 +3729,12 @@ const UI = {
       const s = (p && p.snow && p.snow['3h']) || 0;
       return (r + s) / 3;
     };
+    // Unlike precip, missing wind must NOT collapse to 0 — dead calm is
+    // real data and would be indistinguishable from "no data". null means
+    // no sample; it renders as no bar and is excluded from the has-data
+    // check below.
+    const fallback3hWind = (p) =>
+      (p && p.wind && p.wind.speed != null) ? p.wind.speed : null;
 
     // Interpolate OWM's 3-hour temperature data to 1-hour steps. The precip
     // value for each 1h bar now comes from Open-Meteo's hourly series, not
@@ -3719,6 +3746,7 @@ const UI = {
       const t1 = p1.main.temp;
       const t2 = p2.main.temp;
       const fallback = fallback3hPerHour(p1);
+      const windFallback = fallback3hWind(p1);
 
       // Step by the ACTUAL gap between slots, not an assumed 3h: the
       // OWM/Open-Meteo top-up merge (buildDailyData) can leave adjacent
@@ -3730,9 +3758,11 @@ const UI = {
         const ratio = h / gapHours;
         const hourKey = Math.floor(dt / 3600);
         const precip = precipByHour.has(hourKey) ? precipByHour.get(hourKey) : fallback;
+        const wind = windByHour.has(hourKey) ? windByHour.get(hourKey) : windFallback;
         hourly.push({
           temp: t1 + (t2 - t1) * ratio,
           precipPerHour: precip,
+          windPerHour: wind,
           dt,
           isOriginal: h === 0
         });
@@ -3746,6 +3776,7 @@ const UI = {
     hourly.push({
       temp: last.main.temp,
       precipPerHour: lastPrecip,
+      windPerHour: windByHour.has(lastHourKey) ? windByHour.get(lastHourKey) : fallback3hWind(last),
       dt: last.dt,
       isOriginal: true
     });
@@ -3762,12 +3793,23 @@ const UI = {
     // Scale precipitation by mm-per-hour (consistent with axis labels)
     const maxPrecip = Math.max(peakPrecipPerHour, 2);
 
+    // Wind stays m/s internally (like precip stays mm/h); converted only
+    // at label time. A 0 is a real sample (counts as data, draws no
+    // visible bar); null is a missing one. The 5 m/s (~11 mph) floor
+    // keeps a dead-calm day from rescaling noise into a dramatic chart.
+    const windSamples = hourly.map(h => h.windPerHour).filter(v => v != null);
+    const hasWindData = windSamples.length > 0;
+    const maxWind = Math.max(hasWindData ? Math.max(...windSamples) : 0, 5);
+
     const points = hourly.map((h, i) => {
       const tempC = this.convertTemp(h.temp);
       const x = paddingX + (i * (width - 2 * paddingX) / (hourly.length - 1));
       const yTemp = height - paddingY - ((tempC - minTemp) * (height - 2 * paddingY) / tempRange);
       const yPrecip = height - paddingY - (h.precipPerHour * (height - 2 * paddingY) / maxPrecip);
-      return { x, yTemp, yPrecip, temp: h.temp, precip: h.precipPerHour, time: this.formatTime(h.dt, false, tz), isOriginal: h.isOriginal };
+      const yWind = h.windPerHour != null
+        ? height - paddingY - (h.windPerHour * (height - 2 * paddingY) / maxWind)
+        : null;
+      return { x, yTemp, yPrecip, yWind, temp: h.temp, precip: h.precipPerHour, wind: h.windPerHour, time: this.formatTime(h.dt, false, tz), isOriginal: h.isOriginal };
     });
 
     let pathD = `M ${points[0].x} ${points[0].yTemp}`;
@@ -3801,24 +3843,56 @@ const UI = {
         <line class="graph-guideline" x1="${paddingX}" y1="${height - paddingY}" x2="${width - paddingX}" y2="${height - paddingY}"></line>
         <line class="graph-guideline" x1="${paddingX}" y1="${paddingY}" x2="${width - paddingX}" y2="${paddingY}"></line>
 
-        ${hasRain ? (() => {
-          // Display the y-axis peak in the user's chosen precip unit.
-          // The model stores mm/h internally; convert + format here so
-          // the label matches what the user picked in Units → Precipitation.
-          const precipUnit = Storage.getUnits().precip;
-          const isInches = precipUnit === 'in';
-          const peakDisplay = isInches
-            ? (maxPrecip / 25.4).toFixed(2)
-            : maxPrecip.toFixed(1);
-          const unitLabel = isInches ? 'in/h' : 'mm/h';
-          return `
-            <text class="graph-y-axis-label" x="5" y="${paddingY + 5}">${peakDisplay}</text>
-            <text class="graph-y-axis-label" x="5" y="${paddingY + 15}">${unitLabel}</text>
-            <text class="graph-y-axis-label" x="5" y="${height - paddingY - 5}">0</text>
+        ${(() => {
+          // Left-gutter tap target + axis labels. The hit rect and the
+          // unit label render on EVERY frame in BOTH modes — the axis
+          // peak used to appear only when it had rain to describe, which
+          // would leave the wind toggle unreachable (and undiscoverable)
+          // on exactly the dry days wind matters most. Rect first so the
+          // text paints on top of it.
+          const isWind = mode === 'wind';
+          const showingLabel = isWind
+            ? (hasWindData ? 'wind speed' : 'wind speed (no data)')
+            : 'precipitation';
+          const nextLabel = isWind ? 'precipitation' : 'wind speed';
+          const toggle = `<rect class="graph-mode-toggle" x="0" y="0" width="${paddingX}" height="${height}" fill="transparent" pointer-events="all" role="button" tabindex="0" aria-label="Showing ${showingLabel}. Activate to show ${nextLabel}."></rect>`;
+
+          // Peak value in the user's unit; internal storage stays mm/h
+          // and m/s. Peak + baseline 0 only when there is data to scale;
+          // the unit line always shows so the gutter is never blank.
+          let peakDisplay = '';
+          let unitLabel = '';
+          if (isWind) {
+            if (hasWindData) {
+              const disp = this._windToDisplay(maxWind);
+              peakDisplay = disp.value.toFixed(0);
+              unitLabel = disp.unit;
+            } else {
+              peakDisplay = '—'; // wind unavailable from both sources
+            }
+          } else {
+            const isInches = Storage.getUnits().precip === 'in';
+            unitLabel = isInches ? 'in/h' : 'mm/h';
+            if (hasRain) {
+              peakDisplay = isInches ? (maxPrecip / 25.4).toFixed(2) : maxPrecip.toFixed(1);
+            }
+          }
+          const cls = 'graph-y-axis-label' + (isWind ? ' wind' : '');
+          const showZero = isWind ? hasWindData : hasRain;
+          return toggle + `
+            ${peakDisplay ? `<text class="${cls}" x="5" y="${paddingY + 5}">${peakDisplay}</text>` : ''}
+            ${unitLabel ? `<text class="${cls}" x="5" y="${paddingY + 15}">${unitLabel}</text>` : ''}
+            ${showZero ? `<text class="${cls}" x="5" y="${height - paddingY - 5}">0</text>` : ''}
           `;
-        })() : ''}
+        })()}
 
         ${points.map((p) => {
+          if (mode === 'wind') {
+            // null = no sample; 0 = calm (real sample, zero-height bar
+            // either way, so skip the element for both).
+            if (!(p.wind > 0)) return '';
+            return `<rect class="graph-wind-bar" x="${p.x - barWidth/2}" y="${p.yWind}" width="${barWidth + 0.5}" height="${height - paddingY - p.yWind}"></rect>`;
+          }
           if (p.precip === 0) return '';
           return `<rect class="graph-precip-bar" x="${p.x - barWidth/2}" y="${p.yPrecip}" width="${barWidth + 0.5}" height="${height - paddingY - p.yPrecip}"></rect>`;
         }).join('')}
@@ -3837,6 +3911,67 @@ const UI = {
         }).join('')}
       </svg>
     `;
+
+    this._bindGraphModeToggle();
+  },
+
+  // One delegated listener on #weather-view for the graph's mode toggle.
+  // A listener bound to the rect itself would die on the first day swipe:
+  // changeDayWithGraphCube re-renders (fresh listener), then
+  // runElementCubeTransition overwrites innerHTML with snapshot strings
+  // and orphans it. Delegation by CLASS, not #graph-container — the
+  // cube-clone id stripping means an id selector can't be trusted while
+  // a transition is mounted.
+  _bindGraphModeToggle() {
+    if (this._graphToggleBound) return;
+    this._graphToggleBound = true;
+    const onActivate = (e) => {
+      if (!e.target.closest('.graph-mode-toggle')) return;
+      if (e.type === 'keydown') {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault(); // keep Space from scrolling the page
+      }
+      this._toggleGraphMode();
+    };
+    this.weatherView.addEventListener('click', onActivate);
+    this.weatherView.addEventListener('keydown', onActivate);
+  },
+
+  // Flip the graph between precipitation and wind bars with the same
+  // element-cube animation the day changes and stats pager use.
+  _toggleGraphMode() {
+    // Same guards as _changeStatsPage: never run an inner cube while the
+    // graph cube is mid-flight or while the whole dashboard is on a
+    // city-swipe cube face.
+    if (this._graphCubeAnimating || this._cubeAnimating) return;
+
+    const next = this._graphMode === 'wind' ? 'precip' : 'wind';
+    this._graphMode = next;
+    Storage.setGraphMode(next);
+
+    const graphEl = document.getElementById('graph-container');
+    if (!graphEl || !this._lastGraph) return; // nothing visible; next render picks the mode up
+
+    // Re-render from the stored args (the resize path), then cube-flip
+    // from the old markup to the new. Keyboard focus dies with the old
+    // rect, so restore it onto the fresh one after the flip.
+    const hadFocus = document.activeElement &&
+      document.activeElement.classList &&
+      document.activeElement.classList.contains('graph-mode-toggle');
+    const oldHTML = graphEl.innerHTML;
+    this.renderGraph(this._lastGraph.hourly, this._lastGraph.tz, this._lastGraph.omHourly || []);
+    const newHTML = graphEl.innerHTML;
+    if (newHTML === oldHTML) return; // hidden container etc. — mode saved, nothing to animate
+
+    this._graphCubeAnimating = true;
+    this.runElementCubeTransition(graphEl, oldHTML, newHTML, next === 'wind' ? 'next' : 'prev')
+      .finally(() => {
+        this._graphCubeAnimating = false;
+        if (hadFocus) {
+          const rect = graphEl.querySelector('.graph-mode-toggle');
+          if (rect) rect.focus();
+        }
+      });
   },
 
   renderSavedLocations(list, onSelect, onDelete, onReorder) {
