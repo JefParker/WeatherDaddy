@@ -3,7 +3,7 @@
 // bumping BOTH this CACHE_NAME and the ?v= query strings in index.html.
 // (The ?v= strip in cacheKey() means a forgotten CACHE_NAME bump keeps
 // serving the old file to installed clients forever.)
-const CACHE_NAME = 'weatherdaddy-v178';
+const CACHE_NAME = 'weatherdaddy-v179';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',

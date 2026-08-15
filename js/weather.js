@@ -242,7 +242,12 @@ const WeatherAPI = {
         daily: (d.uv_index_max) || []
       },
       hourly,
-      daily
+      daily,
+      // IANA zone name for the requested point (timezone=auto), e.g.
+      // "America/New_York". Unlike OWM's fixed utc-offset this stays
+      // correct across DST transitions inside the 8-day window, so the
+      // UI prefers it for day keys and local-time display.
+      tzName: data.timezone || null
     };
   },
 

@@ -3,6 +3,10 @@ const App = {
     currentWeather: null,
     forecast: null,
     cityName: '',
+    // IANA zone name for the current city (from Open-Meteo enrichment),
+    // or null when enrichment failed — UI.cityTz() then falls back to
+    // OWM's fixed offset in state.timezone.
+    tzName: null,
     selectedDayIndex: -1, // -1 means today, 0-6 means forecast days
     // Unix-seconds dt of a specific hourly tile the user has tapped, so the
     // hero displays that exact 3-hour slot's data instead of the day's
@@ -247,6 +251,7 @@ const App = {
           uv: enrichment.uv,
           omHourly: enrichment.hourly,
           omDaily: enrichment.daily,
+          tzName: enrichment.tzName || null,
           airQuality,
           alerts,
           tides: tides ? tides.hourly : null,
@@ -631,6 +636,7 @@ const App = {
     this.state.uv               = cached.uv;
     this.state.omHourly         = cached.omHourly || cached.hourlyPrecip || [];
     this.state.omDaily          = cached.omDaily || [];
+    this.state.tzName           = cached.tzName || null;
     this.state.airQuality       = cached.airQuality || { aqi: null, pollen: null, treePollen: null, grassPollen: null, weedPollen: null };
     this.state.alerts           = cached.alerts || [];
     this.state.tides            = cached.tides || null;
@@ -677,6 +683,7 @@ const App = {
         uv: enrichment.uv,
         omHourly: enrichment.hourly,
         omDaily: enrichment.daily,
+        tzName: enrichment.tzName || null,
         airQuality,
         alerts,
         tides: tides ? tides.hourly : null,
@@ -708,6 +715,7 @@ const App = {
       this.state.uv               = enrichment.uv;
       this.state.omHourly         = enrichment.hourly;
       this.state.omDaily          = enrichment.daily;
+      this.state.tzName           = enrichment.tzName || null;
       this.state.airQuality       = airQuality;
       this.state.alerts           = alerts;
       this.state.tides            = tides ? tides.hourly : null;
@@ -800,6 +808,14 @@ const App = {
 
   renderAll() {
     if (!this.state.currentWeather || !this.state.forecast) return;
+    // A city-swipe cube is mid-flight: rendering now would detach the
+    // animating faces and duplicate the dashboard when the transition
+    // restores them. Park the render instead — UI._cubeDone() replays
+    // it (with whatever state is current by then) once the cube lands.
+    if (UI._cubeAnimating) {
+      UI._deferredRender = () => this.renderAll();
+      return;
+    }
     UI.renderDashboard(
       this.state,
       (idx) => this.handleDayClick(idx),
@@ -1044,57 +1060,13 @@ const App = {
     UI.updateImportButtonState();
   },
 
-  // Canonical daily-data builder. Groups OWM 3h slots and Open-Meteo
-  // filler days into a single 8-entry array keyed by CITY-local
-  // calendar day. One implementation owns the merge rules so
-  // getDayKey (sender) and _resolveSharedDayAndHour (receiver) can't
-  // disagree on which days exist — mismatch used to cause Copy-URL
-  // for an om-only day to silently resolve to day 0 on paste.
-  //
-  // Every returned entry has `{ key, dt, hourly }` where hourly is an
-  // array of OWM-shaped slots. The day SET and ORDER here must match
-  // renderDashboard's day builder exactly — getDayKey() is called with
-  // an index from the RENDERED list, so any divergence shifts Copy-URL
-  // onto the wrong day. That's why om-only days with zero 3h slots are
-  // skipped below, just like the renderer skips them (a day that isn't
-  // rendered can't be selected, so it never needs a shareable key).
+  // Canonical daily-data lives in UI.buildDailyData — one implementation
+  // owns the merge rules so getDayKey (Copy-URL sender),
+  // _resolveSharedDayAndHour (receiver), and renderDashboard can't
+  // disagree on which days exist or their order. Mismatch used to cause
+  // Copy-URL for an om-only day to silently resolve to day 0 on paste.
   _buildDailyData() {
-    if (!this.state.currentWeather || !this.state.forecast) return [];
-    const timezone = this.state.currentWeather.timezone;
-    const dayKeyFor = (unixSec) => {
-      const local = new Date((unixSec + timezone) * 1000);
-      return `${local.getUTCFullYear()}-${local.getUTCMonth()}-${local.getUTCDate()}`;
-    };
-
-    const allDaysMap = new Map();
-    this.state.forecast.list.forEach(item => {
-      const key = dayKeyFor(item.dt);
-      if (!allDaysMap.has(key)) {
-        allDaysMap.set(key, { key, hourly: [], dt: item.dt });
-      }
-      allDaysMap.get(key).hourly.push(item);
-    });
-
-    const omDaily = this.state.omDaily || [];
-    const omHourly = this.state.omHourly || [];
-    for (const dayInfo of omDaily) {
-      const key = dayKeyFor(dayInfo.dt);
-      if (allDaysMap.has(key)) continue;
-
-      const dayStart = dayInfo.dt;
-      const dayEnd = dayStart + 24 * 3600;
-      const slots = omHourly
-        .filter(h => h.dt >= dayStart && h.dt < dayEnd && (Math.floor(h.dt / 3600) % 3 === 0))
-        .map(h => UI._omHourToOwmSlot(h));
-      // Skip days with no 3h slots — renderDashboard drops them too,
-      // and the two arrays must stay index-aligned (see doc comment).
-      if (!slots.length) continue;
-      allDaysMap.set(key, { key, hourly: slots, dt: dayStart });
-    }
-
-    return Array.from(allDaysMap.values())
-      .sort((a, b) => a.dt - b.dt)
-      .slice(0, 8);
+    return UI.buildDailyData(this.state).dailyData;
   },
 
   getDayKey(index) {
@@ -1116,7 +1088,7 @@ const App = {
       this._sharedStateToRestore = null;
     }
 
-    const timezone = this.state.currentWeather.timezone;
+    const tz = UI.cityTz(this.state);
     const dailyData = this._buildDailyData();
 
     let resolvedDayIdx = -1;
@@ -1157,8 +1129,7 @@ const App = {
           // hour=23 URL restored against slots {0, 21} would incorrectly
           // pick 21.
           targetDay.hourly.forEach(slot => {
-            const localDate = new Date((slot.dt + timezone) * 1000);
-            const slotHour = localDate.getUTCHours();
+            const slotHour = UI.localHour(slot.dt, tz);
             const raw = Math.abs(slotHour - targetHour);
             const diff = Math.min(raw, 24 - raw);
             if (diff < minDiff) {

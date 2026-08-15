@@ -230,7 +230,7 @@ const UI = {
       window.addEventListener('resize', () => {
         if (this._lastGraph) this.renderGraph(
           this._lastGraph.hourly,
-          this._lastGraph.offset,
+          this._lastGraph.tz,
           this._lastGraph.hourlyPrecip || []
         );
       });
@@ -1050,11 +1050,71 @@ const UI = {
     return (meters / 1000).toFixed(1) + ' km';
   },
 
-  formatTime(unix, showMinutes = true, offset = 0) {
+  // ── City-local time helpers ─────────────────────────────────────────
+  // Everything below accepts a `tz` that is EITHER an IANA zone name
+  // (string, from Open-Meteo — DST-correct for every timestamp) OR a
+  // fixed utc-offset in seconds (number, OWM's `timezone` — the only
+  // thing available when enrichment fails). cityTz() picks the best
+  // handle for a given state.
+
+  _tzFmtCache: Object.create(null),
+  _tzInvalid: Object.create(null),
+
+  _tzPartsFmt(zone) {
+    let fmt = this._tzFmtCache[zone];
+    if (!fmt) {
+      fmt = new Intl.DateTimeFormat('en-US', {
+        timeZone: zone, hourCycle: 'h23',
+        year: 'numeric', month: 'numeric', day: 'numeric',
+        hour: 'numeric', minute: 'numeric'
+      });
+      this._tzFmtCache[zone] = fmt;
+    }
+    return fmt;
+  },
+
+  // Preferred timezone handle for a city: the IANA zone name when we have
+  // one the browser recognises, else OWM's fixed offset.
+  cityTz(state) {
+    const name = state && state.tzName;
+    if (name && !this._tzInvalid[name]) {
+      try {
+        this._tzPartsFmt(name);
+        return name;
+      } catch (_) {
+        this._tzInvalid[name] = true; // unknown zone — don't retry per render
+      }
+    }
+    return (state && state.timezone) || 0;
+  },
+
+  // City-local wall-clock parts of a unix timestamp.
+  localParts(unixSec, tz) {
+    if (typeof tz === 'string') {
+      const p = {};
+      for (const part of this._tzPartsFmt(tz).formatToParts(unixSec * 1000)) {
+        p[part.type] = part.value;
+      }
+      // % 24: some engines render h23 midnight as "24".
+      return { year: +p.year, month: +p.month, day: +p.day, hour: (+p.hour) % 24, minute: +p.minute };
+    }
+    const d = new Date((unixSec + (tz || 0)) * 1000);
+    return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate(), hour: d.getUTCHours(), minute: d.getUTCMinutes() };
+  },
+
+  localHour(unixSec, tz) {
+    return this.localParts(unixSec, tz).hour;
+  },
+
+  // Canonical city-local day key: "YYYY-MM-DD" (1-based, zero-padded).
+  dayKey(unixSec, tz) {
+    const p = this.localParts(unixSec, tz);
+    return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
+  },
+
+  formatTime(unix, showMinutes = true, tz = 0) {
     const unit = Storage.getUnits().time;
-    const date = new Date((unix + offset) * 1000);
-    const h = date.getUTCHours();
-    const m = date.getUTCMinutes();
+    const { hour: h, minute: m } = this.localParts(unix, tz);
 
     if (unit === '12h') {
       const ampm = h >= 12 ? 'PM' : 'AM';
@@ -1088,6 +1148,9 @@ const UI = {
   // accurate to within a couple of minutes, which is plenty for a forecast UI.
   // Returns UNIX seconds (UTC) for the rise/set, or null when the sun never
   // crosses the horizon on that day (polar regions).
+  // `timezone` is a tz handle as accepted by localParts (IANA zone name
+  // or fixed offset seconds); it's only used to snap the result onto the
+  // requested local calendar day.
   _solarTimes(year, month /* 1-12 */, day, lat, lon, timezone = 0) {
     const N1 = Math.floor(275 * month / 9);
     const N2 = Math.floor((month + 9) / 12);
@@ -1139,10 +1202,10 @@ const UI = {
 
     const adjustToLocalDay = (timestamp) => {
       if (timestamp == null) return null;
-      const localDate = new Date((timestamp + timezone) * 1000);
+      const p = this.localParts(timestamp, timezone);
       const targetLocalMidnight = Date.UTC(year, month - 1, day) / 1000;
-      const computedLocalMidnight = Date.UTC(localDate.getUTCFullYear(), localDate.getUTCMonth(), localDate.getUTCDate()) / 1000;
-      
+      const computedLocalMidnight = Date.UTC(p.year, p.month - 1, p.day) / 1000;
+
       if (computedLocalMidnight > targetLocalMidnight) {
         return timestamp - 86400;
       } else if (computedLocalMidnight < targetLocalMidnight) {
@@ -1515,41 +1578,35 @@ const UI = {
     }).join('');
   },
 
-  renderDashboard(state, onDayClick, onSave, onHourClick) {
-    const { currentWeather, forecast, cityName } = state;
-    let selectedDayIndex = state.selectedDayIndex;
-    const selectedHourDt = state.selectedHourDt || null;
-
-    this.locationName.textContent = this.prettifyLocationName(cityName);
-
-    // Header Save Button. Include cityName so name-match catches
-    // entries that already sit in the saved list but whose stored
-    // coords drifted more than SAME_LOCATION_DEG from what /weather
-    // just returned — otherwise the star would flicker between saved
-    // and unsaved for the same place.
-    const savedList = Storage.getSavedList();
-    const isSaved = Storage.isDuplicate(savedList, currentWeather.coord.lat, currentWeather.coord.lon, cityName);
-
-    this.saveBtnContainer.innerHTML = `
-      <button class="save-loc-btn ${isSaved ? 'saved' : ''}" id="save-btn" aria-label="Save Location">
-        ${isSaved
-          ? `<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>`
-          : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>`
-        }
-      </button>
-    `;
-    document.getElementById('save-btn').addEventListener('click', onSave);
-
-    // Group forecast points by the CITY's local calendar day, not the
-    // browser's. Without this, viewing e.g. Tokyo weather from New York
-    // would split slots into the wrong "days."
-    const dayKeyFor = (unixSec) => {
-      const local = new Date((unixSec + currentWeather.timezone) * 1000);
-      return `${local.getUTCFullYear()}-${local.getUTCMonth()}-${local.getUTCDate()}`;
-    };
+  // Canonical daily-data builder — the ONE place the 8-day list is
+  // assembled. Groups OWM 3h slots and Open-Meteo filler days into a
+  // single array keyed by CITY-local calendar day, then tops up
+  // slot-starved days from Open-Meteo's hourly series.
+  //
+  // Used by renderDashboard (rendering) AND App.getDayKey /
+  // App._resolveSharedDayAndHour (Copy-URL sender/receiver). One
+  // implementation owns the merge rules so the day SET and ORDER can
+  // never diverge between them — divergence used to shift Copy-URL
+  // onto the wrong day.
+  //
+  // Days are keyed by the CITY's local calendar day, not the browser's
+  // — otherwise viewing e.g. Tokyo weather from New York would split
+  // slots into the wrong "days."
+  //
+  // Returns { dailyData, todayKey, dayKeyFor, tz } where each dailyData
+  // entry is { key, dt, temps, icons, hourly, _om? } with hourly an
+  // array of OWM-shaped slots.
+  buildDailyData(state) {
+    const currentWeather = state.currentWeather;
+    const forecast = state.forecast;
+    const tz = this.cityTz(state);
+    const dayKeyFor = (unixSec) => this.dayKey(unixSec, tz);
     // Today's dayKey in the CITY's local time — used downstream to label
     // the correct entry "Today" instead of trusting array position.
     const todayKey = dayKeyFor(Math.floor(Date.now() / 1000));
+    if (!currentWeather || !forecast || !forecast.list) {
+      return { dailyData: [], todayKey, dayKeyFor, tz };
+    }
 
     // Build a Map keyed by city-local day. OWM days are added first (richer
     // 3h slots), then Open-Meteo fills in any missing calendar days so we
@@ -1587,6 +1644,8 @@ const UI = {
       const slots = omHourly
         .filter(h => h.dt >= dayStart && h.dt < dayEnd && (Math.floor(h.dt / 3600) % 3 === 0))
         .map(h => this._omHourToOwmSlot(h));
+      // Skip days with no 3h slots — a day that isn't rendered can't be
+      // selected, so it never needs a shareable key either.
       if (!slots.length) continue;
 
       allDays.set(key, {
@@ -1603,13 +1662,21 @@ const UI = {
     // ends mid-day). Top those up with Open-Meteo's hourly so every day's
     // graph has ~8 evenly-spaced points like a normal full day.
     const MIN_SLOTS = 8;
-    const dayStartFromKey = (key) => {
-      const [yy, mo, dd] = key.split('-').map(Number);
-      return Math.floor(Date.UTC(yy, mo, dd) / 1000) - currentWeather.timezone;
+    // True UTC instant of a day's local midnight. Prefer Open-Meteo's
+    // per-day dt (already the DST-correct local midnight); fall back to
+    // fixed-offset arithmetic when the day has no Open-Meteo counterpart
+    // (in which case omHourly is usually empty and the top-up is a no-op).
+    const omMidnightByKey = new Map(omDaily.map(di => [dayKeyFor(di.dt), di.dt]));
+    const dayStartFor = (day) => {
+      const fromOm = omMidnightByKey.get(day.key);
+      if (fromOm != null) return fromOm;
+      const [yy, mo, dd] = day.key.split('-').map(Number);
+      const off = typeof tz === 'number' ? tz : (currentWeather.timezone || 0);
+      return Math.floor(Date.UTC(yy, mo - 1, dd) / 1000) - off;
     };
     for (const day of allDays.values()) {
       if (day.hourly.length >= MIN_SLOTS) continue;
-      const dayStart = dayStartFromKey(day.key);
+      const dayStart = dayStartFor(day);
       const dayEnd   = dayStart + 24 * 3600;
       const existingHours = new Set(day.hourly.map(s => Math.floor(s.dt / 3600)));
       const omSlots = omHourly
@@ -1634,6 +1701,40 @@ const UI = {
     const dailyData = Array.from(allDays.values())
       .sort((a, b) => a.dt - b.dt)
       .slice(0, TARGET_DAYS);
+
+    return { dailyData, todayKey, dayKeyFor, tz };
+  },
+
+  renderDashboard(state, onDayClick, onSave, onHourClick) {
+    const { currentWeather, forecast, cityName } = state;
+    let selectedDayIndex = state.selectedDayIndex;
+    const selectedHourDt = state.selectedHourDt || null;
+
+    this.locationName.textContent = this.prettifyLocationName(cityName);
+
+    // Header Save Button. Include cityName so name-match catches
+    // entries that already sit in the saved list but whose stored
+    // coords drifted more than SAME_LOCATION_DEG from what /weather
+    // just returned — otherwise the star would flicker between saved
+    // and unsaved for the same place.
+    const savedList = Storage.getSavedList();
+    const isSaved = Storage.isDuplicate(savedList, currentWeather.coord.lat, currentWeather.coord.lon, cityName);
+
+    this.saveBtnContainer.innerHTML = `
+      <button class="save-loc-btn ${isSaved ? 'saved' : ''}" id="save-btn" aria-label="Save Location">
+        ${isSaved
+          ? `<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>`
+          : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>`
+        }
+      </button>
+    `;
+    document.getElementById('save-btn').addEventListener('click', onSave);
+
+    // Canonical 8-day list + day keys. Built by the shared builder above
+    // so the rendered days can never diverge from what App's Copy-URL
+    // sender/receiver resolves against. `tz` is the city's IANA zone
+    // name when Open-Meteo supplied one, else OWM's fixed offset.
+    const { dailyData, todayKey, dayKeyFor, tz } = this.buildDailyData(state);
 
     if (selectedDayIndex >= dailyData.length) {
       selectedDayIndex = -1;
@@ -1712,7 +1813,7 @@ const UI = {
         if (!slot.weather || !slot.weather[0]) continue;
         const asset = this._weatherAssetName(slot.weather[0].icon, slot.weather[0].id);
         const score = NOTABILITY[asset] != null ? NOTABILITY[asset] : 0;
-        const lh = (((slot.dt + state.timezone) / 3600) % 24 + 24) % 24;
+        const lh = this.localHour(slot.dt, tz);
         const diff = Math.abs(lh - 12);
         // Strictly higher severity always wins; among ties we keep the
         // slot closest to local noon.
@@ -1726,15 +1827,14 @@ const UI = {
     };
 
     const sunTimesForDay = (dayDt) => {
-      const localMs = (dayDt + state.timezone) * 1000;
-      const d = new Date(localMs);
+      const p = this.localParts(dayDt, tz);
       return this._solarTimes(
-        d.getUTCFullYear(),
-        d.getUTCMonth() + 1,
-        d.getUTCDate(),
+        p.year,
+        p.month,
+        p.day,
         currentWeather.coord.lat,
         currentWeather.coord.lon,
-        state.timezone
+        tz
       );
     };
 
@@ -1837,8 +1937,8 @@ const UI = {
     // Hero subtitle clock: short city name (before any comma) + local time.
     const cityShort = (cityName || '').split(',')[0].trim() || cityName || '';
     const nowSec = Math.floor(Date.now() / 1000);
-    const cityClock = this.formatTime(nowSec, true, state.timezone);
-    this._clockTimezone = state.timezone;
+    const cityClock = this.formatTime(nowSec, true, tz);
+    this._clockTimezone = tz;
     this._ensureClockTimer();
 
     // Small label above the weather icon. Default behaviour:
@@ -1856,19 +1956,19 @@ const UI = {
     // dashboard day is also being switched.
     let heroWhen = 'Right now';
     if (pinnedHourSlot) {
-      const hourLabel = this.formatTime(pinnedHourSlot.dt, true, state.timezone);
+      const hourLabel = this.formatTime(pinnedHourSlot.dt, true, tz);
       const hourDayKey = dayKeyFor(pinnedHourSlot.dt);
-      const localSec = pinnedHourSlot.dt + (state.timezone || 0);
-      const localHour = (((Math.floor(localSec / 3600)) % 24) + 24) % 24;
+      const localHour = this.localHour(pinnedHourSlot.dt, tz);
       if (hourDayKey === todayKey) {
         if (localHour >= 17 && localHour <= 20)      heroWhen = `This evening at ${hourLabel}`;
         else if (localHour >= 21 || localHour <= 4)  heroWhen = `Tonight at ${hourLabel}`;
         else                                          heroWhen = `Today at ${hourLabel}`;
       } else {
-        // Use the city-local date (UTC-on-shifted-ms trick) so a slot
-        // that's "Wednesday in Tokyo" doesn't render as "Tuesday" just
-        // because the browser is in New York.
-        const d = new Date(localSec * 1000);
+        // Derive the weekday from the slot's canonical city-local dayKey
+        // so a slot that's "Wednesday in Tokyo" doesn't render as
+        // "Tuesday" just because the browser is in New York.
+        const [ky, km, kd] = hourDayKey.split('-').map(Number);
+        const d = new Date(Date.UTC(ky, km - 1, kd));
         const weekday = d.toLocaleDateString([], { weekday: 'long', timeZone: 'UTC' });
         heroWhen = `${weekday} at ${hourLabel}`;
       }
@@ -1876,7 +1976,7 @@ const UI = {
       const day = dailyData[selectedDayIndex];
       if (day && day.key) {
         const [yy, mo, dd] = day.key.split('-').map(Number);
-        const date = new Date(Date.UTC(yy, mo, dd));
+        const date = new Date(Date.UTC(yy, mo - 1, dd));
         const weekday = date.toLocaleDateString([], { weekday: 'long', timeZone: 'UTC' });
         heroWhen = `${weekday}'s forecast`;
       }
@@ -1931,12 +2031,12 @@ const UI = {
     const sunriseStat = activeDay.sunrise != null ? `
       <div class="stat-item">
         <span class="stat-label">Sunrise</span>
-        <span class="stat-value">${this.formatTime(activeDay.sunrise, true, state.timezone)}</span>
+        <span class="stat-value">${this.formatTime(activeDay.sunrise, true, tz)}</span>
       </div>` : '';
     const sunsetStat = activeDay.sunset != null ? `
       <div class="stat-item">
         <span class="stat-label">Sunset</span>
-        <span class="stat-value">${this.formatTime(activeDay.sunset, true, state.timezone)}</span>
+        <span class="stat-value">${this.formatTime(activeDay.sunset, true, tz)}</span>
       </div>` : '';
 
     // Quick-stats grid is 3 columns. Count what will be shown so we can
@@ -1997,7 +2097,7 @@ const UI = {
       activeDay.sunrise != null && activeDay.sunset != null &&
       (activeDay.dt < activeDay.sunrise || activeDay.dt > activeDay.sunset);
     const localHourAtCity = activeDay.dt != null
-      ? (((Math.floor((activeDay.dt + (state.timezone || 0)) / 3600)) % 24) + 24) % 24
+      ? this.localHour(activeDay.dt, tz)
       : 12; // safe noon default if we have no timestamp
     const clockSaysNight = localHourAtCity >= 20 || localHourAtCity < 6;
     const isNightAtCity = sunSaysNight || clockSaysNight;
@@ -2033,14 +2133,14 @@ const UI = {
     page1Candidates.push(item('Air quality', this.esc(this.aqiLabel(aq.aqi))));
 
     const getSunTimesForTimestamp = (ts) => {
-      const local = new Date((ts + (state.timezone || 0)) * 1000);
+      const local = this.localParts(ts, tz);
       return this._solarTimes(
-        local.getUTCFullYear(),
-        local.getUTCMonth() + 1,
-        local.getUTCDate(),
+        local.year,
+        local.month,
+        local.day,
         currentWeather.coord.lat,
         currentWeather.coord.lon,
-        state.timezone || 0
+        tz
       );
     };
 
@@ -2070,7 +2170,7 @@ const UI = {
             optimalDt = fmSun.sunset + (nextDaySun.sunrise - fmSun.sunset) / 2;
           }
 
-          optimalTimeStr = this.formatTime(optimalDt, true, state.timezone);
+          optimalTimeStr = this.formatTime(optimalDt, true, tz);
 
           switch (fm.name) {
             case 'Wolf Moon':
@@ -2141,12 +2241,12 @@ const UI = {
       if (nextHigh) {
         const showHeight = Math.abs(nextHigh.h) > 1.5;
         const heightStr = showHeight ? ` (${this.formatTideHeight(nextHigh.h)})` : '';
-        nextHighItem = item('Next high tide', `${this.formatTime(nextHigh.dt, true, state.timezone)}${heightStr}`);
+        nextHighItem = item('Next high tide', `${this.formatTime(nextHigh.dt, true, tz)}${heightStr}`);
       }
       if (nextLow) {
         const showHeight = Math.abs(nextLow.h) > 1.5;
         const heightStr = showHeight ? ` (${this.formatTideHeight(nextLow.h)})` : '';
-        nextLowItem = item('Next low tide', `${this.formatTime(nextLow.dt, true, state.timezone)}${heightStr}`);
+        nextLowItem = item('Next low tide', `${this.formatTime(nextLow.dt, true, tz)}${heightStr}`);
       }
     }
 
@@ -2183,8 +2283,8 @@ const UI = {
     // then Dew point. Whichever of Moon / UV got moved to page 1 is the
     // one MISSING here, so each value always appears exactly once.
     const page2Forced = [
-      item('Sunrise',    activeDay.sunrise != null ? this.formatTime(activeDay.sunrise, true, state.timezone) : '—'),
-      item('Sunset',     activeDay.sunset  != null ? this.formatTime(activeDay.sunset,  true, state.timezone) : '—'),
+      item('Sunrise',    activeDay.sunrise != null ? this.formatTime(activeDay.sunrise, true, tz) : '—'),
+      item('Sunset',     activeDay.sunset  != null ? this.formatTime(activeDay.sunset,  true, tz) : '—'),
       // Whichever of moon / UV did NOT make it onto page 1 lives here.
       // The two together always cover both values exactly once.
       uvOnPage1 ? moonStatHTML : uvStatItem,
@@ -2371,7 +2471,7 @@ const UI = {
                 : '';
               out += `
                 <div class="hourly-tile ${cls.trim()}" data-day-index="${dayIdx}" data-dt="${h.dt}" ${tileStyle}>
-                  <span class="hourly-time">${this.formatTime(h.dt, true, state.timezone)}</span>
+                  <span class="hourly-time">${this.formatTime(h.dt, true, tz)}</span>
                   <span class="hourly-icon">${this.getWeatherIconSVG(h.weather[0].icon, 28, h.weather[0].id, h.dt)}</span>
                   <span class="hourly-temp">${this.formatTemp(h.main.temp)}°</span>
                 </div>`;
@@ -2387,7 +2487,7 @@ const UI = {
           // label can never disagree with the entry's date (which used to
           // happen when re-shifting dt back through state.timezone).
           const [yy, mm, dd] = d.key.split('-').map(Number);
-          const date = new Date(Date.UTC(yy, mm, dd));
+          const date = new Date(Date.UTC(yy, mm - 1, dd));
           const isThisDayToday = d.key === todayKey;
           const dayName = isThisDayToday
             ? 'Today'
@@ -2613,7 +2713,7 @@ const UI = {
       this._bindHourlyDayScroll(hourlyEl, currentDayIdx, onDayClick);
     }
 
-    this.renderGraph(activeDay.hourly, state.timezone, state.omHourly || []);
+    this.renderGraph(activeDay.hourly, tz, state.omHourly || []);
 
     // Swipe the temperature graph left/right to move through the days.
     const maxIdx = Math.min(7, dailyData.length - 1);
@@ -2774,6 +2874,20 @@ const UI = {
     hourlyEl.addEventListener('scroll', onScroll, { passive: true });
   },
 
+  // True while a city-swipe cube (either variant) is mid-flight.
+  // App.renderAll() checks it and parks the render in _deferredRender
+  // instead of wiping #weather-view under the animation; _cubeDone()
+  // replays the parked render once the cube resolves.
+  _cubeAnimating: false,
+  _deferredRender: null,
+
+  _cubeDone() {
+    this._cubeAnimating = false;
+    const deferred = this._deferredRender;
+    this._deferredRender = null;
+    if (deferred) deferred();
+  },
+
   // Run a 3D cube-rotation transition between two dashboards. The current
   // contents of #weather-view (the NEW city, which the caller has already
   // rendered) are moved onto one side of the cube; the supplied snapshot of
@@ -2785,6 +2899,14 @@ const UI = {
   //   direction = 'prev' → cube rotates right, new city was on the left face
   async runCubeTransition(oldClone, direction) {
     if (!this.weatherView.firstChild) return; // nothing new to show
+
+    // Mark the transition in-flight BEFORE any frame/timer work so a
+    // concurrent renderAll() (auto-refresh, visibilitychange, refresh
+    // button, byok:changed) defers instead of re-rendering mid-spin —
+    // its innerHTML swap would detach the cube and finish() would then
+    // re-append the animating nodes AFTER the fresh dashboard,
+    // duplicating the whole view.
+    this._cubeAnimating = true;
 
     // Landscape two-column layout: animate each column on its own cube,
     // rotating in parallel — looks like two cards flipping side by side
@@ -2848,9 +2970,16 @@ const UI = {
         if (done) return;
         done = true;
         // Restore the new dashboard's nodes to weather-view so the rest of
-        // the app continues to find them via getElementById/querySelector.
-        while (back.firstChild) this.weatherView.appendChild(back.firstChild);
+        // the app continues to find them via getElementById/querySelector —
+        // but only while the cube is still mounted. If something replaced
+        // #weather-view's contents mid-spin (showLoading, showError), the
+        // nodes held in `back` are stale and re-appending them would
+        // duplicate the dashboard.
+        if (perspective.isConnected) {
+          while (back.firstChild) this.weatherView.appendChild(back.firstChild);
+        }
         perspective.remove();
+        this._cubeDone();
         resolve();
       };
       stage.addEventListener('transitionend', finish, { once: true });
@@ -2939,11 +3068,16 @@ const UI = {
         // Restore the new wrappers back into weather-view so the rest
         // of the app continues to find them via querySelector. Grid
         // placement is by class (.dashboard-left → col 1, etc.), so
-        // append order doesn't matter.
-        this.weatherView.appendChild(newLeft);
-        this.weatherView.appendChild(newRight);
+        // append order doesn't matter. Skip the restore if the cubes
+        // were detached mid-spin (see runCubeTransition's finish) —
+        // the wrappers are stale then and would duplicate the view.
+        if (left.perspective.isConnected || right.perspective.isConnected) {
+          this.weatherView.appendChild(newLeft);
+          this.weatherView.appendChild(newRight);
+        }
         left.perspective.remove();
         right.perspective.remove();
+        this._cubeDone();
         resolve();
       };
       // Listen on one stage — both finish on the same frame since the
@@ -3453,12 +3587,14 @@ const UI = {
     });
   },
 
-  renderGraph(hourlyData, offset = 0, hourlyPrecip = []) {
+  // `tz` is a tz handle as accepted by formatTime (IANA zone name or
+  // fixed offset seconds).
+  renderGraph(hourlyData, tz = 0, hourlyPrecip = []) {
     const container = document.getElementById('graph-container');
     if (!container) return;
 
     // Remember the latest data so we can redraw on resize/visibility changes.
-    this._lastGraph = { hourly: hourlyData, offset, hourlyPrecip };
+    this._lastGraph = { hourly: hourlyData, tz, hourlyPrecip };
 
     // Interpolation and x-spacing both divide by (points - 1); a day
     // with fewer than two slots would render NaN geometry. Clear the
@@ -3536,7 +3672,7 @@ const UI = {
       const x = paddingX + (i * (width - 2 * paddingX) / (hourly.length - 1));
       const yTemp = height - paddingY - ((tempC - minTemp) * (height - 2 * paddingY) / tempRange);
       const yPrecip = height - paddingY - (h.precipPerHour * (height - 2 * paddingY) / maxPrecip);
-      return { x, yTemp, yPrecip, temp: h.temp, precip: h.precipPerHour, time: this.formatTime(h.dt, false, offset), isOriginal: h.isOriginal };
+      return { x, yTemp, yPrecip, temp: h.temp, precip: h.precipPerHour, time: this.formatTime(h.dt, false, tz), isOriginal: h.isOriginal };
     });
 
     let pathD = `M ${points[0].x} ${points[0].yTemp}`;
@@ -3988,9 +4124,7 @@ const UI = {
       // in that case; the receiver's day-only URL still round-trips.
       if (state.selectedHourDt !== null && state.currentWeather) {
         url.searchParams.set('dt', state.selectedHourDt);
-        const timezone = state.currentWeather.timezone;
-        const localDate = new Date((state.selectedHourDt + timezone) * 1000);
-        url.searchParams.set('hour', localDate.getUTCHours());
+        url.searchParams.set('hour', this.localHour(state.selectedHourDt, this.cityTz(state)));
       }
     }
     
