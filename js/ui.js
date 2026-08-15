@@ -3844,22 +3844,28 @@ const UI = {
         <line class="graph-guideline" x1="${paddingX}" y1="${paddingY}" x2="${width - paddingX}" y2="${paddingY}"></line>
 
         ${(() => {
-          // Left-gutter tap target + axis labels. The hit rect and the
-          // unit label render on EVERY frame in BOTH modes — the axis
-          // peak used to appear only when it had rain to describe, which
-          // would leave the wind toggle unreachable (and undiscoverable)
-          // on exactly the dry days wind matters most. Rect first so the
-          // text paints on top of it.
+          // Left gutter: pure axis labels — peak in the user's unit,
+          // an always-visible unit line (so the axis is never blank on
+          // a dry day), baseline 0 when there's data to scale.
+          // Right gutter: the mode switch — stacked R / W letters with
+          // the active series lit in its bar colour, sitting on a
+          // transparent full-height hit rect. Tap it (or double-tap
+          // anywhere on the graph) to swap series. Rect first so the
+          // letters paint on top; letters are pointer-events:none in
+          // CSS so taps on them fall through to the rect.
           const isWind = mode === 'wind';
           const showingLabel = isWind
             ? (hasWindData ? 'wind speed' : 'wind speed (no data)')
             : 'precipitation';
           const nextLabel = isWind ? 'precipitation' : 'wind speed';
-          const toggle = `<rect class="graph-mode-toggle" x="0" y="0" width="${paddingX}" height="${height}" fill="transparent" pointer-events="all" role="button" tabindex="0" aria-label="Showing ${showingLabel}. Activate to show ${nextLabel}."></rect>`;
+          const letterX = width - paddingX / 2;
+          const toggle = `
+            <rect class="graph-mode-toggle" x="${width - paddingX}" y="0" width="${paddingX}" height="${height}" fill="transparent" pointer-events="all" role="button" tabindex="0" aria-label="Showing ${showingLabel}. Activate to show ${nextLabel}."></rect>
+            <text class="graph-mode-letter ${isWind ? '' : 'active rain'}" x="${letterX}" y="${paddingY + 5}" aria-hidden="true">R</text>
+            <text class="graph-mode-letter ${isWind ? 'active wind' : ''}" x="${letterX}" y="${paddingY + 20}" aria-hidden="true">W</text>`;
 
           // Peak value in the user's unit; internal storage stays mm/h
-          // and m/s. Peak + baseline 0 only when there is data to scale;
-          // the unit line always shows so the gutter is never blank.
+          // and m/s. Peak + baseline 0 only when there is data to scale.
           let peakDisplay = '';
           let unitLabel = '';
           if (isWind) {
@@ -3935,6 +3941,19 @@ const UI = {
     };
     this.weatherView.addEventListener('click', onActivate);
     this.weatherView.addEventListener('keydown', onActivate);
+
+    // Double-tap / double-click anywhere on the graph also swaps the
+    // series — same gesture family as the hero temp's dblclick °F/°C
+    // flip. .graph-container's `touch-action: pan-y` already suppresses
+    // browser double-tap zoom, so dblclick fires reliably on touch. The
+    // two clicks of a double-tap landing on the R/W switch itself can't
+    // double-fire: the first click starts the flip and
+    // _graphCubeAnimating swallows everything until it lands.
+    this.weatherView.addEventListener('dblclick', (e) => {
+      if (!e.target.closest('.graph-container')) return;
+      e.preventDefault();
+      this._toggleGraphMode();
+    });
   },
 
   // Flip the graph between precipitation and wind bars with the same

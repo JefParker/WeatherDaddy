@@ -2425,3 +2425,16 @@ body.has-alert .a2hs-prompt {
   outline: 2px solid var(--accent-color);
   outline-offset: -2px;
 }
+
+/* R / W series switch in the graph's right gutter. The active letter
+   takes its series' bar colour; letters pass taps through to the
+   .graph-mode-toggle hit rect beneath them. */
+.graph-mode-letter {
+  font-size: 10px;
+  font-weight: bold;
+  text-anchor: middle;
+  fill: rgba(255, 255, 255, 0.35);
+  pointer-events: none;
+}
+.graph-mode-letter.active.rain { fill: #4db6ac; }
+.graph-mode-letter.active.wind { fill: #5c9ce6; }
