@@ -251,6 +251,7 @@ const App = {
           uv: enrichment.uv,
           omHourly: enrichment.hourly,
           omDaily: enrichment.daily,
+          omMinutely: enrichment.minutely || [],
           tzName: enrichment.tzName || null,
           airQuality,
           alerts,
@@ -636,6 +637,7 @@ const App = {
     this.state.uv               = cached.uv;
     this.state.omHourly         = cached.omHourly || cached.hourlyPrecip || [];
     this.state.omDaily          = cached.omDaily || [];
+    this.state.omMinutely       = cached.omMinutely || [];
     this.state.tzName           = cached.tzName || null;
     this.state.airQuality       = cached.airQuality || { aqi: null, pollen: null, treePollen: null, grassPollen: null, weedPollen: null };
     this.state.alerts           = cached.alerts || [];
@@ -683,6 +685,7 @@ const App = {
         uv: enrichment.uv,
         omHourly: enrichment.hourly,
         omDaily: enrichment.daily,
+        omMinutely: enrichment.minutely || [],
         tzName: enrichment.tzName || null,
         airQuality,
         alerts,
@@ -715,6 +718,7 @@ const App = {
       this.state.uv               = enrichment.uv;
       this.state.omHourly         = enrichment.hourly;
       this.state.omDaily          = enrichment.daily;
+      this.state.omMinutely       = enrichment.minutely || [];
       this.state.tzName           = enrichment.tzName || null;
       this.state.airQuality       = airQuality;
       this.state.alerts           = alerts;

@@ -1320,7 +1320,7 @@ const UI = {
         temp: h.temp,
         feels_like: h.feelsLike != null ? h.feelsLike : h.temp,
         humidity: h.humidity || 0,
-        pressure: 1013 // not requested from Open-Meteo; benign default
+        pressure: h.pressureMsl != null ? Math.round(h.pressureMsl) : 1013
       },
       weather: [{
         id: this.wmoToOwmId(h.weatherCode),
@@ -1332,7 +1332,8 @@ const UI = {
         deg:   h.windDir != null ? h.windDir : 0,
         gust:  h.windGust != null ? h.windGust : undefined
       },
-      visibility: 10000,
+      clouds: { all: h.cloudCover != null ? h.cloudCover : null },
+      visibility: h.visibility != null ? h.visibility : 10000,
       pop: (h.precipProb || 0) / 100
     };
     if (h.precipMM > 0) slot.rain = { '3h': h.precipMM * 3 };
@@ -1373,6 +1374,86 @@ const UI = {
     if (pollen < 10)  return 'Low';
     if (pollen < 50)  return 'Moderate';
     return 'High';
+  },
+
+  // Moon altitude (radians) at a unix time for an observer — a compact
+  // low-precision lunar ephemeris using the well-known SunCalc formulas.
+  // Accurate to a few arcminutes, which puts rise/set within a couple of
+  // minutes: plenty for a forecast stat.
+  _moonAltitudeAt(sec, lat, lon) {
+    const rad = Math.PI / 180;
+    const d = (sec - 946728000) / 86400; // days since J2000.0
+    const e = rad * 23.4397;             // Earth obliquity
+    const L = rad * (218.316 + 13.176396 * d); // ecliptic longitude
+    const M = rad * (134.963 + 13.064993 * d); // mean anomaly
+    const F = rad * (93.272  + 13.229350 * d); // mean distance
+    const l = L + rad * 6.289 * Math.sin(M);
+    const b = rad * 5.128 * Math.sin(F);
+    const ra  = Math.atan2(Math.sin(l) * Math.cos(e) - Math.tan(b) * Math.sin(e), Math.cos(l));
+    const dec = Math.asin(Math.sin(b) * Math.cos(e) + Math.cos(b) * Math.sin(e) * Math.sin(l));
+    const lw  = rad * -lon;
+    const phi = rad * lat;
+    const H = rad * (280.16 + 360.9856235 * d) - lw - ra; // hour angle
+    return Math.asin(Math.sin(phi) * Math.sin(dec) + Math.cos(phi) * Math.cos(dec) * Math.cos(H));
+  },
+
+  // Moonrise/moonset within the 24h starting at `startSec` (the CITY's
+  // local midnight). SunCalc's method: sample altitude every 2h, fit a
+  // parabola through each triple, and take its roots as the crossings.
+  // Either value can be null — the moon genuinely doesn't rise or set
+  // on some days (it drifts ~50min later each day), and never does
+  // either during polar day/night.
+  _moonTimes(startSec, lat, lon) {
+    const hc = 0.133 * Math.PI / 180; // apparent-radius correction
+    let h0 = this._moonAltitudeAt(startSec, lat, lon) - hc;
+    let rise = null, set = null;
+    for (let i = 1; i <= 24; i += 2) {
+      const h1 = this._moonAltitudeAt(startSec + i * 3600, lat, lon) - hc;
+      const h2 = this._moonAltitudeAt(startSec + (i + 1) * 3600, lat, lon) - hc;
+      const a = (h0 + h2) / 2 - h1;
+      const b = (h2 - h0) / 2;
+      const xe = -b / (2 * a);
+      const ye = (a * xe + b) * xe + h1;
+      const disc = b * b - 4 * a * h1;
+      let roots = 0, x1 = 0, x2 = 0;
+      if (disc >= 0) {
+        const dx = Math.sqrt(disc) / (Math.abs(a) * 2);
+        x1 = xe - dx; x2 = xe + dx;
+        if (Math.abs(x1) <= 1) roots++;
+        if (Math.abs(x2) <= 1) roots++;
+        if (x1 < -1) x1 = x2;
+      }
+      if (roots === 1) {
+        if (h0 < 0) rise = i + x1; else set = i + x1;
+      } else if (roots === 2) {
+        rise = i + (ye < 0 ? x2 : x1);
+        set  = i + (ye < 0 ? x1 : x2);
+      }
+      if (rise != null && set != null) break;
+      h0 = h2;
+    }
+    return {
+      rise: rise != null ? Math.round(startSec + rise * 3600) : null,
+      set:  set  != null ? Math.round(startSec + set  * 3600) : null
+    };
+  },
+
+  // Scan the 15-minute precipitation series for the next wet↔dry
+  // transition inside `windowSec`. Returns { type: 'starts'|'ends',
+  // dt } or null when there's no transition (or no data).
+  _precipNowcast(minutely, nowSec, windowSec = 2 * 3600) {
+    if (!minutely || !minutely.length) return null;
+    const RAINING = 0.05; // mm per 15min that counts as precipitating
+    const upcoming = minutely
+      .filter(m => m.dt + 900 > nowSec && m.dt <= nowSec + windowSec)
+      .sort((a, b) => a.dt - b.dt);
+    if (upcoming.length < 2) return null;
+    const rainingNow = (upcoming[0].precipMM || 0) >= RAINING;
+    for (const m of upcoming.slice(1)) {
+      const wet = (m.precipMM || 0) >= RAINING;
+      if (wet !== rainingNow) return { type: wet ? 'starts' : 'ends', dt: m.dt };
+    }
+    return null;
   },
 
   // Moon phase name at a given moment. Defaults to "now" so existing
@@ -1484,7 +1565,16 @@ const UI = {
       this._lastAnimatedAlertEvent = '';
       return;
     }
-    const top = alerts[0];
+
+    // Two presentation tiers from one list: Severe/Extreme keep the red
+    // bar; anything lesser (Watches, Advisories, Statements) gets the
+    // quieter amber styling. The bar leads with the severe set when both
+    // exist; the overlay always lists everything.
+    const severe = alerts.filter(a => a.severity === 'Severe' || a.severity === 'Extreme');
+    const shown = severe.length ? severe : alerts;
+    bar.classList.toggle('alert-bar-minor', severe.length === 0);
+
+    const top = shown[0];
     const extra = alerts.length - 1;
     const textEl = document.getElementById('alert-bar-text');
     if (textEl) {
@@ -2085,15 +2175,49 @@ const UI = {
     // be tomorrow near local midnight (OWM's forecast window), which
     // used to show every forecast day the previous day's UV max.
     const uv = state.uv || { current: null, daily: [] };
+    const omDailyForKey = (key) => (state.omDaily || []).find(od => dayKeyFor(od.dt) === key) || null;
     const uvForKey = (key) => {
-      const om = (state.omDaily || []).find(od => dayKeyFor(od.dt) === key);
+      const om = omDailyForKey(key);
       return om && om.uvIndexMax != null ? om.uvIndexMax : null;
     };
     const activeDayEntry = isToday ? dailyData[0] : dailyData[selectedDayIndex];
     const activeDayUvKey = activeDayEntry ? activeDayEntry.key : null;
-    const uvValue = isToday
+    // Open-Meteo's daily summary for the active day — the authoritative
+    // whole-day numbers (max precip probability, max wind, sunshine)
+    // that beat anything derived from sampled 3h slots.
+    const activeOmDay = omDailyForKey(activeDayUvKey);
+    let uvValue = isToday
       ? (uv.current != null ? uv.current : uvForKey(activeDayUvKey))
       : uvForKey(activeDayUvKey);
+    // A pinned hour shows THAT hour's UV when Open-Meteo has it, not the
+    // day max — matches how the rest of the hero tracks the pinned slot.
+    if (pinnedHourSlot) {
+      const omHour = (state.omHourly || []).find(h => h.dt === pinnedHourSlot.dt);
+      if (omHour && omHour.uvIndex != null) uvValue = omHour.uvIndex;
+    }
+
+    // Precip chance: for forecast days prefer the daily max probability
+    // over the max of sampled slots. Today keeps the rest-of-day slot
+    // figure — the daily max can reflect rain that already fell.
+    const popValue = (!isToday && activeOmDay && activeOmDay.popMax != null)
+      ? activeOmDay.popMax / 100
+      : (activeDay.pop || 0);
+
+    // Cloud cover: pinned hour → that slot; today → current conditions;
+    // forecast day → mean over the day's slots that carry a value.
+    const cloudCover = (() => {
+      if (pinnedHourSlot && pinnedHourSlot.clouds && pinnedHourSlot.clouds.all != null) {
+        return pinnedHourSlot.clouds.all;
+      }
+      if (isToday && currentWeather.clouds && currentWeather.clouds.all != null) {
+        return currentWeather.clouds.all;
+      }
+      const vals = ((activeDayEntry && activeDayEntry.hourly) || [])
+        .map(h => h.clouds && h.clouds.all)
+        .filter(v => v != null);
+      if (!vals.length) return null;
+      return vals.reduce((s, v) => s + v, 0) / vals.length;
+    })();
 
     const sunriseStat = activeDay.sunrise != null ? `
       <div class="stat-item">
@@ -2189,15 +2313,27 @@ const UI = {
     ];
     if (hasGust) page1Candidates.push(item('Wind gust', this.formatWind(activeDay.wind.gust)));
     page1Candidates.push(item('Humidity', `${activeDay.main.humidity}%`));
+    if (cloudCover != null) {
+      page1Candidates.push(item('Cloud cover', `${Math.round(cloudCover)}%`));
+    }
     // Precipitation amount and chance — only shown when actually relevant.
     if ((activeDay.rainMM || 0) > 0) {
       page1Candidates.push(item('Precipitation', this.formatPrecip(activeDay.rainMM)));
     }
-    if ((activeDay.pop || 0) > 0) {
-      page1Candidates.push(item('Precip chance', `${Math.round(activeDay.pop * 100)}%`));
+    if (popValue > 0) {
+      page1Candidates.push(item('Precip chance', `${Math.round(popValue * 100)}%`));
     }
     page1Candidates.push(uvOnPage1 ? uvStatItem : moonStatHTML);
-    page1Candidates.push(item('Air quality', this.esc(this.aqiLabel(aq.aqi))));
+    // Name the pollutant driving the AQI once it's past "Good" — when
+    // the air is fine, blaming a pollutant is noise.
+    const aqiText = (aq.aqi != null && aq.aqi > 50 && aq.aqiPollutant)
+      ? `${this.aqiLabel(aq.aqi)} · ${aq.aqiPollutant}`
+      : this.aqiLabel(aq.aqi);
+    page1Candidates.push(item('Air quality', this.esc(aqiText)));
+    // Whole-day max sustained wind from Open-Meteo's daily summary.
+    if (activeOmDay && activeOmDay.windMax != null) {
+      page1Candidates.push(item('Max wind', this.formatWind(activeOmDay.windMax)));
+    }
 
     const getSunTimesForTimestamp = (ts) => {
       const local = this.localParts(ts, tz);
@@ -2359,6 +2495,22 @@ const UI = {
     if (!localTimeOnPage1) page2Forced.push(localTimeItem);
     page2Forced.push(item('Dew point', dewPoint != null ? `${this.formatTemp(dewPoint)}°` : '—'));
 
+    // Moonrise / moonset for the active day, computed for the city's
+    // local midnight (Open-Meteo's per-day dt when available — the
+    // DST-correct instant — else derived from the day key + offset).
+    if (activeDayUvKey) {
+      const dayStartSec = activeOmDay ? activeOmDay.dt : (() => {
+        const [yy, mo, dd] = activeDayUvKey.split('-').map(Number);
+        const off = typeof tz === 'number' ? tz : (currentWeather.timezone || 0);
+        return Math.floor(Date.UTC(yy, mo - 1, dd) / 1000) - off;
+      })();
+      const mt = this._moonTimes(dayStartSec, currentWeather.coord.lat, currentWeather.coord.lon);
+      // A null is real astronomy (the moon skips a rise or set roughly
+      // every couple of weeks) — show the em dash rather than hiding.
+      page2Forced.push(item('Moonrise', mt.rise != null ? this.formatTime(mt.rise, true, tz) : '—'));
+      page2Forced.push(item('Moonset',  mt.set  != null ? this.formatTime(mt.set,  true, tz) : '—'));
+    }
+
     // First 6 candidates fill page 1; rest overflows to page 2 after the
     // forced items. Every page is padded out to exactly 6 cells with
     // invisible placeholders so the grid is always 2 rows tall — keeps
@@ -2386,6 +2538,10 @@ const UI = {
     pushPollen('Tree pollen',  aq.treePollen);
     pushPollen('Grass pollen', aq.grassPollen);
     pushPollen('Weed pollen',  aq.weedPollen);
+
+    if (activeOmDay && activeOmDay.sunshineSec != null) {
+      lowPriority.push(item('Sunshine', `${(activeOmDay.sunshineSec / 3600).toFixed(1)} h`));
+    }
 
     if (!touchesWater) {
       if (nextHighItem) lowPriority.push(nextHighItem);
@@ -2418,9 +2574,38 @@ const UI = {
     if (this._statsPageIdx == null || this._statsPageIdx >= statsPages.length) this._statsPageIdx = 0;
     this._statsPages = statsPages;
 
-    const precipMsg = (activeDay.pop || 0) > 0.1
-      ? `${Math.round(activeDay.pop * 100)}% chance of precipitation`
+    // Precip line under the hero. A 15-minute nowcast transition inside
+    // the next 2h beats the day-level percentage — "Rain starting around
+    // 3:15 PM" is strictly more useful than "60% chance". Nowcast only
+    // applies to the live "today" view.
+    let precipMsg = popValue > 0.1
+      ? `${Math.round(popValue * 100)}% chance of precipitation`
       : 'No precipitation expected';
+    if (isToday && !pinnedHourSlot) {
+      const cast = this._precipNowcast(state.omMinutely, nowSec);
+      if (cast) {
+        precipMsg = `Rain ${cast.type === 'starts' ? 'starting' : 'ending'} around ${this.formatTime(cast.dt, true, tz)}`;
+      }
+    }
+
+    // "Warmer/cooler than this time yesterday" — the past_days=1 slice
+    // of Open-Meteo's hourly series. Compare in the user's display unit
+    // so the rounded degree difference matches what the hero shows.
+    let yesterdayMsg = '';
+    if (isToday && !pinnedHourSlot) {
+      const target = nowSec - 86400;
+      let best = null, bestDiff = Infinity;
+      for (const h of (state.omHourly || [])) {
+        const d = Math.abs(h.dt - target);
+        if (d < bestDiff) { bestDiff = d; best = h; }
+      }
+      if (best && bestDiff <= 3600 && best.temp != null) {
+        const diff = Math.round(this.convertTemp(currentWeather.main.temp) - this.convertTemp(best.temp));
+        yesterdayMsg = diff === 0
+          ? 'About the same as yesterday'
+          : `${Math.abs(diff)}° ${diff > 0 ? 'warmer' : 'cooler'} than this time yesterday`;
+      }
+    }
 
     // Index of the real "today" entry in dailyData, matched by day KEY
     // instead of trusting array position (same rule as the daily list).
@@ -2461,6 +2646,7 @@ const UI = {
         </div>
         ${heroTempHTML}
         <div class="hero-feels-like">Feels like ${this.formatTemp(heroData.main.feels_like)}° - ${this.esc(breeze)}</div>
+        ${yesterdayMsg ? `<div class="hero-yesterday">${this.esc(yesterdayMsg)}</div>` : ''}
         <div class="precip-message">${precipMsg}</div>
       </section>
 
@@ -2542,6 +2728,7 @@ const UI = {
                   <span class="hourly-time">Now</span>
                   <span class="hourly-icon">${nowIcon}</span>
                   <span class="hourly-temp">${this.formatTemp(cw.main.temp)}°</span>
+                  <span class="hourly-pop">&nbsp;</span>
                 </div>`;
             }
 
@@ -2556,11 +2743,18 @@ const UI = {
               // Guard weather[0] like the Now tile above does — a
               // malformed synthesised slot shouldn't kill the render.
               const hw = h.weather && h.weather[0] ? h.weather[0] : null;
+              // Precip chance under the tile once it's worth acting on
+              // (≥20%). The span always renders (nbsp when dry) so every
+              // tile keeps the same height.
+              const popPct = Math.round((h.pop || 0) * 100);
+              const popTxt = popPct >= 20 ? `${popPct}%` : '&nbsp;';
+              const popAria = popPct >= 20 ? `, ${popPct}% chance of precipitation` : '';
               out += `
-                <div class="hourly-tile ${cls.trim()}" data-day-index="${dayIdx}" data-dt="${h.dt}" role="button" tabindex="0" aria-label="${this.formatTime(h.dt, true, tz)}, ${this.formatTemp(h.main.temp)}°" ${tileStyle}>
+                <div class="hourly-tile ${cls.trim()}" data-day-index="${dayIdx}" data-dt="${h.dt}" role="button" tabindex="0" aria-label="${this.formatTime(h.dt, true, tz)}, ${this.formatTemp(h.main.temp)}°${popAria}" ${tileStyle}>
                   <span class="hourly-time">${this.formatTime(h.dt, true, tz)}</span>
                   <span class="hourly-icon">${hw ? this.getWeatherIconSVG(hw.icon, 28, hw.id, h.dt) : ''}</span>
                   <span class="hourly-temp">${this.formatTemp(h.main.temp)}°</span>
+                  <span class="hourly-pop">${popTxt}</span>
                 </div>`;
             }
           }

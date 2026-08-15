@@ -197,14 +197,21 @@ const WeatherAPI = {
   //   - Daily summaries for 8 days (high/low/icon/sunrise/sunset/etc.) —
   //     used to extend the daily list and to build days 6-8 of the app.
   async getEnrichment(lat, lon) {
+    // past_days=1: yesterday's hourlies power the "warmer/cooler than
+    // this time yesterday" hero line. NOTE this means `hourly` reaches
+    // 24h into the past — every consumer already filters by dt range.
+    // `daily` is filtered below so it still starts at today.
+    // minutely_15: 15-minute precipitation for the next 24h, for the
+    // "rain starting/ending around ..." nowcast.
     const url = `https://api.open-meteo.com/v1/forecast` +
       `?latitude=${enc(lat)}&longitude=${enc(lon)}` +
       `&current=uv_index` +
-      `&daily=uv_index_max,temperature_2m_max,temperature_2m_min,weathercode,precipitation_sum,sunrise,sunset` +
-      `&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,precipitation_probability,weathercode,windspeed_10m,winddirection_10m,windgusts_10m,is_day` +
-      `&windspeed_unit=ms&timezone=auto&timeformat=unixtime&forecast_days=8`;
+      `&daily=uv_index_max,temperature_2m_max,temperature_2m_min,weathercode,precipitation_sum,sunrise,sunset,precipitation_probability_max,windspeed_10m_max,sunshine_duration` +
+      `&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,precipitation_probability,weathercode,windspeed_10m,winddirection_10m,windgusts_10m,is_day,cloud_cover,visibility,pressure_msl,uv_index` +
+      `&minutely_15=precipitation&forecast_minutely_15=96` +
+      `&windspeed_unit=ms&timezone=auto&timeformat=unixtime&forecast_days=8&past_days=1`;
     const res = await fetch(url);
-    if (!res.ok) return { uv: { current: null, daily: [] }, hourly: [], daily: [] };
+    if (!res.ok) return { uv: { current: null, daily: [] }, hourly: [], daily: [], minutely: [] };
     const data = await res.json();
 
     const h = data.hourly || {};
@@ -220,11 +227,18 @@ const WeatherAPI = {
       windSpeed:   h.windspeed_10m          ? h.windspeed_10m[i]          : null,
       windDir:     h.winddirection_10m      ? h.winddirection_10m[i]      : null,
       windGust:    h.windgusts_10m          ? h.windgusts_10m[i]          : null,
-      isDay:       h.is_day                 ? !!h.is_day[i]               : true
+      isDay:       h.is_day                 ? !!h.is_day[i]               : true,
+      cloudCover:  h.cloud_cover            ? h.cloud_cover[i]            : null,
+      visibility:  h.visibility             ? h.visibility[i]             : null,
+      pressureMsl: h.pressure_msl           ? h.pressure_msl[i]           : null,
+      uvIndex:     h.uv_index               ? h.uv_index[i]               : null
     }));
 
     const d = data.daily || {};
     const dTimes = d.time || [];
+    // Drop fully-past days (past_days=1 puts yesterday at index 0) so
+    // downstream day-building keeps its "today sorts first" invariant.
+    const nowSec = Math.floor(Date.now() / 1000);
     const daily = dTimes.map((t, i) => ({
       dt:           t,
       tempMax:      d.temperature_2m_max  ? d.temperature_2m_max[i]  : null,
@@ -233,16 +247,26 @@ const WeatherAPI = {
       precipSum:    d.precipitation_sum   ? d.precipitation_sum[i] || 0 : 0,
       sunrise:      d.sunrise             ? d.sunrise[i]             : null,
       sunset:       d.sunset              ? d.sunset[i]              : null,
-      uvIndexMax:   d.uv_index_max        ? d.uv_index_max[i]        : null
+      uvIndexMax:   d.uv_index_max        ? d.uv_index_max[i]        : null,
+      popMax:       d.precipitation_probability_max ? d.precipitation_probability_max[i] : null,
+      windMax:      d.windspeed_10m_max   ? d.windspeed_10m_max[i]   : null,
+      sunshineSec:  d.sunshine_duration   ? d.sunshine_duration[i]   : null
+    })).filter(day => day.dt + 86400 > nowSec);
+
+    const m = data.minutely_15 || {};
+    const minutely = (m.time || []).map((t, i) => ({
+      dt: t,
+      precipMM: m.precipitation ? m.precipitation[i] || 0 : 0
     }));
 
     return {
       uv: {
         current: data.current && data.current.uv_index != null ? data.current.uv_index : null,
-        daily: (d.uv_index_max) || []
+        daily: daily.map(day => day.uvIndexMax)
       },
       hourly,
       daily,
+      minutely,
       // IANA zone name for the requested point (timezone=auto), e.g.
       // "America/New_York". Unlike OWM's fixed utc-offset this stays
       // correct across DST transitions inside the 8-day window, so the
@@ -253,9 +277,9 @@ const WeatherAPI = {
 
   // Active National Weather Service alerts for a point. US-only; returns
   // [] for any non-US coordinate (the NWS API just returns no features).
-  // Filtered to only the "red" alerts — Severe and Extreme severity —
-  // which excludes Statements, Advisories, Watches, and other Moderate /
-  // Minor messages we don't want to pop up at the user.
+  // Returns every severity, sorted most-severe first — the UI shows
+  // Severe/Extreme as the red alert bar and lesser messages (Watches,
+  // Advisories, Statements) as a quieter amber tier.
   async getAlerts(lat, lon) {
     // NWS only covers US territory (CONUS + AK + HI + PR + USVI + Guam etc.).
     // Calling /alerts/active with a point outside that bounding box returns
@@ -276,12 +300,14 @@ const WeatherAPI = {
       );
       if (!res.ok) return [];
       const data = await res.json();
-      const RED_LEVELS = new Set(['Severe', 'Extreme']);
+      // ALL severities come through; the UI decides presentation —
+      // Severe/Extreme get the red alert bar, everything else (Watches,
+      // Advisories, Statements) the quieter amber tier.
       const features = (data.features || []).filter(f =>
-        RED_LEVELS.has(f.properties && f.properties.severity)
+        f.properties && f.properties.severity
       );
-      // Most severe first within the filtered set.
-      const severityOrder = { Extreme: 4, Severe: 3 };
+      // Most severe first.
+      const severityOrder = { Extreme: 4, Severe: 3, Moderate: 2, Minor: 1 };
       features.sort((a, b) =>
         (severityOrder[b.properties.severity] || 0) -
         (severityOrder[a.properties.severity] || 0)
@@ -326,11 +352,22 @@ const WeatherAPI = {
     const GRASS_FIELDS = ['grass_pollen'];
     const WEED_FIELDS  = ['mugwort_pollen', 'ragweed_pollen'];
     const POLLEN_FIELDS = [...TREE_FIELDS, ...GRASS_FIELDS, ...WEED_FIELDS];
-    const empty = { aqi: null, pollen: null, treePollen: null, grassPollen: null, weedPollen: null };
+    // Per-pollutant US AQI sub-indices — Open-Meteo computes these for
+    // us, so "which pollutant is driving the number" is just an argmax,
+    // no EPA breakpoint tables needed.
+    const SUB_AQI = {
+      us_aqi_pm2_5:            'PM2.5',
+      us_aqi_pm10:             'PM10',
+      us_aqi_ozone:            'O₃',
+      us_aqi_nitrogen_dioxide: 'NO₂',
+      us_aqi_sulphur_dioxide:  'SO₂',
+      us_aqi_carbon_monoxide:  'CO'
+    };
+    const empty = { aqi: null, aqiPollutant: null, pollen: null, treePollen: null, grassPollen: null, weedPollen: null };
 
     const url = `https://air-quality-api.open-meteo.com/v1/air-quality` +
       `?latitude=${enc(lat)}&longitude=${enc(lon)}` +
-      `&current=us_aqi,${POLLEN_FIELDS.join(',')}` +
+      `&current=us_aqi,${Object.keys(SUB_AQI).join(',')},${POLLEN_FIELDS.join(',')}` +
       `&timezone=auto`;
     try {
       const res = await fetch(url);
@@ -349,7 +386,17 @@ const WeatherAPI = {
       const pollen = hasPollen
         ? POLLEN_FIELDS.reduce((s, k) => s + (typeof cur[k] === 'number' ? cur[k] : 0), 0)
         : null;
-      return { aqi, pollen, treePollen, grassPollen, weedPollen };
+      // Dominant pollutant = the sub-index equal to (or nearest) the
+      // headline AQI, since US AQI is defined as the max sub-index.
+      let aqiPollutant = null;
+      let bestSub = -1;
+      for (const [field, label] of Object.entries(SUB_AQI)) {
+        if (cur[field] != null && cur[field] > bestSub) {
+          bestSub = cur[field];
+          aqiPollutant = label;
+        }
+      }
+      return { aqi, aqiPollutant, pollen, treePollen, grassPollen, weedPollen };
     } catch (_) {
       return empty;
     }
