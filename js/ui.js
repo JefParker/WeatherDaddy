@@ -513,6 +513,7 @@ const UI = {
       'locations': this.locationsScreen,
       'units':     this.unitsScreen,
       'alerts':    document.getElementById('alerts-screen'),
+      'discussion': document.getElementById('discussion-screen'),
       'about':     document.getElementById('about-screen'),
       'import-export': this.importExportScreen
     };
@@ -1601,6 +1602,120 @@ const UI = {
     }
   },
 
+  // Quieter cousin of renderAlertBar: the NWS Area Forecast Discussion
+  // bar (US-only). Slides in along the bottom — above the alert bar when
+  // one is showing — and opens the full-narrative overlay on tap.
+  renderDiscussionBar(discussion) {
+    const bar = document.getElementById('discussion-bar');
+    if (!bar) return;
+
+    this._currentDiscussion = discussion || null;
+
+    if (!this._discussionBarBound) {
+      this._discussionBarBound = true;
+      bar.addEventListener('click', () => {
+        this.renderDiscussionOverlay(this._currentDiscussion);
+        this.toggleScreen('discussion', true);
+      });
+      const backBtn = document.getElementById('discussion-back-btn');
+      if (backBtn) backBtn.addEventListener('click', () => this.toggleScreen('discussion', false));
+    }
+
+    if (!discussion || !discussion.text) {
+      bar.hidden = true;
+      bar.classList.remove('alert-bar-slide-in');
+      this._lastDiscussionCity = '';
+      return;
+    }
+
+    const textEl = document.getElementById('discussion-bar-text');
+    if (textEl) textEl.textContent = `Forecast discussion · NWS ${discussion.office || ''}`.trim();
+
+    const currentCity = this._renderedCityName || '';
+    const shouldAnimate = bar.hidden || this._lastDiscussionCity !== currentCity;
+    bar.hidden = false;
+    if (shouldAnimate) {
+      bar.classList.remove('alert-bar-slide-in');
+      void bar.offsetWidth; // force layout reflow
+      bar.classList.add('alert-bar-slide-in');
+      this._lastDiscussionCity = currentCity;
+    }
+  },
+
+  // Turn raw AFD product text into displayable sections. AFDs are
+  // hard-wrapped plain text: paragraphs separated by blank lines,
+  // headings like ".SYNOPSIS..." or ".NEAR TERM /THROUGH TONIGHT/..."
+  // on their own line, "&&" ending a section and "$$" the product.
+  // We unwrap in-paragraph newlines (the ~66-char wire wrapping reads
+  // terribly on a phone), split on headings, and drop the wire-format
+  // preamble before the first titled section.
+  _parseAfd(text) {
+    const lines = String(text || '').split('\n');
+    const sections = [];
+    let cur = { title: null, paras: [] };
+    let para = [];
+    const flushPara = () => {
+      if (para.length) { cur.paras.push(para.join(' ')); para = []; }
+    };
+    const flushSection = () => {
+      flushPara();
+      if (cur.title || cur.paras.length) sections.push(cur);
+      cur = { title: null, paras: [] };
+    };
+    for (const raw of lines) {
+      const line = raw.trimEnd();
+      if (line.trim() === '&&') { flushSection(); continue; }
+      // "$$" ends the product proper; what follows is forecaster
+      // initials / routing codes — not content.
+      if (line.trim() === '$$') { flushSection(); break; }
+      const m = line.match(/^\.([A-Z][A-Za-z0-9 \/&.,'-]*?)\.\.\.(.*)$/);
+      if (m) {
+        flushSection();
+        cur.title = m[1].trim();
+        if (m[2] && m[2].trim()) para.push(m[2].trim());
+        continue;
+      }
+      if (!line.trim()) { flushPara(); continue; }
+      // Bullet lines stand alone instead of merging into the previous
+      // wrapped paragraph.
+      if (/^[*-]\s/.test(line.trim())) flushPara();
+      para.push(line.trim());
+    }
+    flushSection();
+    const firstTitled = sections.findIndex(s => s.title);
+    return firstTitled > 0 ? sections.slice(firstTitled) : sections;
+  },
+
+  renderDiscussionOverlay(discussion) {
+    const body = document.getElementById('discussion-body');
+    if (!body) return;
+    if (!discussion || !discussion.text) {
+      body.innerHTML = '<p class="discussion-para">No forecast discussion available.</p>';
+      return;
+    }
+    const sections = this._parseAfd(discussion.text);
+    const issued = discussion.issued ? new Date(discussion.issued) : null;
+    const meta = [
+      discussion.office ? `NWS ${this.esc(discussion.office)}` : '',
+      (issued && !isNaN(issued))
+        ? `Issued ${issued.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+        : ''
+    ].filter(Boolean).join(' · ');
+    // Headings arrive SHOUTING; sentence-case them for the UI.
+    const prettyTitle = (t) => {
+      const s = t.toLowerCase();
+      return s.charAt(0).toUpperCase() + s.slice(1);
+    };
+    body.innerHTML = `
+      ${meta ? `<div class="discussion-meta">${meta}</div>` : ''}
+      ${sections.map(s => `
+        <section class="discussion-section">
+          ${s.title ? `<h3 class="discussion-heading">${this.esc(prettyTitle(s.title))}</h3>` : ''}
+          ${s.paras.map(p => `<p class="discussion-para">${this.esc(p)}</p>`).join('')}
+        </section>`).join('')}
+    `;
+  },
+
   // Populate the alerts overlay with one card per active warning, showing
   // the full headline, description, instruction, area, timing, source,
   // and a link to the official NWS detail page.
@@ -2267,16 +2382,15 @@ const UI = {
           <span class="stat-value">${this.esc(phase)}</span>
         </div>`;
     })();
-    // The "UV index" LABEL gets a WHO-colored pill from Moderate up —
-    // same treatment as the Air quality label's EPA bands. Low UV gets
-    // no highlight. Cell built by hand because item() escapes its label.
+    // The "UV index" LABEL gets a WHO-colored pill only at the top two
+    // bands — Very High (red) and Extreme (purple) — same treatment as
+    // the Air quality label's EPA bands. Anything below stays plain.
+    // Cell built by hand because item() escapes its label.
     const uvBandClass = (() => {
       if (uvValue == null || isNaN(uvValue)) return '';
       const v = Math.round(uvValue);
       if (v >= 11) return ' uv-band-extreme';
       if (v >= 8)  return ' uv-band-veryhigh';
-      if (v >= 6)  return ' uv-band-high';
-      if (v >= 3)  return ' uv-band-moderate';
       return '';
     })();
     const uvStatItem = `

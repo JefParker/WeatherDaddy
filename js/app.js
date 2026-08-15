@@ -644,6 +644,7 @@ const App = {
     this.state.tides            = cached.tides || null;
     this.state.tideCoords       = cached.tideCoords || null;
     this.state.tideExtrema      = this.state.tides ? this.findTideExtrema(this.state.tides) : [];
+    this.state.discussion       = cached.discussion || null;
     this.state.cityName         = cityName;
     this.state.timezone         = cached.currentWeather.timezone;
     this.state.selectedDayIndex = -1;
@@ -666,13 +667,14 @@ const App = {
     }
 
     try {
-      const [currentWeather, forecast, enrichment, airQuality, alerts, tides] = await Promise.all([
+      const [currentWeather, forecast, enrichment, airQuality, alerts, tides, discussion] = await Promise.all([
         WeatherAPI.getCurrentWeather(lat, lon),
         WeatherAPI.getForecast(lat, lon),
         WeatherAPI.getEnrichment(lat, lon).catch(() => ({ uv: { current: null, daily: [] }, hourly: [], daily: [] })),
         WeatherAPI.getAirQuality(lat, lon).catch(() => ({ aqi: null, pollen: null, treePollen: null, grassPollen: null, weedPollen: null })),
         WeatherAPI.getAlerts(lat, lon).catch(() => []),
-        WeatherAPI.getTides(lat, lon).catch(() => null)
+        WeatherAPI.getTides(lat, lon).catch(() => null),
+        WeatherAPI.getForecastDiscussion(lat, lon).catch(() => null)
       ]);
 
       if (token !== this._fetchToken) return;
@@ -691,6 +693,7 @@ const App = {
         alerts,
         tides: tides ? tides.hourly : null,
         tideCoords: tides ? { lat: tides.latitude, lon: tides.longitude } : null,
+        discussion: discussion || null,
         cityName
       });
       Storage.saveLocation(lat, lon, cityName);
@@ -725,6 +728,7 @@ const App = {
       this.state.tides            = tides ? tides.hourly : null;
       this.state.tideCoords       = tides ? { lat: tides.latitude, lon: tides.longitude } : null;
       this.state.tideExtrema      = this.state.tides ? this.findTideExtrema(this.state.tides) : [];
+      this.state.discussion       = discussion || null;
       this.state.cityName         = cityName;
       this.state.timezone         = currentWeather.timezone;
       this.state.selectedDayIndex = keepDay;
@@ -827,6 +831,7 @@ const App = {
       (dt, dayIdx) => this.handleHourClick(dt, dayIdx)
     );
     UI.renderAlertBar(this.state.alerts || []);
+    UI.renderDiscussionBar(this.state.discussion || null);
   },
 
   // First-launch seed for the saved-locations list.

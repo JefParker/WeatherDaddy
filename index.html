@@ -608,6 +608,34 @@
       </div>
     </div>
 
+    <!-- NWS forecast discussion bar — the alert bar's quieter cousin.
+         Shows whenever the local forecast office's Area Forecast
+         Discussion is available (US-only); stacks above the alert bar
+         when both are present. Tapping opens the overlay below. -->
+    <button class="discussion-bar" id="discussion-bar" type="button" hidden>
+      <span class="discussion-bar-icon" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+      </span>
+      <span class="discussion-bar-text" id="discussion-bar-text">Forecast discussion</span>
+      <span class="alert-bar-cta">Read<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-left:4px;vertical-align:-2px"><polyline points="9 18 15 12 9 6"/></svg></span>
+    </button>
+
+    <!-- Forecast discussion overlay — the office's full AFD narrative,
+         parsed into sections. -->
+    <div class="overlay-screen" id="discussion-screen">
+      <header class="overlay-header">
+        <button class="back-btn" id="discussion-back-btn" aria-label="Back">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+        </button>
+        <h2>Forecast discussion</h2>
+      </header>
+      <div class="overlay-body" id="discussion-body">
+        <!-- JS injects .discussion-section blocks -->
+      </div>
+    </div>
+
     <!-- Context menu — opened by right-click on desktop and long-press on
          touch. Mirrors the hamburger menu options. JS positions it next
          to the cursor / touch point and dismisses on outside click. -->

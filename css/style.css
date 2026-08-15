@@ -2492,10 +2492,8 @@ body.has-alert .a2hs-prompt {
 .stat-label.aqi-band-veryunhealthy { background: #8f3f97; }
 .stat-label.aqi-band-hazardous     { background: #7e0023; }
 
-/* "UV index" label pill, WHO band colors from Moderate up (Low stays
-   plain) — mirrors the Air quality label treatment. */
-.stat-label.uv-band-moderate,
-.stat-label.uv-band-high,
+/* "UV index" label pill — only the top two WHO bands get a highlight
+   (Very High red, Extreme purple); mirrors the Air quality treatment. */
 .stat-label.uv-band-veryhigh,
 .stat-label.uv-band-extreme {
   padding: 1px 8px 2px;
@@ -2503,7 +2501,63 @@ body.has-alert .a2hs-prompt {
   color: #fff;
   font-weight: 600;
 }
-.stat-label.uv-band-moderate { background: #f7d708; color: #1a1a1a; }
-.stat-label.uv-band-high     { background: #f18b00; color: #1a1a1a; }
 .stat-label.uv-band-veryhigh { background: #e53210; }
 .stat-label.uv-band-extreme  { background: #b567a4; }
+
+/* === NWS forecast discussion bar + overlay =========================== */
+/* Same skeleton as .alert-bar, neutral blue instead of warning red. */
+.discussion-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: #0d1a26;
+  border: none;
+  border-top: 3px solid #4a90d9;
+  color: #fff;
+  text-decoration: none;
+  font: 500 0.92rem/1.4 inherit;
+  text-align: left;
+  cursor: pointer;
+  z-index: 89; /* just under the alert bar */
+  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.5);
+  width: 100%;
+}
+.discussion-bar[hidden] { display: none; }
+.discussion-bar:active { background: #132636; }
+.discussion-bar-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* An active weather alert owns the bottom edge (and the safe-area
+   inset); stack the discussion bar directly above it. */
+body.has-alert .discussion-bar {
+  bottom: calc(46px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: 12px;
+}
+
+.discussion-meta {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  margin-bottom: 16px;
+}
+.discussion-heading {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #4a90d9;
+  margin: 20px 0 8px;
+}
+.discussion-section:first-of-type .discussion-heading { margin-top: 0; }
+.discussion-para {
+  margin: 0 0 12px;
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: var(--text-primary);
+}

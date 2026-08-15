@@ -402,6 +402,52 @@ const WeatherAPI = {
     }
   },
 
+  // NWS Area Forecast Discussion — the local forecast office's long-form
+  // narrative about what's driving the forecast. US-only (same bounding
+  // box as getAlerts). Three requests: point → office id, AFD product
+  // list → latest product id, product → text. Any failure returns null
+  // and the feature is simply absent.
+  async getForecastDiscussion(lat, lon) {
+    const inUSBox =
+      lat >= 17 && lat <= 72 &&
+      lon >= -180 && lon <= -65;
+    if (!inUSBox) return null;
+    try {
+      const ptRes = await fetch(
+        `https://api.weather.gov/points/${enc(lat)},${enc(lon)}`,
+        { headers: { 'Accept': 'application/geo+json' } }
+      );
+      if (!ptRes.ok) return null;
+      const pt = await ptRes.json();
+      const office = pt.properties && pt.properties.cwa;
+      if (!office) return null;
+
+      const listRes = await fetch(
+        `https://api.weather.gov/products/types/AFD/locations/${enc(office)}`,
+        { headers: { 'Accept': 'application/ld+json' } }
+      );
+      if (!listRes.ok) return null;
+      const list = await listRes.json();
+      const latest = list['@graph'] && list['@graph'][0];
+      if (!latest || !latest['@id']) return null;
+
+      const prodRes = await fetch(latest['@id'], { headers: { 'Accept': 'application/ld+json' } });
+      if (!prodRes.ok) return null;
+      const prod = await prodRes.json();
+      if (!prod.productText) return null;
+
+      return {
+        office,
+        issued: prod.issuanceTime || latest.issuanceTime || null,
+        // AFDs run 5–30KB; cap so the localStorage weather cache can't
+        // be blown up by one unusually chatty office.
+        text: String(prod.productText).slice(0, 30000)
+      };
+    } catch (_) {
+      return null;
+    }
+  },
+
   async getTides(lat, lon) {
     const url = `https://marine-api.open-meteo.com/v1/marine?latitude=${enc(lat)}&longitude=${enc(lon)}&hourly=sea_level_height_msl`;
     try {
