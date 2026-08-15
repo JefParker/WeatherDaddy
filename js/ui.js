@@ -2305,34 +2305,54 @@ const UI = {
     // Page-1 candidates (in priority order). Sunrise / Sunset / Dew point
     // are always on page 2. Moon phase / UV index swap pages based on
     // whether it's day or night at the city.
-    const page1Candidates = [
-      item('Wind',
-        `${this.formatWind(activeDay.wind.speed)}${
-          this.windDirection(activeDay.wind.deg)
-            ? ' ' + this.windDirection(activeDay.wind.deg) + windArrow : ''}`),
-    ];
-    if (hasGust) page1Candidates.push(item('Wind gust', this.formatWind(activeDay.wind.gust)));
-    page1Candidates.push(item('Humidity', `${activeDay.main.humidity}%`));
+    // Page-1 candidates. Only the first six render on page 1, so order
+    // is priority — and priority follows NOTEWORTHINESS: extreme or
+    // unusual readings (a gale gust, Unhealthy air, storm-low pressure)
+    // always outrank routine everyday stats, which then fill whatever
+    // page-1 slots remain in their own order. A "Moderate" AQI or a
+    // calm day's max wind is background info, not a headline.
+    const notable = [];
+    const routine = [];
+
+    routine.push(item('Wind',
+      `${this.formatWind(activeDay.wind.speed)}${
+        this.windDirection(activeDay.wind.deg)
+          ? ' ' + this.windDirection(activeDay.wind.deg) + windArrow : ''}`));
+    if (hasGust) notable.push(item('Wind gust', this.formatWind(activeDay.wind.gust)));
+    // Unusually dry or muggy air is notable; the broad middle is routine.
+    const humidity = activeDay.main.humidity;
+    (humidity <= 20 || humidity >= 85 ? notable : routine)
+      .push(item('Humidity', `${humidity}%`));
     if (cloudCover != null) {
-      page1Candidates.push(item('Cloud cover', `${Math.round(cloudCover)}%`));
+      routine.push(item('Cloud cover', `${Math.round(cloudCover)}%`));
     }
-    // Precipitation amount and chance — only shown when actually relevant.
+    // Precipitation amount and chance — only shown when actually
+    // relevant; a real accumulation or a likely shower is notable, a
+    // token few percent is not.
     if ((activeDay.rainMM || 0) > 0) {
-      page1Candidates.push(item('Precipitation', this.formatPrecip(activeDay.rainMM)));
+      notable.push(item('Precipitation', this.formatPrecip(activeDay.rainMM)));
     }
     if (popValue > 0) {
-      page1Candidates.push(item('Precip chance', `${Math.round(popValue * 100)}%`));
+      (popValue >= 0.3 ? notable : routine)
+        .push(item('Precip chance', `${Math.round(popValue * 100)}%`));
     }
-    page1Candidates.push(uvOnPage1 ? uvStatItem : moonStatHTML);
+    // UV earns a headline slot only when it's actually elevated; UV
+    // shown merely because it's daytime — and the moon — are routine.
+    (uvOnPage1 && uvIsNoteworthy ? notable : routine)
+      .push(uvOnPage1 ? uvStatItem : moonStatHTML);
     // Name the pollutant driving the AQI once it's past "Good" — when
-    // the air is fine, blaming a pollutant is noise.
+    // the air is fine, blaming a pollutant is noise. Headline placement
+    // starts at Unhealthy-for-Sensitive-Groups (AQI > 100).
     const aqiText = (aq.aqi != null && aq.aqi > 50 && aq.aqiPollutant)
       ? `${this.aqiLabel(aq.aqi)} · ${aq.aqiPollutant}`
       : this.aqiLabel(aq.aqi);
-    page1Candidates.push(item('Air quality', this.esc(aqiText)));
-    // Whole-day max sustained wind from Open-Meteo's daily summary.
+    (aq.aqi != null && aq.aqi > 100 ? notable : routine)
+      .push(item('Air quality', this.esc(aqiText)));
+    // Whole-day max sustained wind — notable from Beaufort "strong
+    // breeze" (10.7 m/s ≈ 24 mph) upward.
     if (activeOmDay && activeOmDay.windMax != null) {
-      page1Candidates.push(item('Max wind', this.formatWind(activeOmDay.windMax)));
+      (activeOmDay.windMax >= 10.7 ? notable : routine)
+        .push(item('Max wind', this.formatWind(activeOmDay.windMax)));
     }
 
     const getSunTimesForTimestamp = (ts) => {
@@ -2462,13 +2482,22 @@ const UI = {
     }
 
     if (touchesWater) {
-      if (nextHighItem) page1Candidates.push(nextHighItem);
-      if (nextLowItem) page1Candidates.push(nextLowItem);
+      if (nextHighItem) routine.push(nextHighItem);
+      if (nextLowItem) routine.push(nextLowItem);
     }
 
-    if (hasPressure)        page1Candidates.push(item('Pressure',   this.formatPressure(activeDay.main.pressure)));
-    if (hasVisibility)      page1Candidates.push(item('Visibility', this.formatDist(activeDay.visibility)));
-    if (aq.pollen != null)  page1Candidates.push(item('Pollen',     this.esc(this.pollenLabel(aq.pollen))));
+    // Pressure / visibility only render at all when unusual — notable
+    // by definition. Pollen is notable from the "High" band (≥50).
+    if (hasPressure)        notable.push(item('Pressure',   this.formatPressure(activeDay.main.pressure)));
+    if (hasVisibility)      notable.push(item('Visibility', this.formatDist(activeDay.visibility)));
+    if (aq.pollen != null) {
+      (aq.pollen >= 50 ? notable : routine)
+        .push(item('Pollen', this.esc(this.pollenLabel(aq.pollen))));
+    }
+
+    // Notable readings first, routine stats fill the rest — page 1 is
+    // whatever the top six of that combined order turn out to be.
+    const page1Candidates = [...notable, ...routine];
 
     const STATS_PER_PAGE = 6;
 
