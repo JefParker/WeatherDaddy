@@ -17,10 +17,13 @@ const FULL_MOON_NAMES = [
   'Cold Moon'        // Dec
 ];
 
-// Synodic month, matching moonPhaseName(). Anchored to a known full
-// moon so we can derive any other full moon's timestamp by adding
-// integer multiples of the synodic period. 2000-01-21 04:41 UTC was a
-// full moon (peak).
+// Synodic PERIOD matches moonPhaseName()'s; the EPOCHS deliberately do
+// not. moonPhaseName() anchors to the actual new moon (2000-01-06
+// 18:14 UTC) while this anchors to the actual full moon (2000-01-21
+// 04:41 UTC) — the real interval between them is ~8h off from half a
+// mean synodic month (orbital eccentricity), and each feature is most
+// accurate anchored to its own observed phase. Deriving one epoch from
+// the other would shift every full-moon timestamp ~8h from reality.
 const FULL_MOON_SYNODIC_DAYS = 29.530588853;
 const FULL_MOON_REF_MS = Date.UTC(2000, 0, 21, 4, 41);
 
@@ -212,13 +215,18 @@ const UI = {
     });
 
     document.querySelectorAll('.segmented-control button').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        const control = e.target.parentElement;
+      btn.addEventListener('click', () => {
+        // Use the bound button, not e.target — if a button ever gains
+        // an inner <span>/<svg>, e.target would be that child and the
+        // old parentElement/getAttribute code persisted
+        // units[null] = null.
+        const control = btn.closest('.segmented-control');
+        if (!control) return;
         const setting = control.getAttribute('data-setting');
-        const value = e.target.getAttribute('data-value');
+        const value = btn.getAttribute('data-value');
 
         control.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-        e.target.classList.add('active');
+        btn.classList.add('active');
 
         if (onUnitChange) onUnitChange(setting, value);
       });
@@ -366,22 +374,23 @@ const UI = {
         const item = header.parentElement;
         const isOpen = item.classList.contains('open');
 
-        // Close other open accordions
+        // Close other open accordions. Null-guard the lookups so one
+        // malformed item can't throw and kill the whole loop.
         screen.querySelectorAll('.accordion-item').forEach(otherItem => {
           if (otherItem !== item) {
             otherItem.classList.remove('open');
-            otherItem.querySelector('.accordion-header').setAttribute('aria-expanded', 'false');
-            otherItem.querySelector('.accordion-content').style.maxHeight = null;
+            const otherHeader  = otherItem.querySelector('.accordion-header');
+            const otherContent = otherItem.querySelector('.accordion-content');
+            if (otherHeader)  otherHeader.setAttribute('aria-expanded', 'false');
+            if (otherContent) otherContent.style.maxHeight = null;
           }
         });
 
         item.classList.toggle('open', !isOpen);
         header.setAttribute('aria-expanded', !isOpen ? 'true' : 'false');
         const content = item.querySelector('.accordion-content');
-        if (!isOpen) {
-          content.style.maxHeight = content.scrollHeight + 'px';
-        } else {
-          content.style.maxHeight = null;
+        if (content) {
+          content.style.maxHeight = !isOpen ? content.scrollHeight + 'px' : null;
         }
       });
     });
@@ -980,16 +989,6 @@ const UI = {
     return 'Violent storm';
   },
 
-  // Returns mm of rain over the next ~hour from current weather, or null.
-  currentPrecipMM(currentWeather, forecast) {
-    if (currentWeather.rain && currentWeather.rain['1h'] != null) return currentWeather.rain['1h'];
-    if (currentWeather.snow && currentWeather.snow['1h'] != null) return currentWeather.snow['1h'];
-    const f = forecast && forecast.list && forecast.list[0];
-    if (f && f.rain && f.rain['3h'] != null) return f.rain['3h'] / 3;
-    if (f && f.snow && f.snow['3h'] != null) return f.snow['3h'] / 3;
-    return 0;
-  },
-
   formatPrecip(mm) {
     if (mm == null) return '—';
     const unit = Storage.getUnits().precip;
@@ -999,8 +998,11 @@ const UI = {
 
   formatTideHeight(meters) {
     if (meters == null) return '—';
-    const unit = Storage.getUnits().precip;
-    if (unit === 'in') {
+    // Tide height is a distance — key off the dist (km/mi) setting, not
+    // precipitation (mm/in): an imperial user with metric rain prefs
+    // still expects tides in feet.
+    const unit = Storage.getUnits().dist;
+    if (unit === 'mi') {
       const feet = meters * 3.28084;
       const sign = feet >= 0 ? '+' : '';
       return `${sign}${feet.toFixed(2)} ft`;
@@ -1135,7 +1137,11 @@ const UI = {
     return `${hour24}${min}`;
   },
 
+  // Returns °C, or null when the inputs can't produce one — humidity can
+  // be 0 or missing (Open-Meteo synthesised slots yield null), and
+  // Math.log(0) is -Infinity which would surface as "NaN°" in the stat.
   calculateDewPoint(temp, humidity) {
+    if (!Number.isFinite(temp) || !Number.isFinite(humidity) || humidity <= 0) return null;
     const a = 17.27;
     const b = 237.7;
     const alpha = ((a * temp) / (b + temp)) + Math.log(humidity / 100.0);
@@ -1570,7 +1576,10 @@ const UI = {
       if (exp) meta.push(`<span><strong>Until:</strong> ${this.esc(exp)}</span>`);
       if (a.sender) meta.push(`<span><strong>Source:</strong> ${this.esc(a.sender)}</span>`);
 
-      const link = a.url
+      // Scheme check as defense-in-depth: esc() neutralises HTML but not
+      // a javascript:/data: href. Source is api.weather.gov today, but
+      // this cell should stay safe if the alert pipeline ever changes.
+      const link = (a.url && /^https?:\/\//i.test(a.url))
         ? `<a class="alert-card-link" href="${this.esc(a.url)}" target="_blank" rel="noopener noreferrer">View on weather.gov ↗</a>`
         : '';
 
@@ -2074,7 +2083,7 @@ const UI = {
         <span class="stat-value">${value}</span>
       </div>`;
 
-    const windArrow = activeDay.wind.deg != null
+    const windArrow = Number.isFinite(activeDay.wind.deg)
       ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate(${activeDay.wind.deg}deg); margin-left: 2px; vertical-align: -2px;"><line x1="12" y1="4" x2="12" y2="20"></line><polyline points="18 14 12 20 6 14"></polyline></svg>`
       : '';
 
@@ -2309,7 +2318,7 @@ const UI = {
       uvOnPage1 ? moonStatHTML : uvStatItem,
     ];
     if (!localTimeOnPage1) page2Forced.push(localTimeItem);
-    page2Forced.push(item('Dew point', `${this.formatTemp(dewPoint)}°`));
+    page2Forced.push(item('Dew point', dewPoint != null ? `${this.formatTemp(dewPoint)}°` : '—'));
 
     // First 6 candidates fill page 1; rest overflows to page 2 after the
     // forced items. Every page is padded out to exactly 6 cells with
@@ -2497,10 +2506,13 @@ const UI = {
               const tileStyle = CONFIG_TEMP_LINE_COLOR.enabled && isActive
                 ? `style="box-shadow: inset 0 0 0 2px ${getTempColor(h.main.temp)} !important;"`
                 : '';
+              // Guard weather[0] like the Now tile above does — a
+              // malformed synthesised slot shouldn't kill the render.
+              const hw = h.weather && h.weather[0] ? h.weather[0] : null;
               out += `
                 <div class="hourly-tile ${cls.trim()}" data-day-index="${dayIdx}" data-dt="${h.dt}" role="button" tabindex="0" aria-label="${this.formatTime(h.dt, true, tz)}, ${this.formatTemp(h.main.temp)}°" ${tileStyle}>
                   <span class="hourly-time">${this.formatTime(h.dt, true, tz)}</span>
-                  <span class="hourly-icon">${this.getWeatherIconSVG(h.weather[0].icon, 28, h.weather[0].id, h.dt)}</span>
+                  <span class="hourly-icon">${hw ? this.getWeatherIconSVG(hw.icon, 28, hw.id, h.dt) : ''}</span>
                   <span class="hourly-temp">${this.formatTemp(h.main.temp)}°</span>
                 </div>`;
             }
@@ -2624,7 +2636,7 @@ const UI = {
 
     this.weatherView.querySelectorAll('.daily-item').forEach(el => {
       this._bindActivate(el, () => {
-        const idx = parseInt(el.getAttribute('data-index'));
+        const idx = parseInt(el.getAttribute('data-index'), 10);
         // Same-day tap. Two sub-cases:
         //   (a) an hour is currently pinned → re-render to unpin (returns
         //       the hero to the day's headline view), and ask the hourly
@@ -2887,7 +2899,7 @@ const UI = {
           if (r.left >= scrollRect.left - 8) { leading = tile; break; }
         }
         if (!leading) leading = tiles[tiles.length - 1];
-        const newDayIdx = parseInt(leading.getAttribute('data-day-index'));
+        const newDayIdx = parseInt(leading.getAttribute('data-day-index'), 10);
         if (newDayIdx === currentDayIdx) return;
         const direction = newDayIdx > currentDayIdx ? 'next' : 'prev';
         // Same hi/lo → hero slide animation we run on daily-row taps and
@@ -3708,9 +3720,14 @@ const UI = {
       const t2 = p2.main.temp;
       const fallback = fallback3hPerHour(p1);
 
-      for (let h = 0; h < 3; h++) {
+      // Step by the ACTUAL gap between slots, not an assumed 3h: the
+      // OWM/Open-Meteo top-up merge (buildDailyData) can leave adjacent
+      // slots 2h apart, and x-position is by array index — a fixed 3h
+      // step would stop mapping linearly to time there.
+      const gapHours = Math.max(1, Math.round((p2.dt - p1.dt) / 3600));
+      for (let h = 0; h < gapHours; h++) {
         const dt = p1.dt + (h * 3600);
-        const ratio = h / 3;
+        const ratio = h / gapHours;
         const hourKey = Math.floor(dt / 3600);
         const precip = precipByHour.has(hourKey) ? precipByHour.get(hourKey) : fallback;
         hourly.push({
@@ -3842,31 +3859,24 @@ const UI = {
     this.savedLocationsList.querySelectorAll('.delete-location-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        onDelete(parseInt(btn.getAttribute('data-index')));
+        onDelete(parseInt(btn.getAttribute('data-index'), 10));
       });
     });
   },
 
   // Pointer-Events reorder handler for the saved-locations list.
   //
-  // Cards default to `touch-action: pan-y` so the list scrolls normally.
-  // Drag-to-reorder must be intentionally invoked:
+  // Cards default to CSS `touch-action: pan-y` so the list scrolls
+  // normally; `.dragging` switches to `touch-action: none` for the
+  // duration of a drag. Drag-to-reorder must be intentionally invoked:
   //   - Mouse: press + move past 6px → drag immediately.
-  //   - Touch: press and hold 1s without significant movement → drag mode;
-  //     any earlier movement cancels the timer and lets the browser scroll.
+  //   - Touch: press and hold 350ms without significant movement → drag
+  //     mode; any earlier movement cancels the timer and lets the
+  //     browser scroll.
   // Once drag mode begins, pointermove preventDefault()s to claim the
   // gesture (the browser hasn't committed to a scroll yet because the
-  // finger was still during the long-press).
-  // Pointer-Events reorder handler for the saved-locations list.
-  //
-  // Cards have CSS `touch-action: none` so the browser doesn't claim
-  // vertical touches for scrolling — vital because iOS Safari locks a
-  // gesture's touch-action at pointerdown and won't re-evaluate later.
-  //
-  // Behaviour (same for mouse and touch):
-  //   - Pointer up without crossing the movement threshold → tap → select.
-  //   - Move past the threshold → enter drag mode, follow the pointer,
-  //     show a drop indicator, commit on release.
+  // finger was still during the long-press). Pointer up without ever
+  // entering drag mode → tap → select.
   _bindCardInteractions(list, onSelect, onReorder) {
     const DRAG_THRESHOLD = 6; // px before press is treated as drag
     const cards = Array.from(this.savedLocationsList.querySelectorAll('.location-card'));
@@ -3877,7 +3887,7 @@ const UI = {
     });
 
     cards.forEach(card => {
-      const fromIdx = parseInt(card.getAttribute('data-index'));
+      const fromIdx = parseInt(card.getAttribute('data-index'), 10);
       let suppressClick = false;
       let dragging = false;
 
@@ -3978,10 +3988,18 @@ const UI = {
           indicator.style.transform = `translateY(${indicatorY}px)`;
         };
 
+        // The measured rects are viewport coordinates captured at drag
+        // start — a wheel/momentum scroll mid-drag would silently shift
+        // every drop target. Re-measure whenever any ancestor scrolls
+        // (capture catches scrolls on the overlay's scroll container).
+        const onAnyScroll = () => { if (dragging) rects = measure(); };
+        window.addEventListener('scroll', onAnyScroll, { capture: true, passive: true });
+
         const cleanup = () => {
           card.removeEventListener('pointermove', onMove);
           card.removeEventListener('pointerup', onUp);
           card.removeEventListener('pointercancel', onCancel);
+          window.removeEventListener('scroll', onAnyScroll, { capture: true });
           try { card.releasePointerCapture?.(pointerId); } catch (_) {}
         };
 

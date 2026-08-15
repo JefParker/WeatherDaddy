@@ -1,9 +1,9 @@
 // Path-B proxy base. Same-origin so it resolves against whatever host the
 // app is served from — Cloudflare Pages preview, production, or local
-// `wrangler pages dev`. The Pages Function at functions/api/owm/[[path]].js
-// reads OPENWEATHER_API_KEY from env (from .dev.vars locally, dashboard in
-// prod) and forwards the call to OpenWeatherMap. No key ever ships with
-// the client bundle.
+// `wrangler pages dev`. The advanced-mode Pages worker (_worker.js at the
+// repo root) reads OPENWEATHER_API_KEY from env (from .dev.vars locally,
+// dashboard in prod) and forwards the call to OpenWeatherMap. No key ever
+// ships with the client bundle.
 const PROXY_BASE = '/api/owm';
 
 const enc = encodeURIComponent;
@@ -62,8 +62,8 @@ const WeatherAPI = {
     return this._fetchViaProxy(path, params);
   },
 
-  // Same-origin call to the Cloudflare Pages Function under
-  // /api/owm/<owm-path>. The function appends OPENWEATHER_API_KEY from
+  // Same-origin call to the Cloudflare Pages worker (_worker.js) under
+  // /api/owm/<owm-path>. The worker appends OPENWEATHER_API_KEY from
   // env (sourced from .dev.vars for local dev, the Pages dashboard for
   // deployed environments) and forwards the call to OpenWeatherMap. The
   // browser never sees the key.

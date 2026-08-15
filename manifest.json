@@ -2,7 +2,7 @@
   "name": "WeatherDaddy",
   "short_name": "WeatherDaddy",
   "description": "Fast 8-day weather forecasts for your saved cities, with hourly graphs and offline support.",
-  "id": "/weatherdaddy/",
+  "id": "./",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

@@ -5,7 +5,7 @@
 // strips the query before caching, so they never did anything and were
 // removed. A forgotten CACHE_NAME bump keeps serving the old files to
 // installed clients forever.)
-const CACHE_NAME = 'weatherdaddy-v181';
+const CACHE_NAME = 'weatherdaddy-v182';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -204,6 +204,14 @@ async function handleFetch(event) {
 const WEATHER_CACHE_MAX = 80;
 const WEATHER_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h
 
+// Pruning does a cache.match() per entry (up to WEATHER_CACHE_MAX) and a
+// single city load fires ~5 weather fetches, so per-write pruning is
+// mostly redundant work. Throttle to once per interval. The timestamp
+// lives in SW global scope and resets when the browser kills the worker
+// — that just means one extra prune on the next wake, which is harmless.
+const WEATHER_PRUNE_INTERVAL_MS = 10 * 60 * 1000; // 10 min
+let lastWeatherPruneAt = 0;
+
 // Drop expired weather entries and FIFO-evict the oldest until the
 // total count is within WEATHER_CACHE_MAX. Best-effort; any storage
 // error is swallowed so the SW doesn't fail the request because of
@@ -252,7 +260,10 @@ async function handleWeatherAPI(request, event) {
       const putDone = caches.open(CACHE_NAME).then(async (cache) => {
         try {
           await cache.put(request, clone);
-          await pruneWeatherCache(cache);
+          if (Date.now() - lastWeatherPruneAt > WEATHER_PRUNE_INTERVAL_MS) {
+            lastWeatherPruneAt = Date.now();
+            await pruneWeatherCache(cache);
+          }
         } catch (_) {}
       });
       if (event && event.waitUntil) event.waitUntil(putDone);

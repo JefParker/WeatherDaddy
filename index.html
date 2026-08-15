@@ -102,20 +102,18 @@
   <link rel="apple-touch-startup-image" href="assets/splash/ipad-pro-12-landscape.png"
         media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
 
-  <!-- Open Graph / Twitter card for shareable links.
-       NOTE: og:image / twitter:image should be a FULL absolute URL
-       (https://your-domain/assets/icons/icon-512.png) — most scrapers
-       won't resolve relative paths. Root-relative is the best we can do
-       without hardcoding the deploy domain; replace with the absolute
-       production URL once the domain is settled. -->
+  <!-- Open Graph / Twitter card for shareable links. og:image /
+       twitter:image must be FULL absolute URLs — most scrapers won't
+       resolve relative paths, so these hardcode the production domain. -->
   <meta property="og:type" content="website">
+  <meta property="og:url" content="https://weatherdaddy.app/">
   <meta property="og:title" content="WeatherDaddy">
   <meta property="og:description" content="Fast 8-day weather forecasts for your saved cities.">
-  <meta property="og:image" content="/assets/icons/icon-512.png">
+  <meta property="og:image" content="https://weatherdaddy.app/assets/icons/icon-512.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="WeatherDaddy">
   <meta name="twitter:description" content="Fast 8-day weather forecasts for your saved cities.">
-  <meta name="twitter:image" content="/assets/icons/icon-512.png">
+  <meta name="twitter:image" content="https://weatherdaddy.app/assets/icons/icon-512.png">
 
   <!-- No ?v= cache-bust params: the service worker strips query strings
        when caching (see cacheKey() in sw.js), so CACHE_NAME there is the
