@@ -1392,13 +1392,117 @@ const App = {
   },
 
   registerServiceWorker() {
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js').then(reg => {
-          reg.update();
-        }).catch(err => console.log('SW registration failed', err));
+    if (!('serviceWorker' in navigator)) return;
+
+    // Was this page already under a service worker when it loaded? If not,
+    // this is a first install and clients.claim() will fire controllerchange
+    // for it — reloading there would bounce every new visitor once for no
+    // reason. Captured synchronously, before any registration work.
+    const hadController = !!navigator.serviceWorker.controller;
+
+    // sw.js calls skipWaiting() + clients.claim(), so a new worker takes
+    // over the moment it installs. But THIS page is still running the old
+    // JS it booted from the old cache, and nothing here used to react to
+    // the handover — so the app kept showing old code until the user
+    // performed a full navigation. A desktop user reflexively hits reload;
+    // an installed PWA gets restored from a frozen state and may never
+    // navigate again, which is why phones appeared to be stuck on an old
+    // version no amount of reopening would fix.
+    // Reload-loop brake. A closure flag only dedupes within ONE page load
+    // — the reload destroys it — so a rollout serving mixed sw.js versions
+    // across edge nodes could otherwise flip a client back and forth
+    // forever. sessionStorage survives the reload without outliving the tab.
+    const RELOAD_STAMP = 'sw_reloaded_at';
+    const recentlyReloaded = () => {
+      try {
+        const delta = Date.now() - parseInt(sessionStorage.getItem(RELOAD_STAMP) || '0', 10);
+        // delta < 0 means the clock stepped BACKWARD since we stamped (NTP
+        // correction, manual change). Without the lower bound that reads as
+        // "just reloaded" and suppresses every update for the rest of the
+        // tab's life. A garbage value parses to NaN and fails both
+        // comparisons, which correctly fails open.
+        return delta >= 0 && delta < 60000;
+      } catch (_) { return false; }
+    };
+
+    let reloading = false;
+    let deferred = false;
+    const doReload = () => {
+      if (reloading) return;
+      reloading = true;
+      try { sessionStorage.setItem(RELOAD_STAMP, String(Date.now())); } catch (_) {}
+      window.location.reload();
+    };
+
+    // A tab that is never backgrounded would otherwise sit on old code
+    // forever: document.hidden only goes true when the tab is backgrounded
+    // or the window minimised, so alt-tabbing away from a desktop window
+    // doesn't count. Fall back to reloading after a stretch of no input,
+    // which is the other moment nobody is mid-thought.
+    const IDLE_MS = 5 * 60 * 1000;
+    let idleTimer = null;
+    const armIdleReload = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(doReload, IDLE_MS);
+    };
+
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || deferred || recentlyReloaded()) return;
+      deferred = true;
+
+      // Never yank the page out from under someone mid-look. The selected
+      // day, pinned hour, open overlay, scroll position and a typed-but-
+      // unsaved API key all live only in memory, so reloading while the
+      // app is on screen would silently throw them away — and the update
+      // check runs on foreground, i.e. exactly when the user has just
+      // come back to look at something. Swap versions while hidden.
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) { doReload(); return; }
+        // Visible again means the reload never actually committed — iOS
+        // can suspend a backgrounded PWA before the navigation lands.
+        // Unlatch so the next background retries, rather than pinning
+        // this document to old code for the rest of its life.
+        reloading = false;
+        armIdleReload();
       });
-    }
+
+      // mousemove/touchmove matter as much as clicks here: someone can
+      // read the dashboard for five minutes without ever clicking,
+      // typing or scrolling, and reloading them mid-read would discard
+      // the very state the hidden-only path exists to protect.
+      ['pointerdown', 'keydown', 'scroll', 'mousemove', 'touchmove'].forEach(ev =>
+        window.addEventListener(ev, armIdleReload, { passive: true })
+      );
+      armIdleReload();
+
+      if (document.hidden) doReload();
+    });
+
+    const start = () => {
+      navigator.serviceWorker.register('./sw.js').then(reg => {
+        reg.update().catch(() => {});
+
+        // An installed PWA can stay open for days without a single fresh
+        // navigation, so without these it would never even ASK whether a
+        // new version exists. Checking on foreground is what makes a
+        // deploy show up promptly.
+        document.addEventListener('visibilitychange', () => {
+          if (!document.hidden) reg.update().catch(() => {});
+        });
+        setInterval(() => reg.update().catch(() => {}), 60 * 60 * 1000);
+      }).catch(err => console.log('SW registration failed', err));
+    };
+
+    // THIS is why deploys never reached installed clients. registerServiceWorker
+    // runs from init(), which first awaits loadInitialWeather() — a real
+    // network round trip. On a returning visit every subresource comes out
+    // of the SW precache in milliseconds, so window's `load` has long since
+    // fired by the time we get here, and a listener added to an event that
+    // already fired never runs. register() and reg.update() were simply
+    // never called; the SW kept working only because registrations persist
+    // across sessions, and it never once checked for a new version.
+    if (document.readyState === 'complete') start();
+    else window.addEventListener('load', start, { once: true });
   }
 };
 

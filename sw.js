@@ -1,11 +1,24 @@
-// DEPLOY RITUAL: static assets are served cache-first with no
-// revalidation, so shipping ANY change to index.html / css / js requires
-// bumping this CACHE_NAME — it is the ONLY cache-bust mechanism.
+// DEPLOY RITUAL: bump CACHE_NAME on every shipped change to index.html /
+// css / js. Static assets are served cache-first with no revalidation, so
+// a client only picks up new files when a NEW worker installs — and the
+// worker is byte-compared to decide whether it's new, which is what the
+// bump guarantees.
+//
+// Install now fetches every entry with `cache: 'reload'` and cache.put()s
+// it, so the precache is refreshed in place; the bump additionally drives
+// the activate-time cleanup of old cache buckets. The chain that makes
+// any of this reach an installed device is:
+//   _worker.js sends `Cache-Control: no-cache` for /sw.js
+//     → the browser actually re-fetches this file
+//     → CACHE_NAME differs → install → skipWaiting → clients.claim
+//     → app.js's controllerchange handler reloads the page
+// Break any link and clients silently stay on the old version forever,
+// which is exactly what used to happen on mobile.
+//
 // (index.html used to also carry ?v= query strings, but cacheKey()
 // strips the query before caching, so they never did anything and were
-// removed. A forgotten CACHE_NAME bump keeps serving the old files to
-// installed clients forever.)
-const CACHE_NAME = 'weatherdaddy-v193';
+// removed.)
+const CACHE_NAME = 'weatherdaddy-v194';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -132,7 +145,26 @@ self.addEventListener('install', event => {
       const cache = await caches.open(CACHE_NAME);
       await Promise.all(ASSETS_TO_CACHE.map(async (url) => {
         try {
-          await cache.add(url);
+          // `cache: 'reload'` bypasses the browser's HTTP cache. A plain
+          // cache.add() fetches with default cache mode, so a new worker
+          // could precache STALE bytes under the new CACHE_NAME — a
+          // version bump that ships nothing, which is the most confusing
+          // possible failure. Only sw.js gets a no-cache header from the
+          // Worker; this makes the rest deterministic too.
+          const res = await fetch(new Request(url, { cache: 'reload' }));
+          if (!res || !res.ok) throw new Error(`HTTP ${res && res.status}`);
+          // The asset router 30x-redirects /index.html to /, and a browser
+          // REFUSES to answer a navigation with a response whose
+          // `redirected` flag is set — it shows its own network-error page
+          // instead. cache.add() would happily store the followed response
+          // with that flag intact, so rebuild it to strip the flag.
+          await cache.put(url, res.redirected
+            ? new Response(await res.blob(), {
+                status: res.status,
+                statusText: res.statusText,
+                headers: res.headers
+              })
+            : res);
         } catch (e) {
           // Log + continue; missing one asset shouldn't fail install.
           console.warn('[WeatherDaddy SW] failed to precache', url, e);
@@ -320,9 +352,15 @@ async function offlineFallback(request) {
 
   if (isNavOrHTML) {
     try {
+      // './' FIRST, deliberately. The server 30x-redirects /index.html to
+      // /, so the './index.html' precache entry is stored with
+      // response.redirected === true — and a browser refuses to answer a
+      // navigation with a redirected response, failing to a network-error
+      // page instead of this fallback. './' is fetched directly and
+      // carries no redirect flag.
       const cachedHome =
-        (await caches.match('./index.html')) ||
-        (await caches.match('./'));
+        (await caches.match('./')) ||
+        (await caches.match('./index.html'));
       if (cachedHome) return cachedHome;
     } catch (_) {}
     return new Response(OFFLINE_HTML, {

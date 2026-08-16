@@ -64,14 +64,14 @@
       "name": "Locations",
       "short_name": "Locations",
       "description": "Jump straight to your saved-locations list",
-      "url": "./index.html#locations",
+      "url": "./#locations",
       "icons": [{ "src": "./assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     },
     {
       "name": "Refresh weather",
       "short_name": "Refresh",
       "description": "Force a fresh weather fetch for the current location",
-      "url": "./index.html#refresh",
+      "url": "./#refresh",
       "icons": [{ "src": "./assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     }
   ]

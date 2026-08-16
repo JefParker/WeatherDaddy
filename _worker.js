@@ -39,7 +39,7 @@ export default {
       url.pathname !== PROXY_PREFIX &&
       !url.pathname.startsWith(PROXY_PREFIX + '/')
     ) {
-      return env.ASSETS.fetch(request);
+      return serveAsset(request, url, env);
     }
 
     // CORS preflight — answer immediately, never round-trip upstream.
@@ -123,6 +123,39 @@ export default {
     });
   },
 };
+
+// Static assets, with one override: the two files that BOOTSTRAP an
+// update must always be revalidated.
+//
+// The service worker serves everything else cache-first, so the only way
+// a new deploy reaches an installed client is:
+//   sw.js is re-fetched → its CACHE_NAME differs → install → skipWaiting
+// If sw.js can itself be answered from the browser's HTTP cache, that
+// chain never starts and the device stays on the old version
+// indefinitely — which is exactly what happened on mobile, where the
+// browser is far more willing to reuse a cached response than desktop.
+//
+// `no-cache` here means "revalidate before reusing", NOT "don't store":
+// the ETag still yields a cheap 304 when nothing has changed.
+//
+// This lives in the Worker rather than a `_headers` file on purpose —
+// Pages ignores `_headers` when a project runs in advanced mode with a
+// root `_worker.js`, so a `_headers` file would look correct and do
+// nothing.
+const ALWAYS_REVALIDATE = new Set(['/sw.js', '/', '/index.html']);
+
+async function serveAsset(request, url, env) {
+  const res = await env.ASSETS.fetch(request);
+  if (!ALWAYS_REVALIDATE.has(url.pathname)) return res;
+
+  const headers = new Headers(res.headers);
+  headers.set('Cache-Control', 'no-cache');
+  return new Response(res.body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers,
+  });
+}
 
 // CORS preset — applied to every response this Worker emits, success
 // or error, including 401 "API Key missing" so the PWA's fetch() can
