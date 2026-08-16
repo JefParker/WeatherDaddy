@@ -51,6 +51,17 @@ const App = {
     // active during the initial network wait, not only after data arrives.
     UI.bindCitySwipe((direction) => this.cycleCity(direction));
 
+    // BEFORE the first await, deliberately — this attaches the
+    // controllerchange handler. init() runs on DOMContentLoaded, while
+    // index.html's inline bootstrap calls reg.update() on `load`, so
+    // placing this here guarantees the handler exists before any update
+    // is even requested. Where it used to sit — after
+    // `await loadInitialWeather()`, a real network round trip — a worker
+    // that installed, skipWaiting'd and claimed during that wait would
+    // fire controllerchange into the void, and the page would sit on old
+    // code for the whole session with nothing to reconcile it.
+    this.registerServiceWorker();
+
     // Load initial data — returns the user's geolocation/country (if granted)
     // so the first-launch seed can pick cities near them instead of the
     // generic world top-10.
@@ -72,8 +83,7 @@ const App = {
     // Show iOS Add-to-Home-Screen prompt if appropriate.
     this.maybeShowA2HSPrompt();
 
-    // Register Service Worker
-    this.registerServiceWorker();
+    // (registerServiceWorker moved above the first await — see there.)
 
     // Handle initial hash routing for PWA shortcuts
     this.handleHashRoute();
@@ -1398,7 +1408,7 @@ const App = {
   // confidently described code that wasn't running. Bump this with the
   // chip in index.html on every release — a mismatch on screen IS the
   // diagnosis.
-  BUILD: '1.3.1',
+  BUILD: '1.3.2',
 
   // Writes "JS <build> · cache <bucket>" under the About version chip.
   // Note what happens when js/app.js is STALE: old code has no
@@ -1514,6 +1524,14 @@ const App = {
       if (document.hidden) doReload();
     });
 
+    // index.html carries an inline bootstrap that already owns
+    // registration and update polling. It runs first and can't be stale,
+    // so defer to it — otherwise we'd stack a second visibilitychange
+    // listener and a second hourly interval doing identical work. The
+    // controllerchange handler above still applies either way; that's the
+    // part app.js uniquely contributes.
+    if (window.__swBootstrapped) return;
+
     const start = () => {
       navigator.serviceWorker.register('./sw.js').then(reg => {
         reg.update().catch(() => {});
@@ -1529,14 +1547,18 @@ const App = {
       }).catch(err => console.log('SW registration failed', err));
     };
 
-    // THIS is why deploys never reached installed clients. registerServiceWorker
-    // runs from init(), which first awaits loadInitialWeather() — a real
-    // network round trip. On a returning visit every subresource comes out
-    // of the SW precache in milliseconds, so window's `load` has long since
-    // fired by the time we get here, and a listener added to an event that
+    // The readyState check is why deploys now reach installed clients.
+    // This used to be a bare `load` listener, and registerServiceWorker
+    // used to run AFTER `await loadInitialWeather()` — a real network
+    // round trip. On a returning visit every subresource comes out of the
+    // SW precache in milliseconds, so `load` had long since fired by the
+    // time this line was reached, and a listener added to an event that
     // already fired never runs. register() and reg.update() were simply
     // never called; the SW kept working only because registrations persist
-    // across sessions, and it never once checked for a new version.
+    // across sessions, and it never once checked for a new version. The
+    // call has since moved above init()'s first await, but keep the
+    // readyState branch: this path still runs when index.html is old
+    // enough to lack the inline bootstrap.
     if (document.readyState === 'complete') start();
     else window.addEventListener('load', start, { once: true });
   }

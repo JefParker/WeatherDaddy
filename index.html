@@ -291,7 +291,7 @@
         <section class="about-section about-header-brand">
           <img class="about-logo" src="assets/icons/icon-192.png" alt="WeatherDaddy logo" width="64" height="64">
           <div class="about-brand-text">
-            <h3 class="about-title">WeatherDaddy <span class="about-version">v1.3.1</span></h3>
+            <h3 class="about-title">WeatherDaddy <span class="about-version">v1.3.2</span></h3>
             <!-- Populated by App.renderBuildInfo() each time this screen
                  opens. If it still reads "Checking build…" the JS bundle
                  is older than that function — i.e. a stale cache. -->
@@ -704,6 +704,54 @@
     </div>
 
   </div>
+
+  <!--
+    BREAK-GLASS SERVICE-WORKER BOOTSTRAP — deliberately INLINE.
+
+    The update chain used to start in js/app.js, which created a
+    chicken-and-egg: if app.js was the stale file, the code that checks
+    for updates was itself the thing that needed updating, and the device
+    could never recover on its own. That is exactly how a phone ended up
+    showing a fresh index.html (version chip v1.3.1) alongside a months-old
+    app.js.
+
+    This lives inline in index.html — not a separate .js file — so it
+    CANNOT be independently stale. If this markup is on screen, this code
+    ran. It only registers and asks for updates; the nicer "reload at a
+    moment that won't lose your place" behaviour stays in app.js, which
+    sits this out when it sees __swBootstrapped.
+
+    Note what this does NOT do: rescue an already-wedged device on the
+    very next launch. That launch is still served the OLD index.html from
+    the old cache bucket, which by definition lacks this script. Recovery
+    there comes from the browser's own navigation-time worker check plus
+    `cache: 'reload'` in the sw.js precache, and lands one launch later.
+    This block's job is to make sure it never wedges again.
+  -->
+  <script>
+    (function () {
+      if (!('serviceWorker' in navigator)) return;
+      window.__swBootstrapped = true;
+
+      var start = function () {
+        navigator.serviceWorker.register('./sw.js').then(function (reg) {
+          reg.update().catch(function () {});
+          // An installed PWA can go days without a fresh navigation, so
+          // foregrounding is the most reliable moment to re-check.
+          document.addEventListener('visibilitychange', function () {
+            if (!document.hidden) reg.update().catch(function () {});
+          });
+          setInterval(function () { reg.update().catch(function () {}); }, 3600000);
+        }).catch(function () {});
+      };
+
+      // `load` may already have fired by the time this parses; a listener
+      // added to an event that has passed never runs. That was the
+      // original bug in app.js — don't repeat it here.
+      if (document.readyState === 'complete') start();
+      else window.addEventListener('load', start, { once: true });
+    })();
+  </script>
 
   <script src="js/storage.js"></script>
   <script src="js/location.js"></script>
