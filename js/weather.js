@@ -206,8 +206,8 @@ const WeatherAPI = {
     const url = `https://api.open-meteo.com/v1/forecast` +
       `?latitude=${enc(lat)}&longitude=${enc(lon)}` +
       `&current=uv_index` +
-      `&daily=uv_index_max,temperature_2m_max,temperature_2m_min,weathercode,precipitation_sum,sunrise,sunset,precipitation_probability_max,windspeed_10m_max,sunshine_duration` +
-      `&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,precipitation_probability,weathercode,windspeed_10m,winddirection_10m,windgusts_10m,is_day,cloud_cover,visibility,pressure_msl,uv_index` +
+      `&daily=uv_index_max,temperature_2m_max,temperature_2m_min,weathercode,precipitation_sum,snowfall_sum,sunrise,sunset,precipitation_probability_max,windspeed_10m_max,windgusts_10m_max,sunshine_duration` +
+      `&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,snowfall,precipitation_probability,weathercode,windspeed_10m,winddirection_10m,windgusts_10m,is_day,cloud_cover,visibility,pressure_msl,uv_index,dew_point_2m` +
       `&minutely_15=precipitation&forecast_minutely_15=96` +
       `&windspeed_unit=ms&timezone=auto&timeformat=unixtime&forecast_days=8&past_days=1`;
     const res = await fetch(url);
@@ -222,6 +222,14 @@ const WeatherAPI = {
       feelsLike:   h.apparent_temperature   ? h.apparent_temperature[i]   : null,
       humidity:    h.relative_humidity_2m   ? h.relative_humidity_2m[i]   : null,
       precipMM:    h.precipitation          ? h.precipitation[i] || 0     : 0,
+      // Open-Meteo reports snowfall as DEPTH in cm, while `precipitation`
+      // is water-equivalent mm and ALREADY INCLUDES that snow. Keep the
+      // raw cm here; _omHourToOwmSlot converts to water-equivalent mm
+      // (cm / 0.7, per Open-Meteo's 7 cm ≈ 10 mm example) and subtracts
+      // it from precipMM to get the rain share. Storing depth rather than
+      // a pre-derived split keeps a future "snow accumulation" readout
+      // possible without another fetch.
+      snowCM:      h.snowfall              ? h.snowfall[i] || 0          : 0,
       precipProb:  h.precipitation_probability ? h.precipitation_probability[i] || 0 : 0,
       weatherCode: h.weathercode            ? h.weathercode[i]            : null,
       windSpeed:   h.windspeed_10m          ? h.windspeed_10m[i]          : null,
@@ -231,7 +239,10 @@ const WeatherAPI = {
       cloudCover:  h.cloud_cover            ? h.cloud_cover[i]            : null,
       visibility:  h.visibility             ? h.visibility[i]             : null,
       pressureMsl: h.pressure_msl           ? h.pressure_msl[i]           : null,
-      uvIndex:     h.uv_index               ? h.uv_index[i]               : null
+      uvIndex:     h.uv_index               ? h.uv_index[i]               : null,
+      // Exact model dew point. UI falls back to its Magnus approximation
+      // when this is null (older cache entries, or a missing column).
+      dewPoint:    h.dew_point_2m           ? h.dew_point_2m[i]           : null
     }));
 
     const d = data.daily || {};
@@ -250,6 +261,9 @@ const WeatherAPI = {
       uvIndexMax:   d.uv_index_max        ? d.uv_index_max[i]        : null,
       popMax:       d.precipitation_probability_max ? d.precipitation_probability_max[i] : null,
       windMax:      d.windspeed_10m_max   ? d.windspeed_10m_max[i]   : null,
+      gustMax:      d.windgusts_10m_max   ? d.windgusts_10m_max[i]   : null,
+      // Depth in cm, same convention as hourly snowCM.
+      snowSumCM:    d.snowfall_sum        ? d.snowfall_sum[i] || 0   : 0,
       sunshineSec:  d.sunshine_duration   ? d.sunshine_duration[i]   : null
     })).filter(day => day.dt + 86400 > nowSec);
 
@@ -448,16 +462,57 @@ const WeatherAPI = {
     }
   },
 
-  async getTides(lat, lon) {
-    const url = `https://marine-api.open-meteo.com/v1/marine?latitude=${enc(lat)}&longitude=${enc(lon)}&hourly=sea_level_height_msl`;
+  // Session-scoped memo of coordinates the marine API has already told us
+  // it has no data for. Without it, every landlocked saved city fires a
+  // doomed marine request on every 15-minute auto-refresh and on every
+  // adjacent-city prefetch. Keyed at ~1km resolution (3dp) so returning to
+  // the same city hits the memo. Session-only on purpose: coverage can
+  // change with model updates, and a page reload is a cheap re-check.
+  _marineMisses: new Set(),
+  _marineKey(lat, lon) {
+    return `${Number(lat).toFixed(3)},${Number(lon).toFixed(3)}`;
+  },
+
+  // Marine conditions for coastal points: the sea-level (tide) curve plus
+  // sea-surface temperature. Inland coordinates 400 here, which is how the
+  // app decides a location isn't coastal — there is no bathymetry lookup
+  // to pre-check against.
+  //
+  // forecast_days=8 matches the main forecast's range; the API's 7-day
+  // default used to make tide rows silently vanish on day 8. past_days=1
+  // backfills the hours a city far west of UTC would otherwise lose,
+  // because the series starts at 00:00 UTC.
+  async getMarine(lat, lon) {
+    const key = this._marineKey(lat, lon);
+    if (this._marineMisses.has(key)) return null;
+    const url = `https://marine-api.open-meteo.com/v1/marine` +
+      `?latitude=${enc(lat)}&longitude=${enc(lon)}` +
+      `&hourly=sea_level_height_msl,sea_surface_temperature` +
+      `&timeformat=unixtime&timezone=auto&forecast_days=8&past_days=1`;
     try {
       const res = await fetch(url);
-      if (!res.ok) return null;
+      if (!res.ok) {
+        // 400 = no marine coverage. Other failures (429/5xx) are transient
+        // and must NOT poison the memo.
+        if (res.status === 400) this._marineMisses.add(key);
+        return null;
+      }
       const data = await res.json();
+      const hourly = data.hourly || null;
+      // A 200 with an all-null sea-level column is the other shape "not
+      // coastal" arrives in. Treat it the same as a 400.
+      const levels = hourly && hourly.sea_level_height_msl;
+      if (!levels || !levels.some(v => v != null)) {
+        this._marineMisses.add(key);
+        return null;
+      }
       return {
+        // The marine grid-cell centre the request snapped to, NOT the
+        // requested coords. The UI measures the distance between the two
+        // to decide how prominently to show tides.
         latitude: data.latitude,
         longitude: data.longitude,
-        hourly: data.hourly || null
+        hourly
       };
     } catch (_) {
       return null;

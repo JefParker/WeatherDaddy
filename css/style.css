@@ -2448,6 +2448,49 @@ body.has-alert .a2hs-prompt {
 }
 .graph-mode-letter.active.rain { fill: #4db6ac; }
 .graph-mode-letter.active.wind { fill: #5c9ce6; }
+.graph-mode-letter.active.tide { fill: #7e8fd6; }
+
+/* Tide mode. Sea level is continuous and signed, so it reads as a filled
+   curve rather than bars — the shape IS the information here, and bars
+   would imply discrete hourly quantities the way precip and wind do.
+   Indigo keeps it distinct from the teal precip and the blue wind. */
+.graph-tide-area {
+  fill: #7e8fd6;
+  opacity: 0.18;
+}
+.graph-tide-line {
+  stroke: #7e8fd6;
+  stroke-width: 2;
+  opacity: 0.85;
+}
+.graph-y-axis-label.tide {
+  fill: #7e8fd6;
+}
+
+/* Vertical position marker. The dimmer dashed variant is the live "now"
+   line on today; the solid brighter one marks an hour you deliberately
+   pinned, so it earns more visual weight. */
+.graph-position-line {
+  stroke: rgba(255, 255, 255, 0.28);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  pointer-events: none;
+}
+.graph-position-line.pinned {
+  stroke: rgba(255, 255, 255, 0.6);
+  stroke-width: 1.5;
+  stroke-dasharray: none;
+}
+.graph-position-label {
+  font-size: 9px;
+  font-weight: 600;
+  text-anchor: middle;
+  fill: rgba(255, 255, 255, 0.4);
+  pointer-events: none;
+}
+.graph-position-label.pinned {
+  fill: rgba(255, 255, 255, 0.75);
+}
 
 /* Precip chance under each hourly tile — always rendered (nbsp when
    dry) so tile heights stay uniform across the scroller. */

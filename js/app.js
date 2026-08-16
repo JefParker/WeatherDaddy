@@ -243,7 +243,7 @@ const App = {
           WeatherAPI.getEnrichment(lat, lon).catch(() => ({ uv: { current: null, daily: [] }, hourly: [], daily: [] })),
           WeatherAPI.getAirQuality(lat, lon).catch(() => ({ aqi: null, pollen: null, treePollen: null, grassPollen: null, weedPollen: null })),
           WeatherAPI.getAlerts(lat, lon).catch(() => []),
-          WeatherAPI.getTides(lat, lon).catch(() => null)
+          WeatherAPI.getMarine(lat, lon).catch(() => null)
         ]);
         Storage.setWeatherCache(lat, lon, {
           currentWeather,
@@ -291,7 +291,9 @@ const App = {
     const loc = Storage.getLocation();
     if (!loc) return;
     try {
-      await this.fetchAndDisplay(loc.lat, loc.lon, loc.name);
+      // Background refresh of the city already on screen: keep whatever
+      // day / hour the user is looking at.
+      await this.fetchAndDisplay(loc.lat, loc.lon, loc.name, { preserveSelection: true });
     } catch (e) {
       console.warn('Auto-refresh failed:', e);
     }
@@ -606,14 +608,23 @@ const App = {
   // render it immediately so navigation feels instant. Then fetch fresh data
   // in the background and re-render. A monotonically-increasing fetch token
   // guards against the user switching cities mid-flight (older response loses).
-  async fetchAndDisplay(lat, lon, name) {
+  // opts.preserveSelection — see _applyCachedCity. Set by the refresh
+  // paths, which re-render the city already on screen.
+  async fetchAndDisplay(lat, lon, name, opts = {}) {
     this._fetchToken = (this._fetchToken || 0) + 1;
     const token = this._fetchToken;
 
-    const renderedFromCache = this._applyCachedCity(lat, lon, name);
+    const preserve = opts.preserveSelection === true;
+    const renderedFromCache = this._applyCachedCity(lat, lon, name, preserve);
     if (!renderedFromCache) UI.showLoading();
 
-    await this._refreshCity(lat, lon, name, token, renderedFromCache);
+    // `preserve` is passed SEPARATELY from renderedFromCache. Inferring
+    // it from the cache hit alone loses the intent whenever the cached
+    // payload is missing or older than WEATHER_CACHE_MAX_AGE_MS — which
+    // is precisely the tab-left-open-overnight case, where returning to
+    // the tab would land on Today. (The loader still shows there, since
+    // 6h-stale data isn't worth painting; only the selection is kept.)
+    await this._refreshCity(lat, lon, name, token, renderedFromCache, preserve);
   },
 
   // How old a cached payload can be and still be worth rendering. Past
@@ -624,7 +635,19 @@ const App = {
 
   // Synchronously apply a cached city to state + render, IF the cache is
   // fresh enough to be useful. Returns true on success.
-  _applyCachedCity(lat, lon, name) {
+  // `preserveSelection` is set by the refresh paths — the 15-minute
+  // timer, the tab-return refresh, the refresh button and the #refresh
+  // route all land here via refreshCurrentWeather. They re-render the
+  // city already on screen and must not move the user's feet. Every
+  // other caller — city swipe, search, saved-list tap, "use current
+  // location" — is deliberate navigation and resets to Today.
+  //
+  // It's an explicit flag rather than a "did the coords change?" test on
+  // purpose: the request coords and the coords OWM echoes back routinely
+  // drift by more than SAME_LOCATION_DEG when OWM snaps to a station
+  // centroid (see the note in UI.buildDailyData), so a coordinate
+  // comparison would silently fail for exactly those cities.
+  _applyCachedCity(lat, lon, name, preserveSelection = false) {
     const cached = Storage.getWeatherCache(lat, lon);
     if (!cached) return false;
     if (Date.now() - (cached.ts || 0) > this.WEATHER_CACHE_MAX_AGE_MS) return false;
@@ -647,8 +670,29 @@ const App = {
     this.state.discussion       = cached.discussion || null;
     this.state.cityName         = cityName;
     this.state.timezone         = cached.currentWeather.timezone;
-    this.state.selectedDayIndex = -1;
-    this.state.selectedHourDt   = null;
+    // Resetting unconditionally here made _refreshCity's whole
+    // selection-preservation path dead code: this function runs first on
+    // every cache-then-network pass, so by the time _refreshCity read
+    // state.selectedDayIndex it was always -1. The visible symptom was
+    // that every auto-refresh snapped the dashboard back to Today and
+    // dropped any pinned hour — and it happened at the renderAll() below,
+    // before the network had even answered.
+    if (!preserveSelection) {
+      this.state.selectedDayIndex = -1;
+      this.state.selectedHourDt   = null;
+    } else if (this.state.selectedHourDt != null) {
+      // Revalidate the pin against the payload we're about to render.
+      // _refreshCity does this for the network response, but if that
+      // request then fails (offline) nothing else would ever clear a pin
+      // whose slot has rolled out of the forecast — leaving the hero
+      // silently unpinned while Copy URL still emitted the dead dt.
+      const dt = this.state.selectedHourDt;
+      const stillExists =
+        (cached.forecast && cached.forecast.list &&
+          cached.forecast.list.some(h => h.dt === dt)) ||
+        (this.state.omHourly || []).some(h => h.dt === dt);
+      if (!stillExists) this.state.selectedHourDt = null;
+    }
 
     if (this._sharedStateToRestore) {
       this._resolveSharedDayAndHour(false);
@@ -659,8 +703,15 @@ const App = {
   },
 
   // Network fetch + apply. Race-safe via the supplied token (or a new one).
-  // hadCache lets us preserve the user's day selection on background refresh.
-  async _refreshCity(lat, lon, name, token = null, hadCache = false) {
+  //
+  // hadCache — a cached payload was already rendered, so the user's
+  //   selection is on screen and must be carried over. Also gates the
+  //   error path, which only has to repaint when a loader is covering
+  //   the dashboard.
+  // preserveSelection — the caller is refreshing the city already shown
+  //   (see _applyCachedCity). Independent of hadCache, because a refresh
+  //   whose cache has aged out still has the selection live in state.
+  async _refreshCity(lat, lon, name, token = null, hadCache = false, preserveSelection = false) {
     if (token == null) {
       this._fetchToken = (this._fetchToken || 0) + 1;
       token = this._fetchToken;
@@ -673,7 +724,7 @@ const App = {
         WeatherAPI.getEnrichment(lat, lon).catch(() => ({ uv: { current: null, daily: [] }, hourly: [], daily: [] })),
         WeatherAPI.getAirQuality(lat, lon).catch(() => ({ aqi: null, pollen: null, treePollen: null, grassPollen: null, weedPollen: null })),
         WeatherAPI.getAlerts(lat, lon).catch(() => []),
-        WeatherAPI.getTides(lat, lon).catch(() => null),
+        WeatherAPI.getMarine(lat, lon).catch(() => null),
         WeatherAPI.getForecastDiscussion(lat, lon).catch(() => null)
       ]);
 
@@ -698,14 +749,33 @@ const App = {
       });
       Storage.saveLocation(lat, lon, cityName);
 
-      const keepDay = hadCache ? this.state.selectedDayIndex : -1;
+      // Keep the user's place when we rendered from cache (the selection
+      // is still on screen) OR when the caller explicitly asked to — the
+      // latter covers a refresh whose cache had already aged out, where
+      // the selection lives only in state.
+      const keepPlace = hadCache || preserveSelection;
+
+      const keepDay = keepPlace ? this.state.selectedDayIndex : -1;
+      // selectedDayIndex is a POSITION in the daily list, and that list is
+      // rebuilt from the incoming forecast. When a background refresh
+      // crosses the city's local midnight, yesterday drops off the front
+      // and every index shifts down by one — so a preserved index quietly
+      // starts pointing at the day AFTER the one the user chose.
+      //
+      // Anchor to the day's KEY (its local date) before the swap and
+      // re-resolve the position afterwards. Indices -1 and 0 both mean
+      // "today" and SHOULD follow the rollover to the new today, so
+      // they're deliberately excluded.
+      const oldDayKey = (keepPlace && this.state.selectedDayIndex > 0)
+        ? this.getDayKey(this.state.selectedDayIndex)
+        : null;
       // A pinned hour is a specific dt in the OLD forecast. When slots
       // roll forward (auto-refresh, city switch) that dt may no longer
       // be a real slot — hero would then silently unpin visually while
       // state.selectedHourDt still holds the stale dt, and Copy URL
       // would emit a dt no receiver can resolve. So we keep the pin
       // only if the incoming forecast still contains it.
-      const oldHourDt = hadCache ? this.state.selectedHourDt : null;
+      const oldHourDt = keepPlace ? this.state.selectedHourDt : null;
       // The pin may live on an OWM 3h slot OR an Open-Meteo-synthesised
       // slot (days 6-8 and the top-up at the end of OWM's 5-day window),
       // so check both incoming series — checking forecast.list alone
@@ -733,6 +803,49 @@ const App = {
       this.state.timezone         = currentWeather.timezone;
       this.state.selectedDayIndex = keepDay;
       this.state.selectedHourDt   = keepHour;
+
+      // Re-anchor the selection against the REBUILT day list. Must run
+      // after the state assignments above, because _buildDailyData reads
+      // from state — asking before the swap would just re-derive the old
+      // list and tell us nothing.
+      if (oldDayKey != null || keepHour != null) {
+        const dailyData = this._buildDailyData();
+
+        if (oldDayKey != null) {
+          const idx = dailyData.findIndex(d => d.key === oldDayKey);
+          // Not found means the selected day rolled off into the past.
+          // Today is the only sane landing spot.
+          this.state.selectedDayIndex = idx !== -1 ? idx : -1;
+        }
+
+        // A surviving pin is the stronger signal: the hour knows which
+        // day it belongs to, so let it override whatever index we
+        // inferred. Without this the hero could describe a pinned hour
+        // while the quick stats and daily-list highlight showed a
+        // different day.
+        if (keepHour != null) {
+          const idx = dailyData.findIndex(
+            d => d.hourly && d.hourly.some(h => h.dt === keepHour)
+          );
+          if (idx !== -1) {
+            this.state.selectedDayIndex = idx;
+          } else {
+            // The pin validated against enrichment.hourly, which reaches
+            // 24h into the PAST (past_days=1) — so a pin on last evening
+            // survives a refresh that crossed midnight, and would render
+            // as "Saturday at 9 PM" with yesterday's temperature while
+            // the daily list highlighted Today.
+            //
+            // A miss alone isn't fatal: near-term 2h tiles legitimately
+            // never appear on the 3h spine. Only drop the pin when its
+            // whole DAY has rolled out of the list.
+            const pinKey = UI.dayKey(keepHour, UI.cityTz(this.state));
+            const dayIdx = dailyData.findIndex(d => d.key === pinKey);
+            if (dayIdx === -1) this.state.selectedHourDt = null;
+            else if (oldDayKey == null) this.state.selectedDayIndex = dayIdx;
+          }
+        }
+      }
 
       if (this._sharedStateToRestore) {
         this._resolveSharedDayAndHour(true);
@@ -1158,6 +1271,17 @@ const App = {
     this.state.selectedHourDt = resolvedHourDt;
   },
 
+  // Marine timestamps are now requested as `timeformat=unixtime`, but a
+  // localStorage cache written by an older build still holds the previous
+  // naive-UTC ISO strings ("2026-08-16T00:00", no Z). Accept both so an
+  // upgrade doesn't blank the tide rows until the next refresh lands.
+  _marineTimeToSec(t) {
+    if (typeof t === 'number') return t;
+    if (typeof t !== 'string') return null;
+    const ms = Date.parse(t.endsWith('Z') || /[+-]\d\d:?\d\d$/.test(t) ? t : t + 'Z');
+    return isFinite(ms) ? ms / 1000 : null;
+  },
+
   findTideExtrema(hourlyData) {
     if (!hourlyData || !hourlyData.time || !hourlyData.sea_level_height_msl) {
       return [];
@@ -1183,10 +1307,10 @@ const App = {
         currentRun = null; // gap → end the current run
         continue;
       }
-      const dt = Date.parse(times[i] + 'Z') / 1000;
+      const dt = this._marineTimeToSec(times[i]);
       // Guard against future API format changes that would produce
       // NaN (e.g. an offset-suffixed time colliding with our 'Z').
-      if (!isFinite(dt)) { currentRun = null; continue; }
+      if (dt == null || !isFinite(dt)) { currentRun = null; continue; }
       // Non-hourly gap (e.g. missed sample) also ends the run.
       if (currentRun && lastDt != null && (dt - lastDt) > HOUR_SEC * 1.5) {
         currentRun = null;

@@ -239,7 +239,8 @@ const UI = {
         if (this._lastGraph) this.renderGraph(
           this._lastGraph.hourly,
           this._lastGraph.tz,
-          this._lastGraph.omHourly || []
+          this._lastGraph.omHourly || [],
+          this._lastGraph.opts || {}
         );
       });
       this._resizeBound = true;
@@ -997,6 +998,37 @@ const UI = {
     return mm.toFixed(1) + ' mm';
   },
 
+  // Snow ACCUMULATION, given as depth in cm. Keyed off the dist (km/mi)
+  // setting for the same reason formatTideHeight is: it's a depth, and an
+  // imperial user expects inches of snow even if they read rain in mm.
+  formatSnowDepth(cm) {
+    if (cm == null) return '—';
+    if (Storage.getUnits().dist === 'mi') return (cm / 2.54).toFixed(1) + ' in';
+    return cm.toFixed(1) + ' cm';
+  },
+
+  // Sea-surface temperature (°C) at the hour nearest `dt`, from the raw
+  // marine hourly series. Returns null when there's no marine data, no
+  // SST column (not every marine grid cell carries one), or the nearest
+  // sample is more than an hour away — better a missing row than a
+  // confidently wrong one.
+  _waterTempAt(tides, dt) {
+    if (!tides || !tides.time || !tides.sea_surface_temperature || dt == null) return null;
+    const times = tides.time;
+    const temps = tides.sea_surface_temperature;
+    let best = null;
+    let bestDelta = Infinity;
+    for (let i = 0; i < times.length; i++) {
+      const v = temps[i];
+      if (v == null) continue;
+      const t = App._marineTimeToSec(times[i]);
+      if (t == null || !isFinite(t)) continue;
+      const delta = Math.abs(t - dt);
+      if (delta < bestDelta) { bestDelta = delta; best = v; }
+    }
+    return bestDelta <= 3600 ? best : null;
+  },
+
   formatTideHeight(meters) {
     if (meters == null) return '—';
     // Tide height is a distance — key off the dist (km/mi) setting, not
@@ -1337,8 +1369,31 @@ const UI = {
       visibility: h.visibility != null ? h.visibility : 10000,
       pop: (h.precipProb || 0) / 100
     };
-    if (h.precipMM > 0) slot.rain = { '3h': h.precipMM * 3 };
+    // Split precipitation into its rain and snow shares. `precipMM` is
+    // water-equivalent and ALREADY INCLUDES snow, so the snow share is
+    // subtracted rather than added — the rain + snow total still equals
+    // precipMM, which is what every downstream consumer sums.
+    //
+    // Before this, snow was silently folded into slot.rain, so on the
+    // Open-Meteo-synthesised days (6-8, plus the top-up slots on OWM's
+    // truncated last day) a blizzard was indistinguishable from rain.
+    if (h.precipMM > 0) {
+      const snowMM = this._snowCMToWaterMM(h.snowCM);
+      const rainMM = Math.max(0, h.precipMM - snowMM);
+      if (rainMM > 0) slot.rain = { '3h': rainMM * 3 };
+      if (snowMM > 0) slot.snow = { '3h': Math.min(snowMM, h.precipMM) * 3 };
+    }
     return slot;
+  },
+
+  // Open-Meteo gives snowfall as DEPTH in cm; everything downstream works
+  // in water-equivalent mm. Their docs' worked example is 7 cm ≈ 10 mm,
+  // i.e. divide by 0.7 (the "divide by 7" line in the same paragraph
+  // contradicts the example and is a doc typo).
+  SNOW_DEPTH_TO_WATER: 0.7,
+  _snowCMToWaterMM(cm) {
+    if (cm == null || !(cm > 0)) return 0;
+    return cm / this.SNOW_DEPTH_TO_WATER;
   },
 
   // WHO UV Index categories.
@@ -2462,6 +2517,12 @@ const UI = {
     if ((activeDay.rainMM || 0) > 0) {
       notable.push(item('Precipitation', this.formatPrecip(activeDay.rainMM)));
     }
+    // Snow accumulation, whenever there is any. Always notable — snow is
+    // the kind of thing you reorganise a day around, and unlike rain
+    // there's no "token amount" worth suppressing.
+    if (activeOmDay && activeOmDay.snowSumCM > 0) {
+      notable.push(item('Snow', this.formatSnowDepth(activeOmDay.snowSumCM)));
+    }
     if (popValue > 0) {
       (popValue >= 0.3 ? notable : routine)
         .push(item('Precip chance', `${Math.round(popValue * 100)}%`));
@@ -2501,6 +2562,12 @@ const UI = {
     if (activeOmDay && activeOmDay.windMax != null) {
       (activeOmDay.windMax >= 10.7 ? notable : routine)
         .push(item('Max wind', this.formatWind(activeOmDay.windMax)));
+      // Whole-day peak gust, on the same "only when it says something the
+      // sustained figure doesn't" rule the hourly Wind gust stat uses.
+      if (activeOmDay.gustMax != null &&
+          this.isNoteworthyGust(activeOmDay.windMax, activeOmDay.gustMax)) {
+        notable.push(item('Max gust', this.formatWind(activeOmDay.gustMax)));
+      }
     }
 
     const getSunTimesForTimestamp = (ts) => {
@@ -2602,36 +2669,96 @@ const UI = {
       `;
     }
 
+    // Tides. Two distinct questions depending on what you're looking at:
+    //
+    //   Today, nothing pinned  → "what's next from right now"
+    //   Any other day/hour     → "what happens on the day I selected"
+    //
+    // The old code always used `heroData.dt`, which on a forecast day is
+    // the day's MIDDAY slot. That produced rows labelled "Next high tide"
+    // that actually meant "first high tide after noon on that day" — and
+    // the matching low routinely landed after local midnight, rendered as
+    // a bare "1:40 AM" with nothing saying it belonged to the next day.
     let nextHighItem = null;
     let nextLowItem = null;
+    let tideRowsExpected = false;
 
     if (state.tideExtrema && state.tideExtrema.length > 0) {
-      const currentDt = heroData.dt;
-      const nextHigh = state.tideExtrema.find(e => e.type === 'High' && e.dt > currentDt);
-      const nextLow = state.tideExtrema.find(e => e.type === 'Low' && e.dt > currentDt);
-      if (nextHigh) {
-        const showHeight = Math.abs(nextHigh.h) > 1.5;
-        const heightStr = showHeight ? ` (${this.formatTideHeight(nextHigh.h)})` : '';
-        nextHighItem = item('Next high tide', `${this.formatTime(nextHigh.dt, true, tz)}${heightStr}`);
-      }
-      if (nextLow) {
-        const showHeight = Math.abs(nextLow.h) > 1.5;
-        const heightStr = showHeight ? ` (${this.formatTideHeight(nextLow.h)})` : '';
-        nextLowItem = item('Next low tide', `${this.formatTime(nextLow.dt, true, tz)}${heightStr}`);
-      }
+      const liveNow = isToday && !pinnedHourSlot;
+      const anchorDt = heroData.dt;
+
+      // Local-day window for the selected day, used for the non-live case.
+      const dayStartSec = activeOmDay
+        ? activeOmDay.dt
+        : (activeDayUvKey ? (() => {
+            const [yy, mo, dd] = activeDayUvKey.split('-').map(Number);
+            const off = typeof tz === 'number' ? tz : (currentWeather.timezone || 0);
+            return Math.floor(Date.UTC(yy, mo - 1, dd) / 1000) - off;
+          })() : null);
+
+      const pick = (type) => {
+        if (liveNow || dayStartSec == null) {
+          return state.tideExtrema.find(e => e.type === type && e.dt > anchorDt) || null;
+        }
+        // Take the end from the NEXT day's local midnight rather than
+        // +86400: Open-Meteo's per-day dt is DST-correct, so on a
+        // spring-forward day the fixed offset would bleed an hour into
+        // tomorrow (surfacing tomorrow's tide with no "tomorrow" label),
+        // and on a fall-back day it would drop the last hour.
+        const nextDay = (state.omDaily || []).find(d => d.dt > dayStartSec);
+        const dayEndSec = nextDay ? nextDay.dt : dayStartSec + 86400;
+        return state.tideExtrema.find(
+          e => e.type === type && e.dt >= dayStartSec && e.dt < dayEndSec
+        ) || null;
+      };
+
+      // The marine series covers the same 8 days as the forecast, so a
+      // missing extremum is a genuine gap, not the range running out.
+      // Render the em dash rather than dropping the row, matching how
+      // Moonrise / Moonset handle a skipped rise.
+      tideRowsExpected = true;
+
+      const tideValue = (e) => {
+        if (!e) return '—';
+        // Heights are metres relative to MSL; below ±1.5 m the number is
+        // noise for most readers, so only the time is shown.
+        const heightStr = Math.abs(e.h) > 1.5 ? ` (${this.formatTideHeight(e.h)})` : '';
+        // Only reachable in the live case, where "next" can cross midnight.
+        const dayStr = dayKeyFor(e.dt) !== dayKeyFor(anchorDt) ? ' tomorrow' : '';
+        return `${this.formatTime(e.dt, true, tz)}${dayStr}${heightStr}`;
+      };
+
+      const highLabel = liveNow ? 'Next high tide' : 'High tide';
+      const lowLabel  = liveNow ? 'Next low tide'  : 'Low tide';
+      nextHighItem = item(highLabel, tideValue(pick('High')));
+      nextLowItem  = item(lowLabel,  tideValue(pick('Low')));
     }
 
+    // How close the marine grid cell the API snapped to is to the city
+    // itself. Longitude degrees shrink toward the poles, so the raw
+    // Pythagorean distance used before made the effective radius ~7km at
+    // the equator but only ~3.5km at 60°N — Nordic coastal cities were
+    // being demoted to the last stats page. Scale the longitude term by
+    // cos(lat) so the threshold is a true ~7km everywhere.
     let touchesWater = false;
     if (currentWeather.coord && state.tideCoords) {
+      const latRad = currentWeather.coord.lat * Math.PI / 180;
       const dLat = state.tideCoords.lat - currentWeather.coord.lat;
-      const dLon = state.tideCoords.lon - currentWeather.coord.lon;
+      const dLon = (state.tideCoords.lon - currentWeather.coord.lon) * Math.cos(latRad);
       const degDiff = Math.sqrt(dLat * dLat + dLon * dLon);
       touchesWater = degDiff <= 0.065;
     }
 
-    if (touchesWater) {
-      if (nextHighItem) routine.push(nextHighItem);
-      if (nextLowItem) routine.push(nextLowItem);
+    if (touchesWater && tideRowsExpected) {
+      routine.push(nextHighItem);
+      routine.push(nextLowItem);
+    }
+
+    // Sea-surface temperature for the hour being viewed. Coastal only —
+    // the marine call is the sole source, and it 400s inland.
+    const waterTemp = this._waterTempAt(state.tides, heroData.dt);
+    if (touchesWater && waterTemp != null) {
+      routine.push(item('Water temp', `${this.formatTemp(waterTemp)}°`));
     }
 
     // Pressure / visibility only render at all when unusual — notable
@@ -2720,9 +2847,12 @@ const UI = {
       lowPriority.push(item('Sunshine', `${(activeOmDay.sunshineSec / 3600).toFixed(1)} h`));
     }
 
-    if (!touchesWater) {
-      if (nextHighItem) lowPriority.push(nextHighItem);
-      if (nextLowItem) lowPriority.push(nextLowItem);
+    // Marine data exists but the snapped grid cell is far from the city
+    // (a lake town, or a coastal cell reached across a headland). Still
+    // worth showing, just not competing for a page-1 slot.
+    if (!touchesWater && tideRowsExpected) {
+      lowPriority.push(nextHighItem);
+      lowPriority.push(nextLowItem);
     }
 
     let statsPages = [];
@@ -3171,7 +3301,21 @@ const UI = {
       this._bindHourlyDayScroll(hourlyEl, currentDayIdx, onDayClick);
     }
 
-    this.renderGraph(activeDay.hourly, tz, state.omHourly || []);
+    // Position marker: a solid line at the hour you pinned, or a dimmer
+    // one at the live "now" on today. On a forecast day with nothing
+    // pinned there is no marker — the hero's midday anchor is an internal
+    // implementation detail, and drawing a line there would claim a
+    // precision the user never asked for.
+    //
+    // "Now" is passed as a FLAG, not a timestamp: opts is stashed in
+    // _lastGraph and replayed on resize and on every mode toggle, so a
+    // baked-in timestamp would freeze the line at whenever the dashboard
+    // last rendered. renderGraph reads the clock itself.
+    this.renderGraph(activeDay.hourly, tz, state.omHourly || [], {
+      tides: touchesWater ? state.tides : null,
+      markerDt: pinnedHourSlot ? pinnedHourSlot.dt : null,
+      markerIsNow: isToday && !pinnedHourSlot
+    });
 
     // Swipe the temperature graph left/right to move through the days.
     const maxIdx = Math.min(7, dailyData.length - 1);
@@ -4105,18 +4249,27 @@ const UI = {
   // fixed offset seconds). `omHourly` is the full Open-Meteo hourly
   // array (state.omHourly) — it carries precipMM AND windSpeed, so both
   // bar series come from the one argument.
-  renderGraph(hourlyData, tz = 0, omHourly = []) {
+  renderGraph(hourlyData, tz = 0, omHourly = [], opts = {}) {
     const container = document.getElementById('graph-container');
     if (!container) return;
 
     // Remember the latest data so we can redraw on resize/visibility
     // changes and on mode toggles.
-    this._lastGraph = { hourly: hourlyData, tz, omHourly };
+    this._lastGraph = { hourly: hourlyData, tz, omHourly, opts };
 
-    // 'precip' | 'wind' — which bar series the graph shows. Global and
-    // persisted; lives on UI (not the DOM) because the graph's innerHTML
-    // is replaced wholesale on every render and cube transition.
-    const mode = this._graphMode || (this._graphMode = Storage.getGraphMode());
+    // 'precip' | 'wind' | 'tide' — which secondary series the graph
+    // shows. Global and persisted; lives on UI (not the DOM) because the
+    // graph's innerHTML is replaced wholesale on every render and cube
+    // transition.
+    const saved = this._graphMode || (this._graphMode = Storage.getGraphMode());
+
+    // Tide is only offered where there's marine data. An inland city
+    // renders precip instead WITHOUT touching the stored preference, so
+    // swiping back to the coast restores the tide view (see Storage's
+    // getGraphMode note).
+    const tideSeries = opts.tides || null;
+    const tideAvailable = !!(tideSeries && tideSeries.time && tideSeries.sea_level_height_msl);
+    const mode = (saved === 'tide' && !tideAvailable) ? 'precip' : saved;
 
     // Interpolation and x-spacing both divide by (points - 1); a day
     // with fewer than two slots would render NaN geometry. Clear the
@@ -4143,6 +4296,22 @@ const UI = {
       // the API response) must fall through to the OWM fallback rather
       // than masquerading as a real sample.
       if (h.windSpeed != null) windByHour.set(Math.floor(h.dt / 3600), h.windSpeed);
+    }
+    // Sea level (metres relative to MSL) by hour. Unlike precip and wind
+    // this series is continuous and signed — a negative value is a real
+    // low tide, not missing data — so it renders as a filled curve rather
+    // than bars, and its scale is derived from the visible window instead
+    // of anchored at zero.
+    const tideByHour = new Map();
+    if (tideAvailable) {
+      const tTimes = tideSeries.time;
+      const tLevels = tideSeries.sea_level_height_msl;
+      for (let i = 0; i < tTimes.length; i++) {
+        if (tLevels[i] == null) continue;
+        const t = App._marineTimeToSec(tTimes[i]);
+        if (t == null || !isFinite(t)) continue;
+        tideByHour.set(Math.floor(t / 3600), tLevels[i]);
+      }
     }
     // Count snow like dayTotals and the Precipitation stat do — without
     // it, a snowstorm with no Open-Meteo hourly data graphs as bone dry.
@@ -4185,6 +4354,7 @@ const UI = {
           temp: t1 + (t2 - t1) * ratio,
           precipPerHour: precip,
           windPerHour: wind,
+          tideLevel: tideByHour.has(hourKey) ? tideByHour.get(hourKey) : null,
           dt,
           isOriginal: h === 0
         });
@@ -4199,6 +4369,7 @@ const UI = {
       temp: last.main.temp,
       precipPerHour: lastPrecip,
       windPerHour: windByHour.has(lastHourKey) ? windByHour.get(lastHourKey) : fallback3hWind(last),
+      tideLevel: tideByHour.has(lastHourKey) ? tideByHour.get(lastHourKey) : null,
       dt: last.dt,
       isOriginal: true
     });
@@ -4223,6 +4394,25 @@ const UI = {
     const hasWindData = windSamples.length > 0;
     const maxWind = Math.max(hasWindData ? Math.max(...windSamples) : 0, 5);
 
+    // Tide scale is window-relative, not zero-anchored: sea level is
+    // measured against MSL, so zero is the middle of the range rather
+    // than the floor, and a 0.4m estuary range would be invisible on a
+    // scale that had to contain a 12m Bay-of-Fundy day. A 0.5m minimum
+    // span stops a near-slack day from amplifying model noise into a
+    // dramatic curve.
+    const tideSamples = hourly.map(h => h.tideLevel).filter(v => v != null);
+    const hasTideData = tideSamples.length > 0;
+    let tideMin = hasTideData ? Math.min(...tideSamples) : 0;
+    let tideMax = hasTideData ? Math.max(...tideSamples) : 0;
+    if (tideMax - tideMin < 0.5) {
+      const mid = (tideMax + tideMin) / 2;
+      tideMin = mid - 0.25;
+      tideMax = mid + 0.25;
+    }
+    // Headroom so the curve's crest doesn't collide with the temp line.
+    const tideSpan = (tideMax - tideMin) * 1.15;
+    const tideBase = tideMin - (tideMax - tideMin) * 0.075;
+
     const points = hourly.map((h, i) => {
       const tempC = this.convertTemp(h.temp);
       const x = paddingX + (i * (width - 2 * paddingX) / (hourly.length - 1));
@@ -4231,7 +4421,16 @@ const UI = {
       const yWind = h.windPerHour != null
         ? height - paddingY - (h.windPerHour * (height - 2 * paddingY) / maxWind)
         : null;
-      return { x, yTemp, yPrecip, yWind, temp: h.temp, precip: h.precipPerHour, wind: h.windPerHour, time: this.formatTime(h.dt, false, tz), isOriginal: h.isOriginal };
+      const yTide = h.tideLevel != null
+        ? height - paddingY - ((h.tideLevel - tideBase) * (height - 2 * paddingY) / tideSpan)
+        : null;
+      return {
+        x, yTemp, yPrecip, yWind, yTide,
+        temp: h.temp, precip: h.precipPerHour, wind: h.windPerHour, tide: h.tideLevel,
+        dt: h.dt,
+        time: this.formatTime(h.dt, false, tz),
+        isOriginal: h.isOriginal
+      };
     });
 
     let pathD = `M ${points[0].x} ${points[0].yTemp}`;
@@ -4241,6 +4440,69 @@ const UI = {
     }
 
     const barWidth = (width - 2 * paddingX) / (hourly.length - 1);
+
+    // Tide curve, built only when it's the active mode. Contiguous runs
+    // of non-null samples are stroked separately so a coverage hole never
+    // gets bridged by a straight line pretending to be tide data. Same
+    // midpoint-control-point smoothing as the temperature line.
+    let tideStrokeD = '';
+    let tideFillD = '';
+    if (mode === 'tide' && hasTideData) {
+      const runs = [];
+      let run = [];
+      for (const p of points) {
+        if (p.yTide == null) { if (run.length) runs.push(run); run = []; continue; }
+        run.push(p);
+      }
+      if (run.length) runs.push(run);
+
+      const floorY = height - paddingY;
+      for (const r of runs) {
+        if (r.length < 2) continue;
+        let d = `M ${r[0].x} ${r[0].yTide}`;
+        for (let i = 0; i < r.length - 1; i++) {
+          const cpx = r[i].x + (r[i + 1].x - r[i].x) / 2;
+          d += ` C ${cpx} ${r[i].yTide}, ${cpx} ${r[i + 1].yTide}, ${r[i + 1].x} ${r[i + 1].yTide}`;
+        }
+        tideStrokeD += d + ' ';
+        tideFillD += `${d} L ${r[r.length - 1].x} ${floorY} L ${r[0].x} ${floorY} Z `;
+      }
+    }
+
+    // Vertical position marker. x is interpolated between the two
+    // bracketing hourly points rather than snapped to the nearest one, so
+    // the "now" line drifts smoothly across the hour instead of jumping.
+    // Falls outside the plotted window on any day that isn't the one
+    // being shown, in which case nothing is drawn.
+    let markerX = null;
+    const markerIsPinned = opts.markerDt != null;
+    const markerDt = markerIsPinned
+      ? opts.markerDt
+      : (opts.markerIsNow ? Math.floor(Date.now() / 1000) : null);
+
+    if (markerDt != null && points.length > 1) {
+      const first = points[0].dt;
+      const lastDt = points[points.length - 1].dt;
+      if (markerDt < first) {
+        // Today's spine is OWM's 3-hourly list, which starts at the NEXT
+        // 3h boundary — so "now" is almost always a little BEFORE the
+        // first plotted point, and a strict range check would hide the
+        // line on the one day it matters most. Pin it to the left edge
+        // when it's within one slot; anything older is genuinely off-chart.
+        if (first - markerDt <= 3 * 3600) markerX = points[0].x;
+      } else if (markerDt <= lastDt) {
+        for (let i = 0; i < points.length - 1; i++) {
+          const a = points[i], b = points[i + 1];
+          if (markerDt >= a.dt && markerDt <= b.dt) {
+            const span = b.dt - a.dt;
+            const ratio = span > 0 ? (markerDt - a.dt) / span : 0;
+            markerX = a.x + (b.x - a.x) * ratio;
+            break;
+          }
+        }
+      }
+    }
+    const markerLabel = markerIsPinned ? this.formatTime(markerDt, true, tz) : 'now';
 
     // Unique per render: during a cube transition BOTH graphs are mounted
     // at once, and url(#id) resolves to the FIRST match in tree order — a
@@ -4269,27 +4531,44 @@ const UI = {
           // Left gutter: pure axis labels — peak in the user's unit,
           // an always-visible unit line (so the axis is never blank on
           // a dry day), baseline 0 when there's data to scale.
-          // Right gutter: the mode switch — stacked R / W letters with
+          // Right gutter: the mode switch — stacked R / W / T letters with
           // the active series lit in its bar colour, sitting on a
           // transparent full-height hit rect. Tap it (or double-tap
           // anywhere on the graph) to swap series. Rect first so the
           // letters paint on top; letters are pointer-events:none in
           // CSS so taps on them fall through to the rect.
           const isWind = mode === 'wind';
-          const showingLabel = isWind
-            ? (hasWindData ? 'wind speed' : 'wind speed (no data)')
-            : 'precipitation';
-          const nextLabel = isWind ? 'precipitation' : 'wind speed';
-          const letterX = width - paddingX / 2;
-          const toggle = `
-            <rect class="graph-mode-toggle" x="${width - paddingX}" y="0" width="${paddingX}" height="${height}" fill="transparent" pointer-events="all" role="button" tabindex="0" aria-label="Showing ${showingLabel}. Activate to show ${nextLabel}."></rect>
-            <text class="graph-mode-letter ${isWind ? '' : 'active rain'}" x="${letterX}" y="${paddingY + 5}" aria-hidden="true">R</text>
-            <text class="graph-mode-letter ${isWind ? 'active wind' : ''}" x="${letterX}" y="${paddingY + 20}" aria-hidden="true">W</text>`;
+          const isTide = mode === 'tide';
 
-          // Peak value in the user's unit; internal storage stays mm/h
-          // and m/s. Peak + baseline 0 only when there is data to scale.
+          // T only joins the cycle where there's marine data, so inland
+          // cities keep the original two-state R/W switch.
+          const cycle = tideAvailable ? ['precip', 'wind', 'tide'] : ['precip', 'wind'];
+          const nextMode = cycle[(cycle.indexOf(mode) + 1) % cycle.length];
+          const nameOf = (m) => m === 'wind'
+            ? (hasWindData ? 'wind speed' : 'wind speed (no data)')
+            : m === 'tide' ? 'tide height' : 'precipitation';
+
+          const letterX = width - paddingX / 2;
+          // Letters stack downward from a fixed top anchor, so R and W
+          // keep the exact positions they had before T existed — the
+          // switch doesn't appear to shift when you cross a coastline.
+          const letters = cycle.map((m, i) => {
+            const active = m === mode;
+            const tone = m === 'precip' ? 'rain' : m === 'wind' ? 'wind' : 'tide';
+            const y = paddingY + 5 + i * 15;
+            const ch = m === 'precip' ? 'R' : m === 'wind' ? 'W' : 'T';
+            return `<text class="graph-mode-letter ${active ? `active ${tone}` : ''}" x="${letterX}" y="${y}" aria-hidden="true">${ch}</text>`;
+          }).join('');
+
+          const toggle = `
+            <rect class="graph-mode-toggle" x="${width - paddingX}" y="0" width="${paddingX}" height="${height}" fill="transparent" pointer-events="all" role="button" tabindex="0" aria-label="Showing ${nameOf(mode)}. Activate to show ${nameOf(nextMode)}."></rect>
+            ${letters}`;
+
+          // Peak value in the user's unit; internal storage stays mm/h,
+          // m/s and metres. Peak + baseline only when there's data.
           let peakDisplay = '';
           let unitLabel = '';
+          let floorDisplay = '0';
           if (isWind) {
             if (hasWindData) {
               const disp = this._windToDisplay(maxWind);
@@ -4298,6 +4577,17 @@ const UI = {
             } else {
               peakDisplay = '—'; // wind unavailable from both sources
             }
+          } else if (isTide) {
+            // The tide axis is signed and window-relative, so both ends
+            // are labelled — a bare "0" floor would be a lie here.
+            const isFeet = Storage.getUnits().dist === 'mi';
+            const conv = (m) => isFeet ? m * 3.28084 : m;
+            unitLabel = isFeet ? 'ft' : 'm';
+            // Without the guard the 0.5m minimum-span widening turns an
+            // empty series into a confident-looking "0.3 m" peak on a
+            // graph that has no curve to justify it.
+            peakDisplay = hasTideData ? conv(tideMax).toFixed(1) : '—';
+            floorDisplay = conv(tideMin).toFixed(1);
           } else {
             const isInches = Storage.getUnits().precip === 'in';
             unitLabel = isInches ? 'in/h' : 'mm/h';
@@ -4305,16 +4595,23 @@ const UI = {
               peakDisplay = isInches ? (maxPrecip / 25.4).toFixed(2) : maxPrecip.toFixed(1);
             }
           }
-          const cls = 'graph-y-axis-label' + (isWind ? ' wind' : '');
-          const showZero = isWind ? hasWindData : hasRain;
+          const cls = 'graph-y-axis-label' +
+            (isWind ? ' wind' : '') + (isTide ? ' tide' : '');
+          const showFloor = isWind ? hasWindData : isTide ? hasTideData : hasRain;
           return toggle + `
             ${peakDisplay ? `<text class="${cls}" x="5" y="${paddingY + 5}">${peakDisplay}</text>` : ''}
             ${unitLabel ? `<text class="${cls}" x="5" y="${paddingY + 15}">${unitLabel}</text>` : ''}
-            ${showZero ? `<text class="${cls}" x="5" y="${height - paddingY - 5}">0</text>` : ''}
+            ${showFloor ? `<text class="${cls}" x="5" y="${height - paddingY - 5}">${floorDisplay}</text>` : ''}
           `;
         })()}
 
+        ${mode === 'tide' && tideStrokeD ? `
+          <path class="graph-tide-area" d="${tideFillD.trim()}"></path>
+          <path class="graph-tide-line" d="${tideStrokeD.trim()}" fill="none"></path>
+        ` : ''}
+
         ${points.map((p) => {
+          if (mode === 'tide') return ''; // tide draws as a curve, not bars
           if (mode === 'wind') {
             // null = no sample; 0 = calm (real sample, zero-height bar
             // either way, so skip the element for both).
@@ -4326,6 +4623,13 @@ const UI = {
         }).join('')}
 
         <path class="graph-path" d="${pathD}" fill="none" stroke="${CONFIG_TEMP_LINE_COLOR.enabled ? `url(#${gradientId})` : '#ff7043'}" style="${CONFIG_TEMP_LINE_COLOR.enabled ? `stroke: url(#${gradientId}) !important;` : ''}" stroke-width="3"></path>
+
+        ${markerX != null ? `
+          <line class="graph-position-line${markerIsPinned ? ' pinned' : ''}"
+                x1="${markerX}" y1="${paddingY - 12}" x2="${markerX}" y2="${height - paddingY}"></line>
+          <text class="graph-position-label${markerIsPinned ? ' pinned' : ''}"
+                x="${markerX}" y="${paddingY - 16}">${this.esc(markerLabel)}</text>
+        ` : ''}
 
         ${points.map(p => {
           if (!p.isOriginal) return '';
@@ -4386,12 +4690,24 @@ const UI = {
     // city-swipe cube face.
     if (this._graphCubeAnimating || this._cubeAnimating) return;
 
-    const next = this._graphMode === 'wind' ? 'precip' : 'wind';
-    this._graphMode = next;
-    Storage.setGraphMode(next);
-
     const graphEl = document.getElementById('graph-container');
     if (!graphEl || !this._lastGraph) return; // nothing visible; next render picks the mode up
+
+    // T is only in the cycle where there's marine data, so an inland city
+    // toggles between R and W exactly as before.
+    const t = this._lastGraph.opts && this._lastGraph.opts.tides;
+    const tideAvailable = !!(t && t.time && t.sea_level_height_msl);
+    const cycle = tideAvailable ? ['precip', 'wind', 'tide'] : ['precip', 'wind'];
+
+    // Start from what's actually ON SCREEN, not the stored preference —
+    // those differ when a saved 'tide' is being displayed as precip at an
+    // inland city, and cycling from the invisible value would appear to
+    // skip a mode.
+    const shown = (this._graphMode === 'tide' && !tideAvailable) ? 'precip' : this._graphMode;
+    const idx = cycle.indexOf(shown);
+    const next = cycle[(idx + 1) % cycle.length];
+    this._graphMode = next;
+    Storage.setGraphMode(next);
 
     // Re-render from the stored args (the resize path), then cube-flip
     // from the old markup to the new. Keyboard focus dies with the old
@@ -4400,14 +4716,22 @@ const UI = {
       document.activeElement.classList &&
       document.activeElement.classList.contains('graph-mode-toggle');
     const oldHTML = graphEl.innerHTML;
-    this.renderGraph(this._lastGraph.hourly, this._lastGraph.tz, this._lastGraph.omHourly || []);
+    this.renderGraph(
+      this._lastGraph.hourly,
+      this._lastGraph.tz,
+      this._lastGraph.omHourly || [],
+      this._lastGraph.opts || {}
+    );
     const newHTML = graphEl.innerHTML;
     if (newHTML === oldHTML) return; // hidden container etc. — mode saved, nothing to animate
 
     this._graphCubeAnimating = true;
-    // Horizontal-axis flip: wind rolls in from below, precip back from
-    // above — visually distinct from the vertical-axis day changes.
-    this.runElementCubeTransition(graphEl, oldHTML, newHTML, next === 'wind' ? 'up' : 'down')
+    // Horizontal-axis flip, distinct from the vertical-axis day changes.
+    // Advancing through the cycle always rolls UP so the motion reads as
+    // "next series" regardless of which one you land on; only the wrap
+    // back to the start rolls down, mirroring the way a carousel returns.
+    const direction = next === cycle[0] ? 'down' : 'up';
+    this.runElementCubeTransition(graphEl, oldHTML, newHTML, direction)
       .finally(() => {
         this._graphCubeAnimating = false;
         if (hadFocus) {

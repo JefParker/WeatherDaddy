@@ -82,19 +82,27 @@ const Storage = {
   clearCustomApiKey() {
     try { localStorage.removeItem(this.CUSTOM_KEY_STORAGE); } catch (_) {}
   },
-  // Graph bar-series mode: 'precip' (default) or 'wind'. Global — not
-  // per-day or per-city — and persisted so the choice survives reloads.
-  // Validated on read so junk in localStorage can't leak into rendering.
+  // Graph secondary-series mode: 'precip' (default), 'wind', or 'tide'.
+  // Global — not per-day or per-city — and persisted so the choice
+  // survives reloads. Validated on read so junk in localStorage can't
+  // leak into rendering.
+  //
+  // 'tide' is only renderable at coastal locations. It is deliberately
+  // still PERSISTED when you swipe to an inland city: the renderer falls
+  // back to precip for display without overwriting the preference, so
+  // coming back to the coast restores tides without a re-tap.
   GRAPH_MODE_STORAGE: 'graph_mode',
+  GRAPH_MODES: ['precip', 'wind', 'tide'],
   getGraphMode() {
     try {
-      return localStorage.getItem(this.GRAPH_MODE_STORAGE) === 'wind' ? 'wind' : 'precip';
+      const v = localStorage.getItem(this.GRAPH_MODE_STORAGE);
+      return this.GRAPH_MODES.includes(v) ? v : 'precip';
     } catch (_) {
       return 'precip';
     }
   },
   setGraphMode(mode) {
-    if (mode !== 'precip' && mode !== 'wind') return false;
+    if (!this.GRAPH_MODES.includes(mode)) return false;
     try { localStorage.setItem(this.GRAPH_MODE_STORAGE, mode); return true; }
     catch (_) { return false; }
   },

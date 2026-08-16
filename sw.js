@@ -5,7 +5,7 @@
 // strips the query before caching, so they never did anything and were
 // removed. A forgotten CACHE_NAME bump keeps serving the old files to
 // installed clients forever.)
-const CACHE_NAME = 'weatherdaddy-v192';
+const CACHE_NAME = 'weatherdaddy-v193';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
