@@ -948,6 +948,18 @@ a.about-source-name:hover {
   vertical-align: middle;
 }
 
+/* Which JS bundle and cache bucket are actually live. Diagnostic, so it
+   sits quietly under the title in monospace — the point is that the
+   digits are comparable at a glance, not that anyone reads it daily. */
+.about-build {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  opacity: 0.65;
+  margin: 6px 0 10px;
+  word-break: break-word;
+}
+
 /* Accordion styling */
 .about-accordion {
   display: flex;

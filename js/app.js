@@ -1391,6 +1391,42 @@ const App = {
     return extrema;
   },
 
+  // Build stamp for the JAVASCRIPT bundle, deliberately separate from the
+  // version chip hard-coded in index.html. The two are what caught the
+  // mixed-cache bug: About read v1.3.0 (fresh index.html) on a device
+  // whose ui.js was still the previous build, so the version number
+  // confidently described code that wasn't running. Bump this with the
+  // chip in index.html on every release — a mismatch on screen IS the
+  // diagnosis.
+  BUILD: '1.3.1',
+
+  // Writes "JS <build> · cache <bucket>" under the About version chip.
+  // Note what happens when js/app.js is STALE: old code has no
+  // renderBuildInfo, so the element keeps its "Checking build…"
+  // placeholder. A stuck placeholder therefore means "the JS you're
+  // running predates this feature" — the missing readout is itself the
+  // signal, which is why the placeholder isn't empty.
+  async renderBuildInfo() {
+    const el = document.getElementById('about-build');
+    if (!el) return;
+
+    let bucket = 'none';
+    try {
+      // caches.keys() is readable straight from the page — no round trip
+      // through the worker, which matters because a wedged worker is
+      // precisely the situation being diagnosed.
+      const mine = (await caches.keys()).filter(k => k.startsWith('weatherdaddy-'));
+      // More than one bucket means an activate cleanup hasn't finished;
+      // showing all of them is more useful than picking one.
+      if (mine.length) bucket = mine.join(', ');
+    } catch (_) {
+      bucket = 'unavailable';
+    }
+
+    const controlled = ('serviceWorker' in navigator) && !!navigator.serviceWorker.controller;
+    el.textContent = `JS ${this.BUILD} · cache ${bucket}` + (controlled ? '' : ' · not cached');
+  },
+
   registerServiceWorker() {
     if (!('serviceWorker' in navigator)) return;
 

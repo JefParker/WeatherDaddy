@@ -525,6 +525,16 @@ const UI = {
     if (screen === 'import-export' && show) {
       this.onShowImportExportScreen();
     }
+    // Refreshed on every open rather than once at boot: the cache bucket
+    // can change underneath a long-running session when a new worker
+    // activates, and that transition is exactly what this readout is for.
+    // Guarded because the mixed-version state this readout exists to
+    // diagnose includes "new ui.js, stale app.js" — calling it
+    // unconditionally would throw on every About open in exactly that
+    // case, and the placeholder is supposed to be the signal instead.
+    if (screen === 'about' && show && typeof App.renderBuildInfo === 'function') {
+      App.renderBuildInfo();
+    }
   },
 
   closeOverlayWithCube(overlayId) {
