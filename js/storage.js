@@ -55,8 +55,27 @@ const Storage = {
     }
   },
 
+  // Every localStorage write in this file goes through here. A bare
+  // setItem throws on quota (and in some privacy modes), and these
+  // particular writes sit in places where an exception does real damage:
+  // _refreshCity calls saveLocation INSIDE its try, so a quota error
+  // surfaced as "Failed to load weather data." after a fetch that had
+  // completely succeeded — and _applyCachedCity calls it before any
+  // state assignment, so the throw aborted a city swipe mid-animation.
+  //
+  // Losing a preference write is bad; losing it *disguised as a network
+  // failure* is worse. Returns false so callers can react if they care.
+  _write(key, value) {
+    try {
+      localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  },
+
   saveLocation(lat, lon, name) {
-    localStorage.setItem('weather_loc', JSON.stringify({ lat, lon, name }));
+    return this._write('weather_loc', { lat, lon, name });
   },
 
   // BYOK: user's own OpenWeatherMap API key. Stored verbatim in
@@ -110,7 +129,7 @@ const Storage = {
     return this._read('weather_loc', null);
   },
   saveUnits(units) {
-    localStorage.setItem('weather_units', JSON.stringify(units));
+    return this._write('weather_units', units);
   },
   // On first launch we don't have stored unit prefs, so we derive sensible
   // defaults from the browser locale (US gets °F / mph / inHg / in / mi /
@@ -232,22 +251,24 @@ const Storage = {
     let list = this.getSavedList();
     if (!this.isDuplicate(list, lat, lon, name)) {
       list.unshift({ lat, lon, name });
-      localStorage.setItem('weather_list', JSON.stringify(list));
+      return this._write('weather_list', list);
     }
+    return true; // already saved — nothing to write, not a failure
   },
   removeSavedList(index) {
     let list = this.getSavedList();
     list.splice(index, 1);
-    localStorage.setItem('weather_list', JSON.stringify(list));
+    return this._write('weather_list', list);
   },
   saveReorderedList(list) {
-    localStorage.setItem('weather_list', JSON.stringify(list));
+    return this._write('weather_list', list);
   },
   hasSeededCities() {
-    return localStorage.getItem('weather_seeded') === 'true';
+    try { return localStorage.getItem('weather_seeded') === 'true'; }
+    catch (_) { return false; }
   },
   markSeeded() {
-    localStorage.setItem('weather_seeded', 'true');
+    return this._write('weather_seeded', 'true');
   },
 
   // ---- Per-city weather cache --------------------------------------------
@@ -280,7 +301,22 @@ const Storage = {
 
   setWeatherCache(lat, lon, payload) {
     let all = this._read(this._CACHE_KEY, {});
-    all[this._cacheKey(lat, lon)] = { ...payload, ts: Date.now() };
+    const key = this._cacheKey(lat, lon);
+
+    // MERGE over the existing entry rather than replacing it. Not every
+    // writer fetches every field: _prefetchCity skips the NWS forecast
+    // discussion, so a plain replace made prefetching a neighbour DELETE
+    // a discussion that _refreshCity had already cached. And because
+    // _prefetchAdjacentCities pre-warms the neighbours of the destination
+    // — which includes the city you just landed on — a prefetch could
+    // strip the discussion for the city currently on screen. In-memory
+    // state still had it, so it looked fine until the next visit, and
+    // offline the bar could never come back at all.
+    //
+    // Merging also means any field added to the refresh payload but not
+    // the prefetch payload can't silently inherit this bug.
+    const existing = all[key] || {};
+    all[key] = { ...existing, ...payload, ts: Date.now() };
 
     // LRU eviction: keep the freshest _CACHE_MAX entries.
     const entries = Object.entries(all);

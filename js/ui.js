@@ -1359,6 +1359,15 @@ const UI = {
   _omHourToOwmSlot(h) {
     const slot = {
       dt: h.dt,
+      // Marks the slot as Open-Meteo-derived, because the two sources
+      // disagree about what `dt` MEANS. OWM's 3h buckets are treated as
+      // period STARTS throughout this file (the graph spreads a bucket
+      // forward from its dt). Open-Meteo's hourly precipitation is a
+      // preceding-hour sum, so here dt is a period END — the value
+      // describes [dt-1h, dt], and it then gets ×3 below. Any
+      // "is this slot still in the future?" test has to branch on this
+      // or it will count an hour that has already finished.
+      _omDerived: true,
       main: {
         temp: h.temp,
         feels_like: h.feelsLike != null ? h.feelsLike : h.temp,
@@ -2073,15 +2082,98 @@ const UI = {
     // Day totals for any forecast day: sum of rain+snow mm and max PoP across
     // the 3h slots in that day. Used identically for Today and forecast days
     // so the Precipitation / Probability rows update consistently.
-    const dayTotals = (day) => {
-      if (!day) return { rainMM: 0, pop: 0 };
-      const rainMM = day.hourly.reduce((sum, h) => {
-        const r = (h.rain && h.rain['3h']) || 0;
+    // Open-Meteo's daily summary, matched by city-local day KEY rather
+    // than array index — daily[0] is "today", but rendered day 0 can
+    // already be tomorrow near local midnight. Defined up here because
+    // the hero temperature, the daily list and the precip totals all
+    // need it now, not just the UV lookup further down.
+    const omDailyForKey = (key) => (state.omDaily || []).find(od => dayKeyFor(od.dt) === key) || null;
+
+    // A day's high and low, in Celsius.
+    //
+    // Deriving these from `day.temps` alone under-reports: that array is
+    // the 3-HOURLY spine, aligned to UTC hours, so the sampling phase
+    // drifts per city and the real extreme can fall up to 1.5h from any
+    // sample. Open-Meteo publishes the model's actual daily extremes and
+    // we were already fetching and discarding them.
+    //
+    // Taking the UNION rather than simply preferring Open-Meteo: on days
+    // 0-5 the spine is OWM's forecast while tempMax/tempMin come from
+    // Open-Meteo, so picking one model outright could print a high LOWER
+    // than the peak of the curve drawn right below it. Widening to cover
+    // both keeps the headline consistent with the graph — the number is
+    // never less than what the curve visibly reaches — while still
+    // catching an extreme the sampling missed. On days 6-8 the spine is
+    // Open-Meteo too, so the two agree and this is a pure improvement.
+    const dayExtremesC = (day) => {
+      if (!day || !day.temps || !day.temps.length) return null;
+      let hi = Math.max(...day.temps);
+      let lo = Math.min(...day.temps);
+      const om = day.key ? omDailyForKey(day.key) : null;
+      if (om) {
+        if (om.tempMax != null) hi = Math.max(hi, om.tempMax);
+        if (om.tempMin != null) lo = Math.min(lo, om.tempMin);
+      }
+      return { hi, lo };
+    };
+
+    // `wholeDay` false means "rest of today": sum only the slots still
+    // ahead, the way this has always worked for the Today tab.
+    //
+    // Open-Meteo's precipSum is a CALENDAR-DAY total, so using it for
+    // today would report rain that already fell — at 6 PM on a clear
+    // evening the row would read 18 mm because of a morning downpour.
+    // The sibling popMax stat already refuses the daily figure for today
+    // for exactly this reason; this keeps the two consistent.
+    const dayTotals = (day, wholeDay = true) => {
+      // hasWindow false, not undefined: no day means no forecast window
+      // at all, and the hero must not assert "No precipitation expected"
+      // off the back of it.
+      if (!day) return { rainMM: 0, pop: 0, snowMM: null, hasWindow: false };
+      // For a whole forecast day, Open-Meteo's exact total beats
+      // re-summing sampled buckets: _omHourToOwmSlot multiplies ONE
+      // sampled hour by three to stand in for a 3h bucket, so a short
+      // convective storm either vanishes between samples or gets tripled.
+      const om = (wholeDay && day.key) ? omDailyForKey(day.key) : null;
+      if (om && om.precipSum != null) {
+        const pop = day.hourly.reduce((mx, h) => Math.max(mx, h.pop || 0), 0);
+        // snowMM unused on this path — whole-day snow comes from
+        // omDaily.snowSumCM, which is already a depth.
+        return { rainMM: om.precipSum, pop, snowMM: null, hasWindow: true };
+      }
+      // "Rest of today" has to be enforced HERE, not assumed from the
+      // slot list. buildDailyData's MIN_SLOTS top-up backfills any short
+      // day from omHourly, which deliberately reaches 24h into the past —
+      // so today's slots include hours that have already elapsed, and
+      // summing them blindly reported this morning's rain as still to
+      // come.
+      //
+      // The cutoff is source-aware because dt means different things (see
+      // _omHourToOwmSlot): an OWM bucket starting an hour ago still holds
+      // two hours of future weather and should count, whereas an
+      // Open-Meteo slot stamped an hour ago describes an hour that has
+      // entirely finished — and carries a ×3 multiplier, so admitting it
+      // would add triple a fully-elapsed hour.
+      const nowSec = Math.floor(Date.now() / 1000);
+      const stillAhead = (h) => h._omDerived
+        ? h.dt > nowSec
+        : h.dt + 3 * 3600 > nowSec;
+      const slots = wholeDay ? day.hourly : day.hourly.filter(stillAhead);
+      let rainMM = 0;
+      let snowMM = 0;
+      for (const h of slots) {
+        rainMM += (h.rain && h.rain['3h']) || 0;
         const s = (h.snow && h.snow['3h']) || 0;
-        return sum + r + s;
-      }, 0);
-      const pop = day.hourly.reduce((mx, h) => Math.max(mx, h.pop || 0), 0);
-      return { rainMM, pop };
+        rainMM += s;   // total precipitation, water-equivalent
+        snowMM += s;   // the frozen share of it, tracked separately
+      }
+      // Same window as the rain sum — a 90% chance from a shower that
+      // came through at dawn isn't a forecast for the evening.
+      const pop = slots.reduce((mx, h) => Math.max(mx, h.pop || 0), 0);
+      // hasWindow false means there is nothing left of today to forecast,
+      // which is different from "nothing is expected" — see the hero
+      // precip line.
+      return { rainMM, pop, snowMM, hasWindow: slots.length > 0 };
     };
 
     // The Today tab (index 0) and the initial state (-1) both mean "today" —
@@ -2169,7 +2261,8 @@ const UI = {
     };
 
     const activeDay = isToday ? (() => {
-      const totals = dayTotals(todayData);
+      // Rest-of-today, not the calendar day — see dayTotals.
+      const totals = dayTotals(todayData, false);
       return {
         main: currentWeather.main,
         weather: currentWeather.weather,
@@ -2183,6 +2276,8 @@ const UI = {
         sunset: currentWeather.sys.sunset,
         pop: totals.pop,
         rainMM: totals.rainMM,
+        snowMM: totals.snowMM,
+        hasWindow: totals.hasWindow,
         // Used by the hero icon picker so a phase-correct moon shows
         // tonight if it's currently clear-night here. (Forecast days
         // get .dt via the `mid` spread in the else branch.)
@@ -2218,7 +2313,13 @@ const UI = {
         sunrise: sun.sunrise,
         sunset: sun.sunset,
         pop: totals.pop,
-        rainMM: totals.rainMM
+        rainMM: totals.rainMM,
+        // Carried so the Snow row can still work when Open-Meteo's daily
+        // summary is missing (offline, outage, OWM-only cache) — the
+        // slot-sum path computes a perfectly good snow figure that would
+        // otherwise be discarded, leaving a card showing Precipitation
+        // but no Snow for the same frozen precipitation.
+        snowMM: totals.snowMM
       };
     })();
 
@@ -2343,8 +2444,9 @@ const UI = {
       }
     } else {
       const day = dailyData[selectedDayIndex];
-      const hi = Math.round(this.convertTemp(Math.max(...day.temps)));
-      const lo = Math.round(this.convertTemp(Math.min(...day.temps)));
+      const ex = dayExtremesC(day);
+      const hi = Math.round(this.convertTemp(ex ? ex.hi : Math.max(...day.temps)));
+      const lo = Math.round(this.convertTemp(ex ? ex.lo : Math.min(...day.temps)));
       heroTempHTML = `<div class="hero-temp-large">${hi}° / ${lo}°</div>`;
     }
 
@@ -2355,7 +2457,7 @@ const UI = {
     // be tomorrow near local midnight (OWM's forecast window), which
     // used to show every forecast day the previous day's UV max.
     const uv = state.uv || { current: null, daily: [] };
-    const omDailyForKey = (key) => (state.omDaily || []).find(od => dayKeyFor(od.dt) === key) || null;
+    // omDailyForKey is defined further up, alongside dayExtremesC.
     const uvForKey = (key) => {
       const om = omDailyForKey(key);
       return om && om.uvIndexMax != null ? om.uvIndexMax : null;
@@ -2530,8 +2632,26 @@ const UI = {
     // Snow accumulation, whenever there is any. Always notable — snow is
     // the kind of thing you reorganise a day around, and unlike rain
     // there's no "token amount" worth suppressing.
-    if (activeOmDay && activeOmDay.snowSumCM > 0) {
-      notable.push(item('Snow', this.formatSnowDepth(activeOmDay.snowSumCM)));
+    //
+    // Today uses the SAME rest-of-day window as the Precipitation row
+    // above, converted from water-equivalent back to depth. Using the
+    // calendar-day snowSumCM here instead would put the two rows on
+    // different clocks: at 6 PM after a morning fall you'd see no
+    // Precipitation row (nothing left to come) but "Snow 5.0 cm" — and
+    // since snow's water equivalent is already folded into rainMM, the
+    // two would be describing overlapping amounts over different spans.
+    // Forecast days prefer Open-Meteo's exact daily depth, but fall back
+    // to the slot sum when enrichment is unavailable — otherwise the card
+    // shows a Precipitation figure (which already includes snow) with no
+    // Snow row beside it.
+    const snowFromSlots = activeDay.snowMM != null
+      ? activeDay.snowMM * this.SNOW_DEPTH_TO_WATER
+      : 0;
+    const snowDepthCM = (!isToday && activeOmDay && activeOmDay.snowSumCM != null)
+      ? activeOmDay.snowSumCM
+      : snowFromSlots;
+    if (snowDepthCM > 0) {
+      notable.push(item('Snow', this.formatSnowDepth(snowDepthCM)));
     }
     if (popValue > 0) {
       (popValue >= 0.3 ? notable : routine)
@@ -2911,9 +3031,16 @@ const UI = {
     // the next 2h beats the day-level percentage — "Rain starting around
     // 3:15 PM" is strictly more useful than "60% chance". Nowcast only
     // applies to the live "today" view.
+    // Late in the evening the last 3h slot of today has passed, so the
+    // rest-of-day window is empty and pop is 0 — which is the absence of
+    // a forecast, not a forecast of nothing. Asserting "No precipitation
+    // expected" there put that text on screen at 22:30 in a downpour,
+    // next to a rain icon and a graph full of rain bars. Say nothing
+    // instead; the hero already shows current conditions.
+    const noWindow = isToday && activeDay.hasWindow === false;
     let precipMsg = popValue > 0.1
       ? `${Math.round(popValue * 100)}% chance of precipitation`
-      : 'No precipitation expected';
+      : (noWindow ? '' : 'No precipitation expected');
     if (isToday && !pinnedHourSlot) {
       const cast = this._precipNowcast(state.omMinutely, nowSec);
       if (cast) {
@@ -2980,7 +3107,7 @@ const UI = {
         ${heroTempHTML}
         <div class="hero-feels-like">Feels like ${this.formatTemp(heroData.main.feels_like)}° - ${this.esc(breeze)}</div>
         ${yesterdayMsg ? `<div class="hero-yesterday">${this.esc(yesterdayMsg)}</div>` : ''}
-        <div class="precip-message">${precipMsg}</div>
+        ${precipMsg ? `<div class="precip-message">${precipMsg}</div>` : ''}
       </section>
 
       <div class="stats-pager" id="stats-pager">
@@ -3108,8 +3235,9 @@ const UI = {
             : date.toLocaleDateString([], { weekday: 'short', timeZone: 'UTC' });
           const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric', timeZone: 'UTC' });
           // Round AFTER converting to the user's unit to avoid compounding errors.
-          const maxTemp = Math.round(this.convertTemp(Math.max(...d.temps)));
-          const minTemp = Math.round(this.convertTemp(Math.min(...d.temps)));
+          const dEx = dayExtremesC(d);
+          const maxTemp = Math.round(this.convertTemp(dEx ? dEx.hi : Math.max(...d.temps)));
+          const minTemp = Math.round(this.convertTemp(dEx ? dEx.lo : Math.min(...d.temps)));
           // Most-notable-weather icon for the day (storm > snow > rain >
           // dust/haze > clouds > clear), tie-broken by closeness to
           // local noon. Identical picker as the hero, so tapping this

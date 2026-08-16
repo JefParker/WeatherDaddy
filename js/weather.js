@@ -255,15 +255,21 @@ const WeatherAPI = {
       tempMax:      d.temperature_2m_max  ? d.temperature_2m_max[i]  : null,
       tempMin:      d.temperature_2m_min  ? d.temperature_2m_min[i]  : null,
       weatherCode:  d.weathercode         ? d.weathercode[i]         : null,
-      precipSum:    d.precipitation_sum   ? d.precipitation_sum[i] || 0 : 0,
+      // NOT `|| 0` — that coerced a missing column and a genuine null to
+      // the same 0, so a consumer could never tell "Open-Meteo says it's
+      // dry" from "Open-Meteo has no figure", and any fallback guarded on
+      // `!= null` was dead code. A real 0 still comes through as 0.
+      precipSum:    d.precipitation_sum   ? d.precipitation_sum[i] : null,
       sunrise:      d.sunrise             ? d.sunrise[i]             : null,
       sunset:       d.sunset              ? d.sunset[i]              : null,
       uvIndexMax:   d.uv_index_max        ? d.uv_index_max[i]        : null,
       popMax:       d.precipitation_probability_max ? d.precipitation_probability_max[i] : null,
       windMax:      d.windspeed_10m_max   ? d.windspeed_10m_max[i]   : null,
       gustMax:      d.windgusts_10m_max   ? d.windgusts_10m_max[i]   : null,
-      // Depth in cm, same convention as hourly snowCM.
-      snowSumCM:    d.snowfall_sum        ? d.snowfall_sum[i] || 0   : 0,
+      // Depth in cm, same convention as hourly snowCM. Null-preserving
+      // for the same reason as precipSum above — `|| 0` would make the
+      // "is this figure available?" guard in the Snow stat dead code.
+      snowSumCM:    d.snowfall_sum        ? d.snowfall_sum[i]        : null,
       sunshineSec:  d.sunshine_duration   ? d.sunshine_duration[i]   : null
     })).filter(day => day.dt + 86400 > nowSec);
 

@@ -382,7 +382,14 @@ const App = {
     if (!CITIES) {
       spinner.classList.add('visible');
       const script = document.createElement('script');
-      script.src = 'js/cities.js?v=3';
+      // No ?v= here, deliberately. The service worker's cacheKey() strips
+      // query strings before matching (sw.js), so a busted URL resolves
+      // straight back to the precached ./js/cities.js and the bump does
+      // nothing — it just looks like cache-busting. Shipping a new city
+      // list actually requires bumping BOTH CACHE_NAME in sw.js and
+      // Storage.CURRENT_CITIES_KEY, since returning users are served from
+      // the localStorage copy and never re-request this script at all.
+      script.src = 'js/cities.js';
       script.async = true;
       script.onload = () => {
         // cities.js sets the global window.CITIES array
@@ -665,6 +672,17 @@ const App = {
     if (Date.now() - (cached.ts || 0) > this.WEATHER_CACHE_MAX_AGE_MS) return false;
 
     const cityName = name || cached.cityName;
+
+    // Captured BEFORE the state assignments below, for the same reason
+    // _refreshCity captures its oldDayKey early: getDayKey derives the
+    // day list from current state, so asking after the swap would just
+    // describe the incoming payload and tell us nothing. Indices -1 and 0
+    // both mean "today" and should follow a rollover, so only a real
+    // forward selection is worth re-anchoring.
+    const prevDayKey = (preserveSelection && this.state.selectedDayIndex > 0)
+      ? this.getDayKey(this.state.selectedDayIndex)
+      : null;
+
     Storage.saveLocation(lat, lon, cityName);
 
     this.state.currentWeather   = cached.currentWeather;
@@ -695,7 +713,21 @@ const App = {
     if (!preserveSelection) {
       this.state.selectedDayIndex = -1;
       this.state.selectedHourDt   = null;
-    } else if (this.state.selectedHourDt != null) {
+    } else if (prevDayKey != null) {
+      // Re-anchor the day INDEX against the payload we're about to
+      // render, the same way _refreshCity does. buildDailyData doesn't
+      // drop past days, so a cached forecast that still contains
+      // yesterday shifts every index by one — without this, a cached
+      // paint that crosses local midnight highlights the wrong day for
+      // the second or so until the network response lands. It can also
+      // strand an index past the end of a shortened list (enrichment
+      // down → days 6-8 disappear), which renderDashboard clamps
+      // visually but never writes back, so the stale index springs back
+      // the moment enrichment recovers.
+      const idx = this._buildDailyData().findIndex(d => d.key === prevDayKey);
+      this.state.selectedDayIndex = idx !== -1 ? idx : -1;
+    }
+    if (preserveSelection && this.state.selectedHourDt != null) {
       // Revalidate the pin against the payload we're about to render.
       // _refreshCity does this for the network response, but if that
       // request then fails (offline) nothing else would ever clear a pin
@@ -747,7 +779,16 @@ const App = {
         WeatherAPI.getForecastDiscussion(lat, lon).catch(() => null)
       ]);
 
-      if (token !== this._fetchToken) return;
+      // Superseded by a newer fetch (the user navigated mid-flight).
+      // Drop any pending share-link restore on the way out: it targets
+      // THIS city, and leaving it set would apply a stranger's day/hour
+      // pin to whichever city the user just moved to. _resolveSharedDayAndHour
+      // assigns unconditionally, so even a total match failure would
+      // clobber their current selection with -1/null.
+      if (token !== this._fetchToken) {
+        this._sharedStateToRestore = null;
+        return;
+      }
 
       const cityName = name || currentWeather.name;
 
@@ -879,6 +920,10 @@ const App = {
 
       this.renderAll();
     } catch (e) {
+      // Same reasoning as the stale-token return above — a share-link
+      // restore that never got consumed must not survive to be applied
+      // to a different city later.
+      this._sharedStateToRestore = null;
       if (token !== this._fetchToken) return;
       // BYOK: surface inactive/invalid user keys as a clear, actionable
       // message instead of the generic "Failed to load weather data."
@@ -1424,7 +1469,7 @@ const App = {
   // confidently described code that wasn't running. Bump this with the
   // chip in index.html on every release — a mismatch on screen IS the
   // diagnosis.
-  BUILD: '1.4.0',
+  BUILD: '1.4.1',
 
   // Writes "JS <build> · cache <bucket>" under the About version chip.
   // Note what happens when js/app.js is STALE: old code has no
