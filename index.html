@@ -291,7 +291,7 @@
         <section class="about-section about-header-brand">
           <img class="about-logo" src="assets/icons/icon-192.png" alt="WeatherDaddy logo" width="64" height="64">
           <div class="about-brand-text">
-            <h3 class="about-title">WeatherDaddy <span class="about-version">v1.3.2</span></h3>
+            <h3 class="about-title">WeatherDaddy <span class="about-version">v1.4.0</span></h3>
             <!-- Populated by App.renderBuildInfo() each time this screen
                  opens. If it still reads "Checking build…" the JS bundle
                  is older than that function — i.e. a stale cache. -->
@@ -346,6 +346,7 @@
               </button>
               <div class="accordion-content">
                 <p>Coastal locations automatically display high and low tide times on the quick-stats grid, along with the current <strong>water temperature</strong>. Heights are shown alongside the time wherever the range is large enough to be worth reading. Select a forecast day and the rows switch from "next" tide to that day's tides.</p>
+                <p>Near a U.S. coast, tide times come from the nearest <strong>NOAA tide station</strong> — the same harmonic predictions printed tide tables use. Elsewhere they fall back to a global ocean model, which is fine for "is the tide in or out" but can be over an hour off at a specific harbour.</p>
                 <p>At the coast the graph gains a third view: a <strong>tide curve</strong> showing sea level across the day. Tap the <strong>R / W / T</strong> letters in the graph's right edge — or double-tap the graph — to cycle precipitation → wind → tide. Inland locations keep the two-way R / W switch, and your choice of tide view is remembered for when you come back to the coast.</p>
                 <p>If a full moon is happening within 12 hours of nightfall, it takes center stage on the stats grid with its traditional name and optimal viewing time.</p>
               </div>
@@ -459,7 +460,7 @@
             </li>
             <li>
               <a class="about-source-name" href="https://www.weather.gov" target="_blank" rel="noopener noreferrer">U.S. National Weather Service ↗</a>
-              <span class="about-source-desc">Severe weather alerts (Severe / Extreme) for U.S. locations.</span>
+              <span class="about-source-desc">Severe weather alerts (Severe / Extreme), area forecast discussions, and CO-OPS station tide predictions for U.S. locations.</span>
             </li>
             <li>
               <a class="about-source-name" href="https://www.geonames.org" target="_blank" rel="noopener noreferrer">GeoNames ↗</a>
@@ -754,6 +755,9 @@
   </script>
 
   <script src="js/storage.js"></script>
+  <!-- Generated NOAA station catalogue; see tools/gen-tide-stations.sh.
+       Must load before weather.js, which reads TIDE_STATIONS. -->
+  <script src="js/tide-stations.js"></script>
   <script src="js/location.js"></script>
   <script src="js/weather.js"></script>
   <script src="js/ui.js"></script>

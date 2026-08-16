@@ -247,13 +247,14 @@ const App = {
 
     const promise = (async () => {
       try {
-        const [currentWeather, forecast, enrichment, airQuality, alerts, tides] = await Promise.all([
+        const [currentWeather, forecast, enrichment, airQuality, alerts, tides, noaaTides] = await Promise.all([
           WeatherAPI.getCurrentWeather(lat, lon),
           WeatherAPI.getForecast(lat, lon),
           WeatherAPI.getEnrichment(lat, lon).catch(() => ({ uv: { current: null, daily: [] }, hourly: [], daily: [] })),
           WeatherAPI.getAirQuality(lat, lon).catch(() => ({ aqi: null, pollen: null, treePollen: null, grassPollen: null, weedPollen: null })),
           WeatherAPI.getAlerts(lat, lon).catch(() => []),
-          WeatherAPI.getMarine(lat, lon).catch(() => null)
+          WeatherAPI.getMarine(lat, lon).catch(() => null),
+          WeatherAPI.getNoaaTides(lat, lon).catch(() => null)
         ]);
         Storage.setWeatherCache(lat, lon, {
           currentWeather,
@@ -267,6 +268,7 @@ const App = {
           alerts,
           tides: tides ? tides.hourly : null,
           tideCoords: tides ? { lat: tides.latitude, lon: tides.longitude } : null,
+          tidePredictions: noaaTides || null,
           cityName: name || currentWeather.name
         });
       } catch (_) {
@@ -676,7 +678,10 @@ const App = {
     this.state.alerts           = cached.alerts || [];
     this.state.tides            = cached.tides || null;
     this.state.tideCoords       = cached.tideCoords || null;
-    this.state.tideExtrema      = this.state.tides ? this.findTideExtrema(this.state.tides) : [];
+    this.state.tidePredictions  = cached.tidePredictions || null;
+    this.state.tideExtrema      = this.state.tidePredictions
+      ? this.state.tidePredictions.extrema
+      : (this.state.tides ? this.findTideExtrema(this.state.tides) : []);
     this.state.discussion       = cached.discussion || null;
     this.state.cityName         = cityName;
     this.state.timezone         = cached.currentWeather.timezone;
@@ -728,13 +733,17 @@ const App = {
     }
 
     try {
-      const [currentWeather, forecast, enrichment, airQuality, alerts, tides, discussion] = await Promise.all([
+      const [currentWeather, forecast, enrichment, airQuality, alerts, tides, noaaTides, discussion] = await Promise.all([
         WeatherAPI.getCurrentWeather(lat, lon),
         WeatherAPI.getForecast(lat, lon),
         WeatherAPI.getEnrichment(lat, lon).catch(() => ({ uv: { current: null, daily: [] }, hourly: [], daily: [] })),
         WeatherAPI.getAirQuality(lat, lon).catch(() => ({ aqi: null, pollen: null, treePollen: null, grassPollen: null, weedPollen: null })),
         WeatherAPI.getAlerts(lat, lon).catch(() => []),
         WeatherAPI.getMarine(lat, lon).catch(() => null),
+        // Both, deliberately: NOAA gives accurate tide TIMES for US
+        // coasts, Open-Meteo's marine call is the only source of
+        // sea-surface temperature and the global tide fallback.
+        WeatherAPI.getNoaaTides(lat, lon).catch(() => null),
         WeatherAPI.getForecastDiscussion(lat, lon).catch(() => null)
       ]);
 
@@ -754,6 +763,7 @@ const App = {
         alerts,
         tides: tides ? tides.hourly : null,
         tideCoords: tides ? { lat: tides.latitude, lon: tides.longitude } : null,
+        tidePredictions: noaaTides || null,
         discussion: discussion || null,
         cityName
       });
@@ -807,7 +817,13 @@ const App = {
       this.state.alerts           = alerts;
       this.state.tides            = tides ? tides.hourly : null;
       this.state.tideCoords       = tides ? { lat: tides.latitude, lon: tides.longitude } : null;
-      this.state.tideExtrema      = this.state.tides ? this.findTideExtrema(this.state.tides) : [];
+      this.state.tidePredictions  = noaaTides || null;
+      // NOAA hands us exact turning points, so skip the extrema search
+      // entirely on that path — no hourly-sampling error, no quadratic
+      // refinement, no phantom extrema across coverage gaps.
+      this.state.tideExtrema      = noaaTides
+        ? noaaTides.extrema
+        : (this.state.tides ? this.findTideExtrema(this.state.tides) : []);
       this.state.discussion       = discussion || null;
       this.state.cityName         = cityName;
       this.state.timezone         = currentWeather.timezone;
@@ -1408,7 +1424,7 @@ const App = {
   // confidently described code that wasn't running. Bump this with the
   // chip in index.html on every release — a mismatch on screen IS the
   // diagnosis.
-  BUILD: '1.3.2',
+  BUILD: '1.4.0',
 
   // Writes "JS <build> · cache <bucket>" under the About version chip.
   // Note what happens when js/app.js is STALE: old code has no

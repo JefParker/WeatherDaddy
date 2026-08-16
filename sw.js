@@ -18,7 +18,7 @@
 // (index.html used to also carry ?v= query strings, but cacheKey()
 // strips the query before caching, so they never did anything and were
 // removed.)
-const CACHE_NAME = 'weatherdaddy-v196';
+const CACHE_NAME = 'weatherdaddy-v197';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -27,6 +27,7 @@ const ASSETS_TO_CACHE = [
   './js/weather.js',
   './js/ui.js',
   './js/storage.js',
+  './js/tide-stations.js',
   './js/location.js',
   './js/cities.js',
   './manifest.json',

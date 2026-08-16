@@ -2744,30 +2744,46 @@ const UI = {
       nextLowItem  = item(lowLabel,  tideValue(pick('Low')));
     }
 
-    // How close the marine grid cell the API snapped to is to the city
-    // itself. Longitude degrees shrink toward the poles, so the raw
-    // Pythagorean distance used before made the effective radius ~7km at
-    // the equator but only ~3.5km at 60°N — Nordic coastal cities were
-    // being demoted to the last stats page. Scale the longitude term by
-    // cos(lat) so the threshold is a true ~7km everywhere.
-    let touchesWater = false;
+    // Fallback coastal test: how close the marine grid cell the API
+    // snapped to is to the city itself. Longitude degrees shrink toward
+    // the poles, so the raw Pythagorean distance used before made the
+    // effective radius ~7km at the equator but only ~3.5km at 60°N —
+    // Nordic coastal cities were being demoted to the last stats page.
+    // Scale the longitude term by cos(lat) for a true ~7km everywhere.
+    //
+    // A matched NOAA station IS the coastal signal — stations only exist
+    // on tidal water, and it's a far stronger statement than "the marine
+    // model grid snapped somewhere nearby". Checked first so a location
+    // with good tide data never gets demoted to the last stats page
+    // because the Open-Meteo grid cell happened to land far offshore.
+    // Two separate questions, deliberately not conflated:
+    //   marineCellIsLocal — is Open-Meteo's grid cell actually near this
+    //     city? Governs WATER TEMP, which comes only from that cell.
+    //   touchesWater — should tide rows show at all? A NOAA station is a
+    //     stronger yes than any proximity heuristic.
+    // Reusing one flag for both would let a nearby station vouch for an
+    // SST reading taken 40km offshore, behind a headland or up a bay.
+    let marineCellIsLocal = false;
     if (currentWeather.coord && state.tideCoords) {
       const latRad = currentWeather.coord.lat * Math.PI / 180;
       const dLat = state.tideCoords.lat - currentWeather.coord.lat;
       const dLon = (state.tideCoords.lon - currentWeather.coord.lon) * Math.cos(latRad);
       const degDiff = Math.sqrt(dLat * dLat + dLon * dLon);
-      touchesWater = degDiff <= 0.065;
+      marineCellIsLocal = degDiff <= 0.065;
     }
+    const touchesWater = !!state.tidePredictions || marineCellIsLocal;
 
     if (touchesWater && tideRowsExpected) {
       routine.push(nextHighItem);
       routine.push(nextLowItem);
     }
 
-    // Sea-surface temperature for the hour being viewed. Coastal only —
-    // the marine call is the sole source, and it 400s inland.
+    // Sea-surface temperature for the hour being viewed. Gated on
+    // marineCellIsLocal rather than touchesWater: Open-Meteo's marine
+    // cell is the sole source, so if that cell isn't near the city the
+    // number isn't this city's water, whatever the tide station says.
     const waterTemp = this._waterTempAt(state.tides, heroData.dt);
-    if (touchesWater && waterTemp != null) {
+    if (marineCellIsLocal && waterTemp != null) {
       routine.push(item('Water temp', `${this.formatTemp(waterTemp)}°`));
     }
 
@@ -3321,8 +3337,14 @@ const UI = {
     // _lastGraph and replayed on resize and on every mode toggle, so a
     // baked-in timestamp would freeze the line at whenever the dashboard
     // last rendered. renderGraph reads the clock itself.
+    // Prefer NOAA's harmonic curve over the Open-Meteo model for the same
+    // reason the times come from NOAA — and so the drawn curve and the
+    // high/low rows can never disagree about when the peak is.
+    const tideSeries = (state.tidePredictions && state.tidePredictions.hourly)
+      || state.tides;
+
     this.renderGraph(activeDay.hourly, tz, state.omHourly || [], {
-      tides: touchesWater ? state.tides : null,
+      tides: touchesWater ? tideSeries : null,
       markerDt: pinnedHourSlot ? pinnedHourSlot.dt : null,
       markerIsNow: isToday && !pinnedHourSlot
     });
@@ -4485,6 +4507,12 @@ const UI = {
     // Falls outside the plotted window on any day that isn't the one
     // being shown, in which case nothing is drawn.
     let markerX = null;
+    // True when the marker was pulled to the left edge rather than placed
+    // at its real time — the label is suppressed in that case, because
+    // parking the word "now" on the 11 AM gridline states something
+    // untrue. The bare line still usefully says "you are at or before
+    // the start of this chart".
+    let markerClamped = false;
     const markerIsPinned = opts.markerDt != null;
     const markerDt = markerIsPinned
       ? opts.markerDt
@@ -4499,7 +4527,10 @@ const UI = {
         // first plotted point, and a strict range check would hide the
         // line on the one day it matters most. Pin it to the left edge
         // when it's within one slot; anything older is genuinely off-chart.
-        if (first - markerDt <= 3 * 3600) markerX = points[0].x;
+        if (first - markerDt <= 3 * 3600) {
+          markerX = points[0].x;
+          markerClamped = true;
+        }
       } else if (markerDt <= lastDt) {
         for (let i = 0; i < points.length - 1; i++) {
           const a = points[i], b = points[i + 1];
@@ -4637,8 +4668,8 @@ const UI = {
         ${markerX != null ? `
           <line class="graph-position-line${markerIsPinned ? ' pinned' : ''}"
                 x1="${markerX}" y1="${paddingY - 12}" x2="${markerX}" y2="${height - paddingY}"></line>
-          <text class="graph-position-label${markerIsPinned ? ' pinned' : ''}"
-                x="${markerX}" y="${paddingY - 16}">${this.esc(markerLabel)}</text>
+          ${markerClamped ? '' : `<text class="graph-position-label${markerIsPinned ? ' pinned' : ''}"
+                x="${markerX}" y="${paddingY - 16}">${this.esc(markerLabel)}</text>`}
         ` : ''}
 
         ${points.map(p => {

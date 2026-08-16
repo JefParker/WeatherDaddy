@@ -462,6 +462,123 @@ const WeatherAPI = {
     }
   },
 
+  // ── NOAA CO-OPS tide predictions ─────────────────────────────────────
+  //
+  // Open-Meteo's `sea_level_height_msl` is a global OCEAN MODEL sampled at
+  // a grid cell, and its phase can differ substantially from the harbour
+  // you actually care about — measured against Honolulu Harbor it ran
+  // ~100 minutes early on the low and ~76 on the high. NOAA publishes
+  // station-based HARMONIC predictions, which is what printed tide tables
+  // use, so prefer those wherever a station is close enough. Open-Meteo
+  // stays as the global fallback (and remains the only source of
+  // sea-surface temperature — NOAA predictions carry no SST).
+  //
+  // 50 km: US station density is high enough that a real coastal location
+  // almost always has one much closer, and beyond ~50 km the phase
+  // difference this exists to fix starts creeping back in.
+  NOAA_TIDE_MAX_KM: 50,
+
+  _haversineKm(aLat, aLon, bLat, bLon) {
+    const R = 6371;
+    const toRad = (d) => d * Math.PI / 180;
+    const dLat = toRad(bLat - aLat);
+    const dLon = toRad(bLon - aLon);
+    const s = Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+  },
+
+  // Linear scan over the bundled catalogue (~3,300 entries) — a few
+  // thousand haversines is nothing next to the network calls that follow,
+  // and it avoids shipping a spatial index for one lookup per city.
+  nearestTideStation(lat, lon) {
+    const list = (typeof TIDE_STATIONS !== 'undefined' && TIDE_STATIONS) || [];
+    let best = null;
+    let bestKm = Infinity;
+    for (const s of list) {
+      const km = this._haversineKm(lat, lon, s[2], s[3]);
+      if (km < bestKm) { bestKm = km; best = s; }
+    }
+    if (!best || bestKm > this.NOAA_TIDE_MAX_KM) return null;
+    return { id: best[0], name: best[1], lat: best[2], lon: best[3], km: bestKm };
+  },
+
+  // Returns { station, extrema, hourly } or null. `hourly` deliberately
+  // mirrors Open-Meteo's { time[], sea_level_height_msl[] } shape so the
+  // graph renderer doesn't need to know which source it's drawing.
+  //
+  // datum=MSL, not the MLLW that tide tables print: it matches what
+  // Open-Meteo returns, so heights mean the same thing regardless of
+  // source and the display threshold doesn't have to branch. Times are
+  // identical under either datum — only the zero point moves.
+  async getNoaaTides(lat, lon) {
+    const station = this.nearestTideStation(lat, lon);
+    if (!station) return null;
+
+    const ymd = (d) => `${d.getUTCFullYear()}` +
+      `${String(d.getUTCMonth() + 1).padStart(2, '0')}` +
+      `${String(d.getUTCDate()).padStart(2, '0')}`;
+    const now = Date.now();
+    // -1/+8 days mirrors the main forecast's past_days=1 / forecast_days=8,
+    // so tide rows never run out before the day list does.
+    const begin = ymd(new Date(now - 86400000));
+    const end = ymd(new Date(now + 8 * 86400000));
+
+    const base = 'https://api.tidesandcurrents.noaa.gov/api/prod/datagetter' +
+      '?product=predictions&application=WeatherDaddy&datum=MSL&units=metric' +
+      '&time_zone=gmt&format=json' +
+      `&station=${enc(station.id)}&begin_date=${enc(begin)}&end_date=${enc(end)}`;
+
+    // GMT timestamps, "YYYY-MM-DD HH:MM" with no zone marker.
+    const toSec = (t) => Date.parse(String(t).replace(' ', 'T') + 'Z') / 1000;
+
+    try {
+      // hilo gives the turning points EXACTLY, so unlike the Open-Meteo
+      // path there's no need to hunt for extrema in an hourly series and
+      // no interpolation error. The hourly series is fetched only to draw
+      // the curve.
+      const [hiloRes, hourlyRes] = await Promise.all([
+        fetch(base + '&interval=hilo'),
+        fetch(base + '&interval=h')
+      ]);
+      if (!hiloRes.ok || !hourlyRes.ok) return null;
+
+      const [hilo, hourly] = await Promise.all([hiloRes.json(), hourlyRes.json()]);
+      if (!hilo || !hilo.predictions || !hourly || !hourly.predictions) return null;
+
+      const extrema = hilo.predictions
+        .map(p => ({
+          type: p.type === 'H' ? 'High' : 'Low',
+          dt: toSec(p.t),
+          h: parseFloat(p.v)
+        }))
+        .filter(e => isFinite(e.dt) && isFinite(e.h))
+        .sort((a, b) => a.dt - b.dt);
+
+      const time = [];
+      const levels = [];
+      for (const p of hourly.predictions) {
+        const dt = toSec(p.t);
+        const v = parseFloat(p.v);
+        if (!isFinite(dt) || !isFinite(v)) continue;
+        time.push(dt);
+        levels.push(v);
+      }
+
+      // A station that returns one but not the other is unusable — fall
+      // back rather than render half a feature.
+      if (!extrema.length || !time.length) return null;
+
+      return {
+        station,
+        extrema,
+        hourly: { time, sea_level_height_msl: levels }
+      };
+    } catch (_) {
+      return null;
+    }
+  },
+
   // Session-scoped memo of coordinates the marine API has already told us
   // it has no data for. Without it, every landlocked saved city fires a
   // doomed marine request on every 15-minute auto-refresh and on every
