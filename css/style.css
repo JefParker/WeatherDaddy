@@ -2520,6 +2520,17 @@ body.has-alert .a2hs-prompt {
   stroke-width: 1.5;
   stroke-dasharray: none;
 }
+/* Series name centred above the plot — a caption, not data, so it stays
+   neutral and lets the switch letters carry the colour coding. */
+.graph-series-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-anchor: middle;
+  fill: rgba(255, 255, 255, 0.45);
+  pointer-events: none;
+}
+
 .graph-position-label {
   font-size: 9px;
   font-weight: 600;

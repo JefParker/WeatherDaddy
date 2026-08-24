@@ -4761,6 +4761,11 @@ const UI = {
         <line class="graph-guideline" x1="${paddingX}" y1="${paddingY}" x2="${width - paddingX}" y2="${paddingY}"></line>
 
         ${(() => {
+          // Centred above the plot: the name of the series the bars or
+          // curve are showing. The lit letter in the switch already says
+          // WHICH one is active, but only to someone who knows the code —
+          // this spells it out, and it's the piece that tells you what
+          // changed after a mode flip.
           // Left gutter: pure axis labels — peak in the user's unit,
           // an always-visible unit line (so the axis is never blank on
           // a dry day), baseline 0 when there's data to scale.
@@ -4844,7 +4849,13 @@ const UI = {
             (isWind ? ' wind' : '') + (isTide ? ' tide' : '') + (isUv ? ' uv' : '');
           const showFloor = isWind ? hasWindData
             : isTide ? hasTideData : isUv ? hasUvData : hasRain;
+
+          // Sits at y=12, above everything: the ±2° headroom baked into
+          // the temperature scale keeps the topmost badge below y=25, and
+          // the position marker's label is lower still at paddingY - 16.
+          const title = nameOf(mode);
           return toggle + `
+            <text class="graph-series-label" x="${width / 2}" y="12">${this.esc(title.charAt(0).toUpperCase() + title.slice(1))}</text>
             ${peakDisplay ? `<text class="${cls}" x="5" y="${paddingY + 5}">${peakDisplay}</text>` : ''}
             ${unitLabel ? `<text class="${cls}" x="5" y="${paddingY + 15}">${unitLabel}</text>` : ''}
             ${showFloor ? `<text class="${cls}" x="5" y="${height - paddingY - 5}">${floorDisplay}</text>` : ''}
