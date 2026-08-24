@@ -101,17 +101,19 @@ const Storage = {
   clearCustomApiKey() {
     try { localStorage.removeItem(this.CUSTOM_KEY_STORAGE); } catch (_) {}
   },
-  // Graph secondary-series mode: 'precip' (default), 'wind', or 'tide'.
-  // Global — not per-day or per-city — and persisted so the choice
+  // Graph secondary-series mode: 'precip' (default), 'wind', 'tide' or
+  // 'uv'. Global — not per-day or per-city — and persisted so the choice
   // survives reloads. Validated on read so junk in localStorage can't
   // leak into rendering.
   //
-  // 'tide' is only renderable at coastal locations. It is deliberately
-  // still PERSISTED when you swipe to an inland city: the renderer falls
-  // back to precip for display without overwriting the preference, so
-  // coming back to the coast restores tides without a re-tap.
+  // 'tide' is only renderable at coastal locations, and 'uv' only on days
+  // that reach the WHO "Very High" band. Both are deliberately still
+  // PERSISTED when you swipe somewhere they don't apply: the renderer
+  // falls back to precip for display without overwriting the preference,
+  // so coming back to the coast — or on to a high-UV day — restores the
+  // choice without a re-tap.
   GRAPH_MODE_STORAGE: 'graph_mode',
-  GRAPH_MODES: ['precip', 'wind', 'tide'],
+  GRAPH_MODES: ['precip', 'wind', 'tide', 'uv'],
   getGraphMode() {
     try {
       const v = localStorage.getItem(this.GRAPH_MODE_STORAGE);

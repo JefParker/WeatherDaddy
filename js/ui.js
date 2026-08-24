@@ -58,6 +58,11 @@ function getRelevantFullMoons(nowDtSec) {
   return [_fullMoonAt(kNear - 1), _fullMoonAt(kNear), _fullMoonAt(kNear + 1)];
 }
 
+// WHO UV Index band boundaries, shared by the graph's UV mode. The same
+// numbers uvLabel() names: 8+ is "Very High", 11+ is "Extreme".
+const UV_VERY_HIGH = 8;
+const UV_EXTREME = 11;
+
 // Feature Toggle: Set to true to use a dynamic temperature-based color gradient,
 // or false to revert to the default orange temperature line style.
 const CONFIG_TEMP_LINE_COLOR = {
@@ -135,6 +140,10 @@ const UI = {
 
   _resizeBound: false,
   _lastGraph: null,
+  // Series the graph's switch last offered, in cycle order. Written by
+  // renderGraph, read by _toggleGraphMode — T and U come and go with the
+  // city and the day, so the cycle can't be re-derived at tap time.
+  _graphCycle: null,
   _clockTimezone: 0,
   _clockTimer: null,
 
@@ -4417,8 +4426,8 @@ const UI = {
     // changes and on mode toggles.
     this._lastGraph = { hourly: hourlyData, tz, omHourly, opts };
 
-    // 'precip' | 'wind' | 'tide' — which secondary series the graph
-    // shows. Global and persisted; lives on UI (not the DOM) because the
+    // 'precip' | 'wind' | 'tide' | 'uv' — which secondary series the
+    // graph shows. Global and persisted; lives on UI (not the DOM) because the
     // graph's innerHTML is replaced wholesale on every render and cube
     // transition.
     const saved = this._graphMode || (this._graphMode = Storage.getGraphMode());
@@ -4429,7 +4438,10 @@ const UI = {
     // getGraphMode note).
     const tideSeries = opts.tides || null;
     const tideAvailable = !!(tideSeries && tideSeries.time && tideSeries.sea_level_height_msl);
-    const mode = (saved === 'tide' && !tideAvailable) ? 'precip' : saved;
+    // The full cycle — and which mode is actually SHOWN — is resolved
+    // further down, once the day's peak UV is known: UV is the other
+    // conditional series, and it can't be decided before the hourly
+    // samples are in hand.
 
     // Interpolation and x-spacing both divide by (points - 1); a day
     // with fewer than two slots would render NaN geometry. Clear the
@@ -4450,12 +4462,17 @@ const UI = {
     // hour the lookups don't cover (e.g. enrichment failed).
     const precipByHour = new Map();
     const windByHour = new Map();
+    // UV index (dimensionless) by hour. Open-Meteo only — OWM's free
+    // endpoints don't carry it, so there is no 3h fallback: an hour with
+    // no sample simply has no curve there.
+    const uvByHour = new Map();
     for (const h of omHourly) {
       precipByHour.set(Math.floor(h.dt / 3600), h.precipMM);
       // Only non-null wind counts as data — a null (column missing from
       // the API response) must fall through to the OWM fallback rather
       // than masquerading as a real sample.
       if (h.windSpeed != null) windByHour.set(Math.floor(h.dt / 3600), h.windSpeed);
+      if (h.uvIndex != null) uvByHour.set(Math.floor(h.dt / 3600), h.uvIndex);
     }
     // Sea level (metres relative to MSL) by hour. Unlike precip and wind
     // this series is continuous and signed — a negative value is a real
@@ -4515,6 +4532,7 @@ const UI = {
           precipPerHour: precip,
           windPerHour: wind,
           tideLevel: tideByHour.has(hourKey) ? tideByHour.get(hourKey) : null,
+          uvIndex: uvByHour.has(hourKey) ? uvByHour.get(hourKey) : null,
           dt,
           isOriginal: h === 0
         });
@@ -4530,6 +4548,7 @@ const UI = {
       precipPerHour: lastPrecip,
       windPerHour: windByHour.has(lastHourKey) ? windByHour.get(lastHourKey) : fallback3hWind(last),
       tideLevel: tideByHour.has(lastHourKey) ? tideByHour.get(lastHourKey) : null,
+      uvIndex: uvByHour.has(lastHourKey) ? uvByHour.get(lastHourKey) : null,
       dt: last.dt,
       isOriginal: true
     });
@@ -4573,6 +4592,38 @@ const UI = {
     const tideSpan = (tideMax - tideMin) * 1.15;
     const tideBase = tideMin - (tideMax - tideMin) * 0.075;
 
+    // UV is a health signal rather than a shape, so it only earns a slot
+    // in the switch on days that actually reach the WHO "Very High" band
+    // — the same threshold that puts the red pill on the UV stat. On a
+    // mild day the mode simply isn't offered, which is the point: its
+    // presence in the gutter is itself the warning.
+    const uvSamples = hourly.map(h => h.uvIndex).filter(v => v != null);
+    const hasUvData = uvSamples.length > 0;
+    const peakUv = hasUvData ? Math.max(...uvSamples) : 0;
+    const uvAvailable = Math.round(peakUv) >= UV_VERY_HIGH;
+    // Zero-anchored and pinned to the Extreme boundary rather than to the
+    // day's own peak: unlike rain or wind — where only the shape of that
+    // day matters — a UV curve's HEIGHT should mean the same thing in
+    // every city on every day. Days past 11 push the top up so the crest
+    // still fits.
+    const maxUv = Math.max(peakUv, UV_EXTREME);
+
+    // Which series the switch offers, in cycle order. R and W are always
+    // there; T and U join only where they carry information. They're
+    // APPENDED rather than inserted so letters already on screen keep
+    // their positions — the switch never appears to shift under your
+    // thumb when you cross a coastline or swipe to a sunnier day.
+    const cycle = ['precip', 'wind'];
+    if (tideAvailable) cycle.push('tide');
+    if (uvAvailable) cycle.push('uv');
+    // A stored mode that isn't on offer here renders as precip WITHOUT
+    // being overwritten (see Storage's getGraphMode note), so swiping
+    // back to the coast — or on to a high-UV day — restores it untapped.
+    const mode = cycle.includes(saved) ? saved : 'precip';
+    // _toggleGraphMode cycles from what's actually on screen, so it reads
+    // this back instead of re-deriving availability at tap time.
+    this._graphCycle = cycle;
+
     const points = hourly.map((h, i) => {
       const tempC = this.convertTemp(h.temp);
       const x = paddingX + (i * (width - 2 * paddingX) / (hourly.length - 1));
@@ -4584,9 +4635,13 @@ const UI = {
       const yTide = h.tideLevel != null
         ? height - paddingY - ((h.tideLevel - tideBase) * (height - 2 * paddingY) / tideSpan)
         : null;
+      const yUv = h.uvIndex != null
+        ? height - paddingY - (h.uvIndex * (height - 2 * paddingY) / maxUv)
+        : null;
       return {
-        x, yTemp, yPrecip, yWind, yTide,
+        x, yTemp, yPrecip, yWind, yTide, yUv,
         temp: h.temp, precip: h.precipPerHour, wind: h.windPerHour, tide: h.tideLevel,
+        uv: h.uvIndex,
         dt: h.dt,
         time: this.formatTime(h.dt, false, tz),
         isOriginal: h.isOriginal
@@ -4601,33 +4656,42 @@ const UI = {
 
     const barWidth = (width - 2 * paddingX) / (hourly.length - 1);
 
-    // Tide curve, built only when it's the active mode. Contiguous runs
-    // of non-null samples are stroked separately so a coverage hole never
-    // gets bridged by a straight line pretending to be tide data. Same
-    // midpoint-control-point smoothing as the temperature line.
-    let tideStrokeD = '';
-    let tideFillD = '';
-    if (mode === 'tide' && hasTideData) {
+    // Filled curve for whichever continuous series is active. Tide and UV
+    // are instantaneous readings, not per-hour quantities, so the shape is
+    // the information and bars would imply a discreteness neither has.
+    // Contiguous runs of non-null samples are stroked separately so a
+    // coverage hole never gets bridged by a straight line pretending to be
+    // data. Same midpoint-control-point smoothing as the temperature line.
+    const buildCurve = (yKey) => {
       const runs = [];
       let run = [];
       for (const p of points) {
-        if (p.yTide == null) { if (run.length) runs.push(run); run = []; continue; }
+        if (p[yKey] == null) { if (run.length) runs.push(run); run = []; continue; }
         run.push(p);
       }
       if (run.length) runs.push(run);
 
       const floorY = height - paddingY;
+      let strokeD = '';
+      let fillD = '';
       for (const r of runs) {
         if (r.length < 2) continue;
-        let d = `M ${r[0].x} ${r[0].yTide}`;
+        let d = `M ${r[0].x} ${r[0][yKey]}`;
         for (let i = 0; i < r.length - 1; i++) {
           const cpx = r[i].x + (r[i + 1].x - r[i].x) / 2;
-          d += ` C ${cpx} ${r[i].yTide}, ${cpx} ${r[i + 1].yTide}, ${r[i + 1].x} ${r[i + 1].yTide}`;
+          d += ` C ${cpx} ${r[i][yKey]}, ${cpx} ${r[i + 1][yKey]}, ${r[i + 1].x} ${r[i + 1][yKey]}`;
         }
-        tideStrokeD += d + ' ';
-        tideFillD += `${d} L ${r[r.length - 1].x} ${floorY} L ${r[0].x} ${floorY} Z `;
+        strokeD += d + ' ';
+        fillD += `${d} L ${r[r.length - 1].x} ${floorY} L ${r[0].x} ${floorY} Z `;
       }
-    }
+      return { strokeD: strokeD.trim(), fillD: fillD.trim() };
+    };
+
+    const tideCurve = (mode === 'tide' && hasTideData) ? buildCurve('yTide') : null;
+    const uvCurve = (mode === 'uv' && hasUvData) ? buildCurve('yUv') : null;
+    // Where the Very High band starts, in plot coordinates — the line the
+    // mode's existence is announcing.
+    const uvThresholdY = height - paddingY - (UV_VERY_HIGH * (height - 2 * paddingY) / maxUv);
 
     // Vertical position marker. x is interpolated between the two
     // bracketing hourly points rather than snapped to the nearest one, so
@@ -4700,32 +4764,37 @@ const UI = {
           // Left gutter: pure axis labels — peak in the user's unit,
           // an always-visible unit line (so the axis is never blank on
           // a dry day), baseline 0 when there's data to scale.
-          // Right gutter: the mode switch — stacked R / W / T letters with
-          // the active series lit in its bar colour, sitting on a
+          // Right gutter: the mode switch — stacked R / W / T / U letters
+          // with the active series lit in its bar colour, sitting on a
           // transparent full-height hit rect. Tap it (or double-tap
           // anywhere on the graph) to swap series. Rect first so the
           // letters paint on top; letters are pointer-events:none in
           // CSS so taps on them fall through to the rect.
           const isWind = mode === 'wind';
           const isTide = mode === 'tide';
+          const isUv = mode === 'uv';
 
-          // T only joins the cycle where there's marine data, so inland
-          // cities keep the original two-state R/W switch.
-          const cycle = tideAvailable ? ['precip', 'wind', 'tide'] : ['precip', 'wind'];
+          // `cycle` is built above: T only where there's marine data, U
+          // only on a Very High UV day, so an inland city on a mild day
+          // keeps the original two-state R/W switch.
           const nextMode = cycle[(cycle.indexOf(mode) + 1) % cycle.length];
           const nameOf = (m) => m === 'wind'
             ? (hasWindData ? 'wind speed' : 'wind speed (no data)')
-            : m === 'tide' ? 'tide height' : 'precipitation';
+            : m === 'tide' ? 'tide height'
+            : m === 'uv' ? 'UV index' : 'precipitation';
 
           const letterX = width - paddingX / 2;
-          // Letters stack downward from a fixed top anchor, so R and W
-          // keep the exact positions they had before T existed — the
-          // switch doesn't appear to shift when you cross a coastline.
+          // Letters stack downward from a fixed top anchor, so each one
+          // keeps the position it had before the conditional letters
+          // after it existed — the switch doesn't appear to shift when
+          // you cross a coastline or swipe to a sunnier day.
           const letters = cycle.map((m, i) => {
             const active = m === mode;
-            const tone = m === 'precip' ? 'rain' : m === 'wind' ? 'wind' : 'tide';
+            const tone = m === 'precip' ? 'rain'
+              : m === 'wind' ? 'wind' : m === 'tide' ? 'tide' : 'uv';
             const y = paddingY + 5 + i * 15;
-            const ch = m === 'precip' ? 'R' : m === 'wind' ? 'W' : 'T';
+            const ch = m === 'precip' ? 'R'
+              : m === 'wind' ? 'W' : m === 'tide' ? 'T' : 'U';
             return `<text class="graph-mode-letter ${active ? `active ${tone}` : ''}" x="${letterX}" y="${y}" aria-hidden="true">${ch}</text>`;
           }).join('');
 
@@ -4757,6 +4826,13 @@ const UI = {
             // graph that has no curve to justify it.
             peakDisplay = hasTideData ? conv(tideMax).toFixed(1) : '—';
             floorDisplay = conv(tideMin).toFixed(1);
+          } else if (isUv) {
+            // The index is dimensionless, so the "unit" line says what the
+            // number IS. The top of the axis is the Extreme boundary, not
+            // the day's own peak — see maxUv — which is exactly what makes
+            // the curve's height comparable between days.
+            unitLabel = 'UV';
+            peakDisplay = String(Math.round(maxUv));
           } else {
             const isInches = Storage.getUnits().precip === 'in';
             unitLabel = isInches ? 'in/h' : 'mm/h';
@@ -4765,8 +4841,9 @@ const UI = {
             }
           }
           const cls = 'graph-y-axis-label' +
-            (isWind ? ' wind' : '') + (isTide ? ' tide' : '');
-          const showFloor = isWind ? hasWindData : isTide ? hasTideData : hasRain;
+            (isWind ? ' wind' : '') + (isTide ? ' tide' : '') + (isUv ? ' uv' : '');
+          const showFloor = isWind ? hasWindData
+            : isTide ? hasTideData : isUv ? hasUvData : hasRain;
           return toggle + `
             ${peakDisplay ? `<text class="${cls}" x="5" y="${paddingY + 5}">${peakDisplay}</text>` : ''}
             ${unitLabel ? `<text class="${cls}" x="5" y="${paddingY + 15}">${unitLabel}</text>` : ''}
@@ -4774,13 +4851,20 @@ const UI = {
           `;
         })()}
 
-        ${mode === 'tide' && tideStrokeD ? `
-          <path class="graph-tide-area" d="${tideFillD.trim()}"></path>
-          <path class="graph-tide-line" d="${tideStrokeD.trim()}" fill="none"></path>
+        ${tideCurve && tideCurve.strokeD ? `
+          <path class="graph-tide-area" d="${tideCurve.fillD}"></path>
+          <path class="graph-tide-line" d="${tideCurve.strokeD}" fill="none"></path>
+        ` : ''}
+
+        ${uvCurve && uvCurve.strokeD ? `
+          <line class="graph-uv-threshold" x1="${paddingX}" y1="${uvThresholdY}" x2="${width - paddingX}" y2="${uvThresholdY}"></line>
+          <path class="graph-uv-area" d="${uvCurve.fillD}"></path>
+          <path class="graph-uv-line" d="${uvCurve.strokeD}" fill="none"></path>
         ` : ''}
 
         ${points.map((p) => {
-          if (mode === 'tide') return ''; // tide draws as a curve, not bars
+          // tide and UV draw as curves, not bars
+          if (mode === 'tide' || mode === 'uv') return '';
           if (mode === 'wind') {
             // null = no sample; 0 = calm (real sample, zero-height bar
             // either way, so skip the element for both).
@@ -4851,7 +4935,7 @@ const UI = {
     });
   },
 
-  // Flip the graph between precipitation and wind bars with the same
+  // Advance the graph to the next series in the cycle with the same
   // element-cube animation the day changes and stats pager use.
   _toggleGraphMode() {
     // Same guards as _changeStatsPage: never run an inner cube while the
@@ -4862,17 +4946,17 @@ const UI = {
     const graphEl = document.getElementById('graph-container');
     if (!graphEl || !this._lastGraph) return; // nothing visible; next render picks the mode up
 
-    // T is only in the cycle where there's marine data, so an inland city
-    // toggles between R and W exactly as before.
-    const t = this._lastGraph.opts && this._lastGraph.opts.tides;
-    const tideAvailable = !!(t && t.time && t.sea_level_height_msl);
-    const cycle = tideAvailable ? ['precip', 'wind', 'tide'] : ['precip', 'wind'];
+    // T and U are conditional — marine data, and a day that reaches Very
+    // High UV — so the cycle is whatever the last render actually put on
+    // screen rather than something re-derived from opts here. An inland
+    // city on a mild day toggles between R and W exactly as before.
+    const cycle = this._graphCycle || ['precip', 'wind'];
 
     // Start from what's actually ON SCREEN, not the stored preference —
-    // those differ when a saved 'tide' is being displayed as precip at an
-    // inland city, and cycling from the invisible value would appear to
-    // skip a mode.
-    const shown = (this._graphMode === 'tide' && !tideAvailable) ? 'precip' : this._graphMode;
+    // those differ when a saved 'tide' or 'uv' is being displayed as
+    // precip (inland city, mild day), and cycling from the invisible
+    // value would appear to skip a mode.
+    const shown = cycle.includes(this._graphMode) ? this._graphMode : cycle[0];
     const idx = cycle.indexOf(shown);
     const next = cycle[(idx + 1) % cycle.length];
     this._graphMode = next;

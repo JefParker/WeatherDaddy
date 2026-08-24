@@ -2448,8 +2448,8 @@ body.has-alert .a2hs-prompt {
   outline-offset: -2px;
 }
 
-/* R / W series switch in the graph's right gutter. The active letter
-   takes its series' bar colour; letters pass taps through to the
+/* R / W / T / U series switch in the graph's right gutter. The active
+   letter takes its series' bar colour; letters pass taps through to the
    .graph-mode-toggle hit rect beneath them. */
 .graph-mode-letter {
   font-size: 10px;
@@ -2461,6 +2461,7 @@ body.has-alert .a2hs-prompt {
 .graph-mode-letter.active.rain { fill: #4db6ac; }
 .graph-mode-letter.active.wind { fill: #5c9ce6; }
 .graph-mode-letter.active.tide { fill: #7e8fd6; }
+.graph-mode-letter.active.uv   { fill: #b567a4; }
 
 /* Tide mode. Sea level is continuous and signed, so it reads as a filled
    curve rather than bars — the shape IS the information here, and bars
@@ -2477,6 +2478,32 @@ body.has-alert .a2hs-prompt {
 }
 .graph-y-axis-label.tide {
   fill: #7e8fd6;
+}
+
+/* UV mode. Only offered on days that reach the WHO "Very High" band, so
+   the letter's presence in the switch is itself the warning. Draws as a
+   filled curve for the same reason tide does — it's an instantaneous
+   reading, not a per-hour quantity — but zero-anchored and topped at the
+   Extreme boundary, so height is comparable across days and cities.
+   Violet: the colour the UV-extreme stat pill already uses. */
+.graph-uv-area {
+  fill: #b567a4;
+  opacity: 0.18;
+}
+.graph-uv-line {
+  stroke: #b567a4;
+  stroke-width: 2;
+  opacity: 0.85;
+}
+/* The Very High (8) boundary the mode unlocks at. */
+.graph-uv-threshold {
+  stroke: #b567a4;
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+  opacity: 0.45;
+}
+.graph-y-axis-label.uv {
+  fill: #b567a4;
 }
 
 /* Vertical position marker. The dimmer dashed variant is the live "now"
