@@ -442,12 +442,23 @@ body {
 
 /* Detailed Day Section (Expanded) */
 .day-detail-section {
-  padding: 20px 16px;
+  /* Asymmetric on purpose: the stats grid's bottom border is already a
+     divider, so the graph doesn't need a wide moat above it as well.
+     The full 20px stays underneath, where nothing else separates the
+     graph from the block below. */
+  padding: 10px 16px 20px;
 }
 
 .graph-container {
-  height: 200px;
-  margin: 20px 0;
+  /* 180px is the SVG's viewBox height. .graph-svg is width:100% /
+     height:100% with the default xMidYMid meet, and renderGraph builds
+     the viewBox as `0 0 <clientWidth> 180` — so the horizontal scale is
+     always exactly 1 and any container height above 180 becomes
+     letterboxing, i.e. dead space split evenly above and below the
+     chart. Matching the two removes ~20px of it without changing how
+     the chart itself is drawn by a single pixel. */
+  height: 180px;
+  margin: 4px 0 20px;
   position: relative;
   /* Let the browser keep vertical page scrolling; we capture horizontal
      swipes ourselves to flip through forecast days. */
