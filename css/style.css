@@ -206,6 +206,47 @@ body {
 .stats-pager {
   /* Vertical → browser scroll; horizontal → JS swipe-cube-pages. */
   touch-action: pan-y;
+  /* Anchor for the edge arrows. */
+  position: relative;
+}
+
+/* Edge arrows telling you the stats page can be swiped — and paging it
+   when tapped. They live in the grid's OWN side padding (absolutely
+   positioned, so zero layout cost): the block is exactly as tall and as
+   wide as it was before they existed. Faint on purpose — a hint that
+   there's more to see, not a control competing with the numbers. Only
+   rendered when there really is a second page.
+
+   Deliberately outside #stats-pager, which _changeStatsPage replaces and
+   spins wholesale: chrome that points at the content shouldn't tumble
+   with it, and it shouldn't slide during the swipe peek either. */
+.stats-page-arrow {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  /* Matches .quick-stats-grid's side padding, so the hit area covers the
+     empty gutter and stops exactly where a stat's text can begin. Full
+     height because a 9px glyph is not a finger-sized target. */
+  width: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: rgba(255, 255, 255, 0.22);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 0.15s ease;
+}
+.stats-page-arrow.prev { left: 0; }
+.stats-page-arrow.next { right: 0; }
+.stats-page-arrow.next svg { transform: scaleX(-1); }
+.stats-page-arrow:hover,
+.stats-page-arrow:active { color: rgba(255, 255, 255, 0.55); }
+.stats-page-arrow:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
 }
 
 .quick-stats-grid {
@@ -1646,6 +1687,8 @@ body.has-alert .a2hs-prompt {
     padding: 10px;
     gap: 10px 4px;
   }
+  /* Keep the arrows inside the narrower gutter. */
+  .stats-page-arrow { width: 10px; }
   .stat-label { font-size: 0.75rem; }
   .stat-value { font-size: 0.95rem; }
 

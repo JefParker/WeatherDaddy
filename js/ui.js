@@ -104,6 +104,14 @@ function getTempColor(tempC) {
   return '#ff7043';
 }
 
+// Chevron for the quick-stats pager's edge arrows. One glyph, pointing
+// left; the .next button mirrors it in CSS. 9px wide so it clears the
+// grid's 16px side padding without ever reaching a stat's text.
+const STATS_ARROW_SVG =
+  '<svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" ' +
+  'stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<polyline points="15 5 8 12 15 19"></polyline></svg>';
+
 const UI = {
   // Screens & Overlays
   mainMenuScreen: document.getElementById('main-menu-screen'),
@@ -3119,10 +3127,22 @@ const UI = {
         ${precipMsg ? `<div class="precip-message">${precipMsg}</div>` : ''}
       </section>
 
-      <div class="stats-pager" id="stats-pager">
-        <section class="quick-stats-grid">
-          ${statsPages[this._statsPageIdx] || ''}
-        </section>
+      <!-- .stats-pager stays the OUTER box so every existing selector
+           that reaches for it — the context-menu exclusion list, the
+           city-swipe opt-out — keeps matching, arrows included. The id
+           moves to the inner faces div: that's what _changeStatsPage
+           replaces wholesale and spins, so anything meant to persist
+           across a page flip has to live OUTSIDE it. -->
+      <div class="stats-pager">
+        <div class="stats-pager-faces" id="stats-pager">
+          <section class="quick-stats-grid">
+            ${statsPages[this._statsPageIdx] || ''}
+          </section>
+        </div>
+        ${statsPages.length > 1 ? `
+          <button type="button" class="stats-page-arrow prev" aria-label="Previous stats page">${STATS_ARROW_SVG}</button>
+          <button type="button" class="stats-page-arrow next" aria-label="Next stats page">${STATS_ARROW_SVG}</button>
+        ` : ''}
       </div>
 
       <section class="day-detail-section">
@@ -3493,6 +3513,7 @@ const UI = {
     // Horizontal swipe on the quick-stats grid pages through extra items
     // (anything beyond the first 6) using a 3D cube transition. Loops.
     this._bindStatsSwipe();
+    this._bindStatsArrows();
 
     this._lastIsToday = isToday;
     this._lastPinnedHour = selectedHourDt;
@@ -3502,16 +3523,23 @@ const UI = {
   // Horizontal swipe on the quick-stats pager → cube-flip to next/prev page.
   // We bind on the pager wrapper (block element) rather than the grid itself
   // so the cube perspective isn't placed as a single grid cell.
+  //
+  // Two elements, not one: gestures are tracked on the OUTER .stats-pager
+  // so a swipe that happens to start on an edge arrow still pages (the
+  // arrows sit inside it and their pointer events bubble), while the peek
+  // translate is applied to the inner faces div — the arrows are chrome
+  // and shouldn't slide with the content they point at.
   _bindStatsSwipe() {
     if (!this._statsPages || this._statsPages.length <= 1) return;
     const el = document.getElementById('stats-pager');
     if (!el) return;
+    const hit = el.closest('.stats-pager') || el;
 
     const THRESHOLD = 50;
     const SLOP      = 1.2;
     let startX = 0, startY = 0, pointerId = null, tracking = false, peeking = false;
 
-    el.addEventListener('pointerdown', (e) => {
+    hit.addEventListener('pointerdown', (e) => {
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       startX = e.clientX;
       startY = e.clientY;
@@ -3520,7 +3548,7 @@ const UI = {
       peeking = false;
     });
 
-    el.addEventListener('pointermove', (e) => {
+    hit.addEventListener('pointermove', (e) => {
       if (!tracking || e.pointerId !== pointerId) return;
       const dx = e.clientX - startX;
       const dy = e.clientY - startY;
@@ -3539,7 +3567,7 @@ const UI = {
       setTimeout(() => { el.style.transition = ''; }, 220);
     };
 
-    el.addEventListener('pointerup', (e) => {
+    hit.addEventListener('pointerup', (e) => {
       if (!tracking || e.pointerId !== pointerId) return;
       tracking = false;
       const wasPeeking = peeking;
@@ -3550,10 +3578,28 @@ const UI = {
       this._changeStatsPage(dx < 0 ? 'next' : 'prev');
     });
 
-    el.addEventListener('pointercancel', (e) => {
+    hit.addEventListener('pointercancel', (e) => {
       if (!tracking || e.pointerId !== pointerId) return;
       tracking = false;
       el.style.transform = '';
+    });
+  },
+
+  // One delegated listener for the pager's edge arrows. The dashboard's
+  // markup is rebuilt on every render, so listeners bound to the buttons
+  // themselves would be orphaned immediately — same reason
+  // _bindGraphModeToggle delegates.
+  //
+  // Nothing to debounce against the swipe handler: a drag that ends on an
+  // arrow already paged on pointerup, and the click that follows runs
+  // into _changeStatsPage's own _statsCubeAnimating guard.
+  _bindStatsArrows() {
+    if (this._statsArrowsBound) return;
+    this._statsArrowsBound = true;
+    this.weatherView.addEventListener('click', (e) => {
+      const btn = e.target.closest('.stats-page-arrow');
+      if (!btn) return;
+      this._changeStatsPage(btn.classList.contains('next') ? 'next' : 'prev');
     });
   },
 
