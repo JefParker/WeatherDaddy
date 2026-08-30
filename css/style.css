@@ -1198,12 +1198,12 @@ body.has-alert .a2hs-prompt {
   bottom: calc(80px + env(safe-area-inset-bottom, 0px));
 }
 
-/* === Add-to-Home-Screen prompt (iOS Safari) ==========================
-   Bottom-anchored card showing the share-sheet shortcut. Hidden by
-   default; the JS in App.maybeShowA2HSPrompt() reveals it only when:
-     - the browser is iOS Safari (no native install API)
-     - the app isn't already running in standalone mode
-     - the user hasn't dismissed it before */
+/* === Install prompt card ==============================================
+   Bottom-anchored card. Hidden by default; App.initInstallPrompt()
+   reveals it either with a native Install button (browsers that fire
+   beforeinstallprompt) or with platform-specific manual steps (iOS,
+   Firefox Android, ...). Never shown when already running standalone,
+   and a dismissal is remembered for 30 days. */
 .a2hs-prompt {
   position: fixed;
   left: 50%;
@@ -1269,6 +1269,25 @@ body.has-alert .a2hs-prompt {
   flex-shrink: 0;
 }
 .a2hs-close:hover { color: var(--text-primary); }
+.a2hs-install-btn {
+  appearance: none;
+  border: none;
+  border-radius: 999px;
+  padding: 8px 16px;
+  background: var(--accent-color);
+  color: #121212;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: filter 0.15s;
+}
+.a2hs-install-btn:hover  { filter: brightness(1.1); }
+.a2hs-install-btn:active { transform: scale(0.97); }
+.a2hs-install-btn[hidden] { display: none; }
+/* `hidden` must beat the flex display on menu buttons. */
+.menu-option-btn[hidden], .context-menu-item[hidden] { display: none; }
 
 /* Loader */
 .loader {

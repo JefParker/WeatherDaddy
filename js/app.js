@@ -1,3 +1,20 @@
+// Capture the browser's native install prompt as early as possible. Chrome
+// / Edge / Samsung Internet fire `beforeinstallprompt` once the PWA
+// installability criteria are met — often before App.init() runs — so the
+// listener has to live at file scope, not inside init(). We stash the
+// event and re-broadcast a custom event that App.initInstallPrompt() can
+// react to whether it fires before or after init.
+window.__wdDeferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();               // suppress Chrome's mini-infobar; we show our own UI
+  window.__wdDeferredInstallPrompt = e;
+  window.dispatchEvent(new CustomEvent('wd:installable'));
+});
+window.addEventListener('appinstalled', () => {
+  window.__wdDeferredInstallPrompt = null;
+  window.dispatchEvent(new CustomEvent('wd:installed'));
+});
+
 const App = {
   state: {
     currentWeather: null,
@@ -62,6 +79,12 @@ const App = {
     // code for the whole session with nothing to reconcile it.
     this.registerServiceWorker();
 
+    // Wire up PWA installation (native prompt where supported, coach card
+    // elsewhere) and the "Install App" menu entries. Also before the first
+    // await: loadInitialWeather() can block on the geolocation permission
+    // prompt, and installability shouldn't wait on that.
+    this.initInstallPrompt();
+
     // Load initial data — returns the user's geolocation/country (if granted)
     // so the first-launch seed can pick cities near them instead of the
     // generic world top-10.
@@ -80,10 +103,8 @@ const App = {
     // Auto-refresh weather every 15 minutes (see startAutoRefresh)
     this.startAutoRefresh();
 
-    // Show iOS Add-to-Home-Screen prompt if appropriate.
-    this.maybeShowA2HSPrompt();
-
-    // (registerServiceWorker moved above the first await — see there.)
+    // (registerServiceWorker / initInstallPrompt moved above the first
+    // await — see there.)
 
     // Handle initial hash routing for PWA shortcuts
     this.handleHashRoute();
@@ -104,36 +125,220 @@ const App = {
     }
   },
 
-  // iOS Safari has no native install prompt API — we have to coach the user
-  // through the Share → Add to Home Screen flow ourselves. Show a one-time
-  // dismissable card to do that, only when:
-  //   - the browser is iOS / iPadOS Safari, AND
-  //   - the app isn't already running in standalone mode, AND
-  //   - the user hasn't dismissed the prompt before
-  maybeShowA2HSPrompt() {
+  // ── PWA installation ──────────────────────────────────────────────
+  // Two very different worlds:
+  //   1. Browsers with the `beforeinstallprompt` API (Chrome, Edge, Samsung
+  //      Internet, Chrome/Edge on Android, ...). We keep the deferred event
+  //      and fire the real browser install dialog from our own Install
+  //      button (card + menu item).
+  //   2. Everything else (iOS/iPadOS — every browser, Firefox on Android,
+  //      Safari on macOS, Firefox desktop). No API, so we show a coach
+  //      card with the exact manual steps for that platform.
+  // In both cases nothing is shown when the app is already running
+  // standalone (i.e. it's installed), and a dismissed card stays hidden for
+  // INSTALL_DISMISS_DAYS. The "Install App" menu item is always available
+  // as a user-initiated path regardless of dismissal.
+  INSTALL_DISMISS_KEY: 'install_dismissed_at',
+  INSTALL_DISMISS_KEY_LEGACY: 'a2hs_dismissed_v1',
+  INSTALL_DISMISS_DAYS: 30,
+
+  isStandalone() {
+    return window.matchMedia('(display-mode: standalone)').matches ||
+           window.matchMedia('(display-mode: window-controls-overlay)').matches ||
+           window.matchMedia('(display-mode: minimal-ui)').matches ||
+           window.navigator.standalone === true;
+  },
+
+  // Coarse platform detection purely for choosing install instructions.
+  detectInstallPlatform() {
     const ua = navigator.userAgent || '';
     const isIOS = (/iPad|iPhone|iPod/.test(ua) ||
-                   (ua.includes('Mac') && navigator.maxTouchPoints > 1)) // iPadOS 13+
+                   (ua.includes('Mac') && navigator.maxTouchPoints > 1)) // iPadOS 13+ masquerades as Mac
                   && !window.MSStream;
-    const isStandalone =
-      window.matchMedia('(display-mode: standalone)').matches ||
-      window.navigator.standalone === true;
-    const DISMISS_KEY = 'a2hs_dismissed_v1';
+    const isAndroid   = /Android/i.test(ua);
+    const isFirefox   = /Firefox\//.test(ua) && !/Seamonkey/.test(ua);
+    const isChromium  = /Chrome\/|Chromium\/|CriOS\//.test(ua) || /Edg\//.test(ua);
+    const isMacSafari = !isIOS && /Macintosh/.test(ua) && /Safari\//.test(ua) && !isChromium && !isFirefox;
+    if (isIOS) return 'ios';
+    if (isAndroid && isFirefox) return 'android-firefox';
+    if (isMacSafari) return 'mac-safari';
+    if (isFirefox) return 'firefox-desktop';
+    if (isChromium) return 'chromium';
+    return 'other';
+  },
 
-    if (!isIOS || isStandalone) return;
-    if (localStorage.getItem(DISMISS_KEY)) return;
+  // Card copy for each platform. `html` is trusted, static markup.
+  installCoachContent(platform) {
+    const shareIcon = '<svg class="a2hs-share-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"></path><polyline points="16 6 12 2 8 6"></polyline><line x1="12" y1="2" x2="12" y2="15"></line></svg>';
+    const dotsIcon  = '<svg class="a2hs-share-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"></circle><circle cx="12" cy="12" r="2"></circle><circle cx="12" cy="19" r="2"></circle></svg>';
+    switch (platform) {
+      case 'ios':
+        return { title: 'Install WeatherDaddy',
+                 html: `Tap ${shareIcon} then <strong>Add to Home Screen</strong>` };
+      case 'android-firefox':
+        return { title: 'Install WeatherDaddy',
+                 html: `Tap the ${dotsIcon} menu, then <strong>Add to Home screen</strong> (or <strong>Install</strong>)` };
+      case 'mac-safari':
+        return { title: 'Install WeatherDaddy',
+                 html: `In Safari's <strong>File</strong> menu choose <strong>Add to Dock…</strong>` };
+      case 'firefox-desktop':
+        return { title: 'Install WeatherDaddy',
+                 html: `Firefox desktop can't install web apps. Open this page in Chrome, Edge or Safari to install it.` };
+      case 'chromium':
+        // beforeinstallprompt hasn't fired (already installed elsewhere,
+        // criteria not met yet, or the user recently declined).
+        return { title: 'Install WeatherDaddy',
+                 html: `Use the install icon in the address bar, or the browser ${dotsIcon} menu → <strong>Install WeatherDaddy</strong>` };
+      default:
+        return { title: 'Install WeatherDaddy',
+                 html: `Open your browser's menu and choose <strong>Install app</strong> or <strong>Add to Home screen</strong>` };
+    }
+  },
 
-    const prompt = document.getElementById('a2hs-prompt');
-    const closeBtn = document.getElementById('a2hs-close');
-    if (!prompt || !closeBtn) return;
+  _installDismissedRecently() {
+    try {
+      // Migrate the old boolean key (permanent dismissal) to a timestamp.
+      if (localStorage.getItem(this.INSTALL_DISMISS_KEY_LEGACY)) {
+        localStorage.removeItem(this.INSTALL_DISMISS_KEY_LEGACY);
+        localStorage.setItem(this.INSTALL_DISMISS_KEY, String(Date.now()));
+      }
+      const at = parseInt(localStorage.getItem(this.INSTALL_DISMISS_KEY) || '0', 10);
+      if (!at) return false;
+      return (Date.now() - at) < this.INSTALL_DISMISS_DAYS * 24 * 60 * 60 * 1000;
+    } catch (_) { return false; }
+  },
 
-    // Delay a moment so it doesn't pop in during the first paint.
-    setTimeout(() => prompt.classList.add('visible'), 1200);
+  _rememberInstallDismissed() {
+    try { localStorage.setItem(this.INSTALL_DISMISS_KEY, String(Date.now())); } catch (_) {}
+  },
+
+  // Show / hide the "Install App" entries in the hamburger + context menus.
+  // Hidden once the app is running standalone (nothing left to install).
+  _syncInstallMenuItems() {
+    const show = !this.isStandalone() && !this._installedThisSession;
+    ['goto-install-btn', 'ctx-install-btn'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.hidden = !show;
+    });
+  },
+
+  // Populate + reveal the card. mode: 'native' | 'coach'.
+  _showInstallCard(mode, platform) {
+    const card    = document.getElementById('a2hs-prompt');
+    const title   = document.getElementById('a2hs-title');
+    const body    = document.getElementById('a2hs-body');
+    const install = document.getElementById('a2hs-install');
+    if (!card || !title || !body || !install) return;
+
+    if (mode === 'native') {
+      title.textContent = 'Install WeatherDaddy';
+      body.textContent  = 'Get the full-screen app with offline forecasts.';
+      install.hidden = false;
+    } else {
+      const c = this.installCoachContent(platform);
+      title.textContent = c.title;
+      body.innerHTML    = c.html;
+      install.hidden = true;
+    }
+    card.classList.add('visible');
+  },
+
+  _hideInstallCard() {
+    const card = document.getElementById('a2hs-prompt');
+    if (card) card.classList.remove('visible');
+  },
+
+  initInstallPrompt() {
+    const card       = document.getElementById('a2hs-prompt');
+    const closeBtn   = document.getElementById('a2hs-close');
+    const installBtn = document.getElementById('a2hs-install');
+    const menuBtn    = document.getElementById('goto-install-btn');
+    if (!card || !closeBtn || !installBtn) return;
+
+    this._installPlatform = this.detectInstallPlatform();
+    this._syncInstallMenuItems();
 
     closeBtn.addEventListener('click', () => {
-      prompt.classList.remove('visible');
-      try { localStorage.setItem(DISMISS_KEY, '1'); } catch (_) {}
+      this._hideInstallCard();
+      this._rememberInstallDismissed();
     });
+    installBtn.addEventListener('click', () => this.promptInstall());
+    if (menuBtn) menuBtn.addEventListener('click', () => {
+      UI.toggleScreen('main-menu', false);
+      this.promptInstall();
+    });
+
+    // Native path: the deferred event may already be waiting (fired before
+    // init) or may arrive later — handle both.
+    const onInstallable = () => {
+      if (this.isStandalone() || this._installDismissedRecently()) return;
+      // Delay a moment so it doesn't pop in during the first paint.
+      setTimeout(() => {
+        if (window.__wdDeferredInstallPrompt && !this.isStandalone()) {
+          this._showInstallCard('native');
+        }
+      }, 1200);
+    };
+    window.addEventListener('wd:installable', onInstallable);
+    if (window.__wdDeferredInstallPrompt) onInstallable();
+
+    window.addEventListener('wd:installed', () => {
+      this._installedThisSession = true;
+      this._hideInstallCard();
+      this._syncInstallMenuItems();
+      UI.showToast('WeatherDaddy installed!');
+    });
+
+    // If the display mode changes (e.g. the tab gets adopted by the
+    // installed app window), re-sync.
+    try {
+      window.matchMedia('(display-mode: standalone)')
+            .addEventListener('change', () => { this._syncInstallMenuItems(); if (this.isStandalone()) this._hideInstallCard(); });
+    } catch (_) {}
+
+    // Coach path (mobile only — desktop users get the menu item instead of
+    // an unsolicited card). Only when no native API is on offer.
+    const autoCoach = ['ios', 'android-firefox'].includes(this._installPlatform);
+    if (autoCoach && !('onbeforeinstallprompt' in window) &&
+        !this.isStandalone() && !this._installDismissedRecently()) {
+      setTimeout(() => {
+        if (!window.__wdDeferredInstallPrompt && !this.isStandalone()) {
+          this._showInstallCard('coach', this._installPlatform);
+        }
+      }, 1200);
+    }
+  },
+
+  // User-initiated install (Install button on the card, or the menu item).
+  // Fires the real browser dialog when we have a deferred prompt; otherwise
+  // shows the platform coach card (ignoring any prior dismissal, since the
+  // user explicitly asked).
+  async promptInstall() {
+    if (this.isStandalone()) {
+      UI.showToast('WeatherDaddy is already installed.');
+      return;
+    }
+    const evt = window.__wdDeferredInstallPrompt;
+    if (evt && typeof evt.prompt === 'function') {
+      this._hideInstallCard();
+      try {
+        evt.prompt();
+        const choice = await evt.userChoice;
+        // The event is single-use either way; Chrome will fire a fresh
+        // beforeinstallprompt later if the criteria are still met.
+        window.__wdDeferredInstallPrompt = null;
+        if (choice && choice.outcome === 'dismissed') {
+          this._rememberInstallDismissed();
+        }
+        // 'accepted' → the appinstalled event handles the rest.
+      } catch (e) {
+        console.warn('Install prompt failed', e);
+        window.__wdDeferredInstallPrompt = null;
+        this._showInstallCard('coach', this._installPlatform);
+      }
+      return;
+    }
+    this._showInstallCard('coach', this._installPlatform);
   },
 
   // Move to the next or previous city in the user's saved list, wrapping
@@ -1469,7 +1674,7 @@ const App = {
   // confidently described code that wasn't running. Bump this with the
   // chip in index.html on every release — a mismatch on screen IS the
   // diagnosis.
-  BUILD: '1.4.1',
+  BUILD: '1.5.0',
 
   // Writes "JS <build> · cache <bucket>" under the About version chip.
   // Note what happens when js/app.js is STALE: old code has no

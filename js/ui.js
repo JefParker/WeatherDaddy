@@ -510,6 +510,7 @@ const UI = {
       else if (action === 'import-export') this.toggleScreen('import-export', true);
       else if (action === 'about') this.toggleScreen('about', true);
       else if (action === 'copy-url') this.handleCopyURL();
+      else if (action === 'install') App.promptInstall();
     });
   },
 

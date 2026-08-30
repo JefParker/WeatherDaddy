@@ -185,6 +185,14 @@
             </svg>
             <span>Copy URL</span>
           </button>
+          <button class="menu-option-btn" id="goto-install-btn" hidden>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            <span>Install App</span>
+          </button>
           <button class="menu-option-btn" id="goto-about-btn">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
             <span>About</span>
@@ -436,7 +444,7 @@
                 <svg class="accordion-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
               <div class="accordion-content">
-                <p>WeatherDaddy is built as a Progressive Web App (PWA). You can install it on your home screen from your browser's menu for a native look. It caches static assets and weather forecasts (for up to 24 hours), so you can open the app and view your last retrieved conditions even without an active internet connection.</p>
+                <p>WeatherDaddy is built as a Progressive Web App (PWA). Choose <strong>Install App</strong> from the menu to add it to your home screen or desktop for a full-screen, native-style experience (on iOS, use Share → Add to Home Screen). It caches static assets and weather forecasts (for up to 24 hours), so you can open the app and view your last retrieved conditions even without an active internet connection.</p>
               </div>
             </div>
           </div>
@@ -668,29 +676,30 @@
         </svg>
         <span>Copy URL</span>
       </button>
+      <button class="context-menu-item" data-action="install" id="ctx-install-btn" role="menuitem" hidden>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        <span>Install App</span>
+      </button>
       <button class="context-menu-item" data-action="about" role="menuitem">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
         <span>About</span>
       </button>
     </div>
 
-    <!-- iOS "Add to Home Screen" prompt — shown only on iOS Safari that
-         isn't already running in standalone mode, dismissable, and the
-         dismissal is remembered in localStorage. -->
+    <!-- Install prompt card. Two modes, chosen by App.initInstallPrompt():
+           - "native": the browser fired beforeinstallprompt (Chrome, Edge,
+             Samsung Internet, Android, ...) — shows an Install button that
+             triggers the real browser install dialog.
+           - "coach": no native API (iOS Safari, Firefox Android, Safari on
+             macOS, ...) — shows platform-specific step-by-step instructions.
+         Dismissable; the dismissal is remembered in localStorage. -->
     <div class="a2hs-prompt" id="a2hs-prompt" role="dialog" aria-live="polite" aria-label="Install WeatherDaddy">
       <img class="a2hs-icon" src="assets/icons/icon-192.png" alt="" aria-hidden="true">
       <div class="a2hs-text">
-        <strong>Install WeatherDaddy</strong>
-        <span>
-          Tap
-          <svg class="a2hs-share-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"></path>
-            <polyline points="16 6 12 2 8 6"></polyline>
-            <line x1="12" y1="2" x2="12" y2="15"></line>
-          </svg>
-          then <strong>Add to Home Screen</strong>
-        </span>
+        <strong id="a2hs-title">Install WeatherDaddy</strong>
+        <span id="a2hs-body">Get the full-screen app with offline forecasts.</span>
       </div>
+      <button class="a2hs-install-btn" id="a2hs-install" type="button" hidden>Install</button>
       <button class="a2hs-close" id="a2hs-close" aria-label="Dismiss">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
       </button>
