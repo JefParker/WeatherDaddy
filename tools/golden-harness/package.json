@@ -1,0 +1,14 @@
+{
+  "name": "weatherdaddy-golden-harness",
+  "private": true,
+  "description": "Dev-only golden-master regression harness for the WeatherDaddy UI (jsdom). Not part of the shipped app.",
+  "scripts": {
+    "record": "node run.js --record",
+    "check": "node run.js --check",
+    "smoke": "node smoke.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.3",
+    "puppeteer": "^23.11.1"
+  }
+}

@@ -16,3 +16,6 @@ node_modules/
 CODE_REVIEW.md
 HANDOFF_PROMPT.md
 SPEC_wind_graph.md
+
+# Golden-master harness: dev-only, installed per checkout
+tools/golden-harness/node_modules/
