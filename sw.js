@@ -18,7 +18,7 @@
 // (index.html used to also carry ?v= query strings, but cacheKey()
 // strips the query before caching, so they never did anything and were
 // removed.)
-const CACHE_NAME = 'weatherdaddy-v204';
+const CACHE_NAME = 'weatherdaddy-v205';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -208,8 +208,16 @@ const isWeatherURL = (urlOrRequest) => {
     const u = typeof urlOrRequest === 'string'
       ? new URL(urlOrRequest, self.location.href)
       : new URL(urlOrRequest.url);
+    // Every upstream the app reads weather-ish data from. NWS (alerts +
+    // forecast discussion), NOAA CO-OPS (tide predictions) and Nominatim
+    // (landmark geocoding) used to fall through to the cache-first STATIC
+    // handler, which never writes — so they had no offline fallback and
+    // no TTL pruning, unlike the other APIs.
     return u.hostname === 'api.openweathermap.org' ||
            u.hostname.endsWith('open-meteo.com') ||
+           u.hostname === 'api.weather.gov' ||
+           u.hostname === 'api.tidesandcurrents.noaa.gov' ||
+           u.hostname === 'nominatim.openstreetmap.org' ||
            u.pathname.startsWith('/api/owm/');
   } catch (_) { return false; }
 };

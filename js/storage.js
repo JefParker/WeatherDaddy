@@ -50,7 +50,9 @@ const Storage = {
       if (raw == null) return fallback;
       return JSON.parse(raw);
     } catch (e) {
-      localStorage.removeItem(key);
+      // Corrupt JSON → drop it. Guarded: in a privacy mode where getItem
+      // threw, removeItem throws too and would escape this catch.
+      try { localStorage.removeItem(key); } catch (_) {}
       return fallback;
     }
   },

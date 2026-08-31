@@ -10,3 +10,9 @@
 node_modules/
 .DS_Store
 *.log
+
+# Local working documents (review notes, hand-off prompts, finished specs).
+# Swept into commits twice by `git add -A`; keep them local.
+CODE_REVIEW.md
+HANDOFF_PROMPT.md
+SPEC_wind_graph.md

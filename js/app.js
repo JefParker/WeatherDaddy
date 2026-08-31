@@ -873,7 +873,11 @@ const App = {
   // comparison would silently fail for exactly those cities.
   _applyCachedCity(lat, lon, name, preserveSelection = false) {
     const cached = Storage.getWeatherCache(lat, lon);
-    if (!cached) return false;
+    // A partial entry (older build, interrupted write, hand-edited
+    // storage) must read as a MISS: the assignments below dereference
+    // currentWeather.timezone, and a throw here aborts a city swipe
+    // mid-animation with nothing rendered.
+    if (!cached || !cached.currentWeather || !cached.forecast) return false;
     if (Date.now() - (cached.ts || 0) > this.WEATHER_CACHE_MAX_AGE_MS) return false;
 
     const cityName = name || cached.cityName;

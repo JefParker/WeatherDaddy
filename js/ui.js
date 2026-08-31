@@ -806,9 +806,10 @@ const UI = {
     }
   },
 
-  // List of every asset name the icon picker can resolve to. Used by the
-  // service worker so the bundled weather illustrations are precached and
-  // available offline.
+  // List of every asset name the icon picker can resolve to. Lets
+  // getWeatherIconSVG accept an already-resolved name. sw.js keeps its
+  // OWN copy of this list in ASSETS_TO_CACHE (a worker can't import this
+  // file) — add new art in both places or it won't be available offline.
   WEATHER_ICON_ASSETS: [
     'clear-day', 'clear-night',
     'few-clouds-day', 'cloudy-night',
