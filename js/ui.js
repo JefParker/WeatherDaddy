@@ -24,6 +24,25 @@ const FULL_MOON_NAMES = [
 // mean synodic month (orbital eccentricity), and each feature is most
 // accurate anchored to its own observed phase. Deriving one epoch from
 // the other would shift every full-moon timestamp ~8h from reality.
+// Glow / tint applied to the full-moon card's illustration, keyed by the
+// traditional name above. Anything not listed gets the plain white glow.
+const FULL_MOON_FILTERS = {
+  'Wolf Moon':       'drop-shadow(0 0 10px rgba(255, 255, 255, 0.25))',
+  'Snow Moon':       'drop-shadow(0 0 10px rgba(255, 255, 255, 0.25))',
+  'Worm Moon':       'drop-shadow(0 0 10px rgba(255, 220, 150, 0.35)) saturate(1.2) hue-rotate(15deg)',
+  'Pink Moon':       'drop-shadow(0 0 12px rgba(255, 105, 180, 0.45)) saturate(1.4) hue-rotate(320deg)',
+  'Flower Moon':     'drop-shadow(0 0 12px rgba(255, 182, 193, 0.35)) saturate(1.3) hue-rotate(340deg)',
+  'Blue Moon':       'drop-shadow(0 0 12px rgba(30, 144, 255, 0.5)) saturate(1.6) hue-rotate(180deg)',
+  'Strawberry Moon': 'drop-shadow(0 0 14px rgba(255, 100, 100, 0.55)) saturate(1.5) hue-rotate(345deg)',
+  'Buck Moon':       'drop-shadow(0 0 12px rgba(218, 165, 32, 0.45)) saturate(1.4) hue-rotate(10deg)',
+  'Sturgeon Moon':   'drop-shadow(0 0 10px rgba(176, 196, 222, 0.35))',
+  'Harvest Moon':    'drop-shadow(0 0 14px rgba(255, 140, 0, 0.6)) saturate(1.7) hue-rotate(15deg)',
+  "Hunter's Moon":   'drop-shadow(0 0 14px rgba(255, 69, 0, 0.6)) saturate(1.6) hue-rotate(5deg)',
+  'Beaver Moon':     'drop-shadow(0 0 12px rgba(205, 133, 63, 0.4)) saturate(1.1)',
+  'Cold Moon':       'drop-shadow(0 0 12px rgba(0, 255, 255, 0.45)) saturate(1.3) hue-rotate(150deg)'
+};
+const FULL_MOON_FILTER_DEFAULT = 'drop-shadow(0 0 10px rgba(255, 255, 255, 0.25))';
+
 const FULL_MOON_SYNODIC_DAYS = 29.530588853;
 const FULL_MOON_REF_MS = Date.UTC(2000, 0, 21, 4, 41);
 
@@ -1996,44 +2015,304 @@ const UI = {
     return { dailyData, todayKey, dayKeyFor, tz };
   },
 
-  renderDashboard(state, onDayClick, onSave, onHourClick) {
+  // ── Dashboard ───────────────────────────────────────────────────────
+  // renderDashboard is split into a CONTEXT builder (every figure the
+  // sections share — the active day, the pinned hour, the hero's data,
+  // per-day totals) and pure section builders that turn that context
+  // into HTML. Nothing below reads state directly except through ctx, so
+  // a new stat or hero line only touches its own builder.
+
+  // Severity ranking used to pick a day's headline slot — a storm at
+  // 3 AM is a more useful daily headline than a clear noon. Ties are
+  // broken by closeness to local noon in _notableSlotFor. Used by both
+  // the daily-list row and the hero (for non-today days), so the two
+  // stay matched and the row→hero slide animation still ends on the
+  // same illustration.
+  NOTABILITY: {
+    'thunderstorm': 9, 'thunderstorm-night': 9,
+    'snow':          8, 'snow-night':          8,
+    'shower-rain':   7, 'shower-rain-night':   7,
+    'sand':          6, 'dust':                6,
+    'smoke':         5, 'haze':                5,
+    'mist':          4,
+    'broken-clouds': 3,
+    'scattered-clouds': 2,
+    'few-clouds-day': 1, 'cloudy-night':       1,
+    'clear-day':     0, 'clear-night':         0,
+  },
+
+  STATS_PER_PAGE: 6,
+
+  // Open-Meteo's daily summary, matched by city-local day KEY rather
+  // than array index — daily[0] is "today", but rendered day 0 can
+  // already be tomorrow near local midnight.
+  _omDailyForKey(ctx, key) {
+    return (ctx.state.omDaily || []).find(od => ctx.dayKeyFor(od.dt) === key) || null;
+  },
+
+  // A day's high and low, in Celsius.
+  //
+  // Deriving these from `day.temps` alone under-reports: that array is
+  // the 3-HOURLY spine, aligned to UTC hours, so the sampling phase
+  // drifts per city and the real extreme can fall up to 1.5h from any
+  // sample. Open-Meteo publishes the model's actual daily extremes and
+  // we were already fetching and discarding them.
+  //
+  // Taking the UNION rather than simply preferring Open-Meteo: on days
+  // 0-5 the spine is OWM's forecast while tempMax/tempMin come from
+  // Open-Meteo, so picking one model outright could print a high LOWER
+  // than the peak of the curve drawn right below it. Widening to cover
+  // both keeps the headline consistent with the graph — the number is
+  // never less than what the curve visibly reaches — while still
+  // catching an extreme the sampling missed. On days 6-8 the spine is
+  // Open-Meteo too, so the two agree and this is a pure improvement.
+  _dayExtremesC(ctx, day) {
+    if (!day || !day.temps || !day.temps.length) return null;
+    let hi = Math.max(...day.temps);
+    let lo = Math.min(...day.temps);
+    const om = day.key ? this._omDailyForKey(ctx, day.key) : null;
+    if (om) {
+      if (om.tempMax != null) hi = Math.max(hi, om.tempMax);
+      if (om.tempMin != null) lo = Math.min(lo, om.tempMin);
+    }
+    return { hi, lo };
+  },
+
+  // Day totals for any forecast day: sum of rain+snow mm and max PoP
+  // across the 3h slots in that day. Used identically for Today and
+  // forecast days so the Precipitation / Probability rows update
+  // consistently.
+  //
+  // `wholeDay` false means "rest of today": sum only the slots still
+  // ahead, the way this has always worked for the Today tab.
+  //
+  // Open-Meteo's precipSum is a CALENDAR-DAY total, so using it for
+  // today would report rain that already fell — at 6 PM on a clear
+  // evening the row would read 18 mm because of a morning downpour.
+  // The sibling popMax stat already refuses the daily figure for today
+  // for exactly this reason; this keeps the two consistent.
+  _dayTotals(ctx, day, wholeDay = true) {
+    // hasWindow false, not undefined: no day means no forecast window
+    // at all, and the hero must not assert "No precipitation expected"
+    // off the back of it.
+    if (!day) return { rainMM: 0, pop: 0, snowMM: null, hasWindow: false };
+    // For a whole forecast day, Open-Meteo's exact total beats
+    // re-summing sampled buckets: _omHourToOwmSlot multiplies ONE
+    // sampled hour by three to stand in for a 3h bucket, so a short
+    // convective storm either vanishes between samples or gets tripled.
+    const om = (wholeDay && day.key) ? this._omDailyForKey(ctx, day.key) : null;
+    if (om && om.precipSum != null) {
+      const pop = day.hourly.reduce((mx, h) => Math.max(mx, h.pop || 0), 0);
+      // snowMM unused on this path — whole-day snow comes from
+      // omDaily.snowSumCM, which is already a depth.
+      return { rainMM: om.precipSum, pop, snowMM: null, hasWindow: true };
+    }
+    // "Rest of today" has to be enforced HERE, not assumed from the
+    // slot list. buildDailyData's MIN_SLOTS top-up backfills any short
+    // day from omHourly, which deliberately reaches 24h into the past —
+    // so today's slots include hours that have already elapsed, and
+    // summing them blindly reported this morning's rain as still to
+    // come.
+    //
+    // The cutoff is source-aware because dt means different things (see
+    // _omHourToOwmSlot): an OWM bucket starting an hour ago still holds
+    // two hours of future weather and should count, whereas an
+    // Open-Meteo slot stamped an hour ago describes an hour that has
+    // entirely finished — and carries a ×3 multiplier, so admitting it
+    // would add triple a fully-elapsed hour.
+    const nowSec = Math.floor(Date.now() / 1000);
+    const stillAhead = (h) => h._omDerived
+      ? h.dt > nowSec
+      : h.dt + 3 * 3600 > nowSec;
+    const slots = wholeDay ? day.hourly : day.hourly.filter(stillAhead);
+    let rainMM = 0;
+    let snowMM = 0;
+    for (const h of slots) {
+      rainMM += (h.rain && h.rain['3h']) || 0;
+      const s = (h.snow && h.snow['3h']) || 0;
+      rainMM += s;   // total precipitation, water-equivalent
+      snowMM += s;   // the frozen share of it, tracked separately
+    }
+    // Same window as the rain sum — a 90% chance from a shower that
+    // came through at dawn isn't a forecast for the evening.
+    const pop = slots.reduce((mx, h) => Math.max(mx, h.pop || 0), 0);
+    // hasWindow false means there is nothing left of today to forecast,
+    // which is different from "nothing is expected" — see the hero
+    // precip line.
+    return { rainMM, pop, snowMM, hasWindow: slots.length > 0 };
+  },
+
+  // The most "notable" hourly slot for a day, per NOTABILITY: strictly
+  // higher severity always wins; among ties the slot closest to local
+  // noon. That means:
+  //   - any thunderstorm anywhere in the day → ⛈️ icon
+  //   - else any snow → 🌨️ icon
+  //   - else any rain → 🌧️ icon
+  //   - else any dust/sand/smoke/haze/mist → that atmospheric icon
+  //   - else cloudiest of the day → ☁️ / ⛅
+  //   - else clear → ☀️
+  _notableSlotFor(ctx, day) {
+    if (!day || !day.hourly || !day.hourly.length) return null;
+    let best = null;
+    let bestScore = -1;
+    let bestDiff  = Infinity;
+    for (const slot of day.hourly) {
+      if (!slot.weather || !slot.weather[0]) continue;
+      const asset = this._weatherAssetName(slot.weather[0].icon, slot.weather[0].id);
+      const score = this.NOTABILITY[asset] != null ? this.NOTABILITY[asset] : 0;
+      const lh = this.localHour(slot.dt, ctx.tz);
+      const diff = Math.abs(lh - 12);
+      if (score > bestScore || (score === bestScore && diff < bestDiff)) {
+        bestScore = score;
+        bestDiff  = diff;
+        best      = slot;
+      }
+    }
+    return best;
+  },
+
+  // Sunrise/sunset for the calendar day containing `ts` at the city.
+  // Today trusts OWM's values (sub-minute accurate); forecast days
+  // compute locally since OWM's free /forecast endpoint doesn't include
+  // them, and Open-Meteo-synthesised days carry their own.
+  _sunTimesAt(ctx, ts) {
+    const p = this.localParts(ts, ctx.tz);
+    return this._solarTimes(
+      p.year, p.month, p.day,
+      ctx.currentWeather.coord.lat, ctx.currentWeather.coord.lon,
+      ctx.tz
+    );
+  },
+
+  // The day the dashboard is describing, in one shape whether it's the
+  // live "today" view or a forecast day. Feeds the quick stats, the
+  // temperature graph and the daily-list highlight; the hero reads
+  // ctx.heroData instead (which is this unless an hour is pinned).
+  _activeDayFor(ctx) {
+    const { currentWeather, forecast, dailyData, selectedDayIndex, isToday } = ctx;
+    if (isToday) {
+      // Rest-of-today, not the calendar day — see _dayTotals.
+      const totals = this._dayTotals(ctx, ctx.todayData, false);
+      return {
+        main: currentWeather.main,
+        weather: currentWeather.weather,
+        wind: currentWeather.wind,
+        visibility: currentWeather.visibility,
+        // Today's graph spans NOW → NOW + 24h (rolling window). Forecast
+        // days use their local-calendar-day slots (below).
+        hourly: forecast.list.slice(0, 8),
+        sunrise: currentWeather.sys.sunrise,
+        sunset: currentWeather.sys.sunset,
+        pop: totals.pop,
+        rainMM: totals.rainMM,
+        snowMM: totals.snowMM,
+        hasWindow: totals.hasWindow,
+        // Used by the hero icon picker so a phase-correct moon shows
+        // tonight if it's currently clear-night here. (Forecast days
+        // get .dt via the `mid` spread below.)
+        dt: currentWeather.dt
+      };
+    }
+    const day = dailyData[selectedDayIndex];
+    const mid = day.hourly[Math.floor(day.hourly.length / 2)];
+    const totals = this._dayTotals(ctx, day);
+    // Open-Meteo-synthesised days carry exact sunrise/sunset; otherwise
+    // compute via the U.S. Naval Observatory formula.
+    const sun = day._om
+      ? { sunrise: day._om.sunrise, sunset: day._om.sunset }
+      : this._sunTimesAt(ctx, day.dt);
+    // Headline icon for the day = the most NOTABLE weather, tie-broken
+    // by closeness to local noon. Matches the daily-list row picker
+    // exactly, so the row→hero slide animation lands on the same art.
+    const heroSlot = this._notableSlotFor(ctx, day) || mid;
+    const heroAsset = (heroSlot.weather && heroSlot.weather[0])
+      ? this._weatherAssetName(heroSlot.weather[0].icon, heroSlot.weather[0].id)
+      : null;
+    // Stash the resolved asset name on a synthetic _asset field so the
+    // hero render can pass it directly into getWeatherIconSVG (which
+    // accepts asset names as well as OWM codes).
+    const modeWeather = (heroSlot.weather && heroSlot.weather[0] && heroAsset)
+      ? [{ ...heroSlot.weather[0], _asset: heroAsset }]
+      : mid.weather;
+    return {
+      ...mid,
+      weather: modeWeather,
+      hourly: day.hourly,
+      sunrise: sun.sunrise,
+      sunset: sun.sunset,
+      pop: totals.pop,
+      rainMM: totals.rainMM,
+      // Carried so the Snow row can still work when Open-Meteo's daily
+      // summary is missing (offline, outage, OWM-only cache) — the
+      // slot-sum path computes a perfectly good snow figure that would
+      // otherwise be discarded, leaving a card showing Precipitation
+      // but no Snow for the same frozen precipitation.
+      snowMM: totals.snowMM
+    };
+  },
+
+  // The exact slot behind a tapped hourly tile, or null. The day-level
+  // activeDay keeps driving the quick stats, graph and daily-list
+  // highlight (those describe the whole day); only the hero card swaps.
+  // A missing dt (stale pin after refresh, city change, etc.) silently
+  // falls back to the day view.
+  _pinnedHourSlotFor(ctx) {
+    const { selectedHourDt, dailyData, state } = ctx;
+    if (selectedHourDt == null) return null;
+    for (const d of dailyData) {
+      if (!d || !d.hourly) continue;
+      const found = d.hourly.find(h => h.dt === selectedHourDt);
+      if (found) return found;
+    }
+    // Not on the 3h spine? The pin is one of the near-term 2h tiles —
+    // display-layer slots that never live in day.hourly. Resolve it
+    // straight from the Open-Meteo hourly series (which also keeps an
+    // older 2h pin alive after it drifts out of the 24h tile window).
+    const om = (state.omHourly || []).find(h => h.dt === selectedHourDt);
+    return om ? this._omHourToOwmSlot(om) : null;
+  },
+
+  // What the hero card reads (main, weather, wind, dt): activeDay, or
+  // the pinned slot's values layered on top of it with the hero icon's
+  // asset name recomputed (and the ambient-fx selection downstream) so
+  // it tracks the hour.
+  _heroDataFor(ctx) {
+    const { activeDay, pinnedHourSlot } = ctx;
+    if (!pinnedHourSlot) return activeDay;
+    const w0 = (pinnedHourSlot.weather && pinnedHourSlot.weather[0]) || activeDay.weather[0];
+    const heroAsset = w0 ? this._weatherAssetName(w0.icon, w0.id) : null;
+    const weatherWithAsset = (w0 && heroAsset)
+      ? [{ ...w0, _asset: heroAsset }]
+      : [w0];
+    return {
+      ...activeDay,
+      main:    pinnedHourSlot.main    || activeDay.main,
+      weather: weatherWithAsset,
+      wind:    pinnedHourSlot.wind    || activeDay.wind,
+      dt:      pinnedHourSlot.dt
+    };
+  },
+
+  // Everything the dashboard sections share, computed once per render.
+  _dashboardContext(state) {
     const { currentWeather, forecast, cityName } = state;
-    let selectedDayIndex = state.selectedDayIndex;
-    const selectedHourDt = state.selectedHourDt || null;
-
-    this.locationName.textContent = this.prettifyLocationName(cityName);
-
-    // Header Save Button. Include cityName so name-match catches
-    // entries that already sit in the saved list but whose stored
-    // coords drifted more than SAME_LOCATION_DEG from what /weather
-    // just returned — otherwise the star would flicker between saved
-    // and unsaved for the same place.
-    const savedList = Storage.getSavedList();
-    const isSaved = Storage.isDuplicate(savedList, currentWeather.coord.lat, currentWeather.coord.lon, cityName);
-
-    this.saveBtnContainer.innerHTML = `
-      <button class="save-loc-btn ${isSaved ? 'saved' : ''}" id="save-btn" aria-label="${isSaved ? 'Remove Saved Location' : 'Save Location'}">
-        ${isSaved
-          ? `<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>`
-          : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>`
-        }
-      </button>
-    `;
-    document.getElementById('save-btn').addEventListener('click', onSave);
-
-    // Canonical 8-day list + day keys. Built by the shared builder above
-    // so the rendered days can never diverge from what App's Copy-URL
+    // Canonical 8-day list + day keys. Built by the shared builder so
+    // the rendered days can never diverge from what App's Copy-URL
     // sender/receiver resolves against. `tz` is the city's IANA zone
     // name when Open-Meteo supplied one, else OWM's fixed offset.
     const { dailyData, todayKey, dayKeyFor, tz } = this.buildDailyData(state);
 
-    if (selectedDayIndex >= dailyData.length) {
-      selectedDayIndex = -1;
-    }
-
+    let selectedDayIndex = state.selectedDayIndex;
+    if (selectedDayIndex >= dailyData.length) selectedDayIndex = -1;
+    const selectedHourDt = state.selectedHourDt || null;
+    // The Today tab (index 0) and the initial state (-1) both mean
+    // "today" — unify them so the rolling 24h temperature graph and the
+    // rest-of-today metrics are identical regardless of which path we
+    // got here through.
+    const isToday = selectedDayIndex === -1 || selectedDayIndex === 0;
     const nowSec = Math.floor(Date.now() / 1000);
 
-    // ── Near-term 2h tiles ─────────────────────────────────────────────
+    // ── Near-term 2h tiles ─────────────────────────────────────────
     // The hourly scroller shows 2-hour tiles for the next 24 hours,
     // sourced from Open-Meteo's true 1h series (OWM only offers 3h),
     // then continues on the regular 3h slots beyond that window —
@@ -2055,446 +2334,411 @@ const UI = {
       if (h.dt > lastNearTermDt) lastNearTermDt = h.dt;
     }
 
-    // Day totals for any forecast day: sum of rain+snow mm and max PoP across
-    // the 3h slots in that day. Used identically for Today and forecast days
-    // so the Precipitation / Probability rows update consistently.
-    // Open-Meteo's daily summary, matched by city-local day KEY rather
-    // than array index — daily[0] is "today", but rendered day 0 can
-    // already be tomorrow near local midnight. Defined up here because
-    // the hero temperature, the daily list and the precip totals all
-    // need it now, not just the UV lookup further down.
-    const omDailyForKey = (key) => (state.omDaily || []).find(od => dayKeyFor(od.dt) === key) || null;
+    // Index of the real "today" entry in dailyData, matched by day KEY
+    // instead of trusting array position (same rule as the daily list).
+    // Today is chronologically first whenever present, so this is 0 in
+    // practice — but near local midnight, when OWM's window has rolled
+    // past the city's calendar day AND enrichment couldn't fill it in,
+    // dailyData[0] is already tomorrow and no key matches. Fall back to
+    // 0 then so the Now tile still anchors the scroller.
+    const todayIdx = dailyData.findIndex(d => d.key === todayKey);
+    const nowDayIdx = todayIdx !== -1 ? todayIdx : 0;
+    // Index of the currently-displayed day in dailyData, used by the
+    // hourly-scroll to highlight its tiles and detect scroll-driven day
+    // changes. Both -1 (initial) and 0 (Today tab) map to the Now day.
+    const currentDayIdx = isToday ? nowDayIdx : selectedDayIndex;
 
-    // A day's high and low, in Celsius.
-    //
-    // Deriving these from `day.temps` alone under-reports: that array is
-    // the 3-HOURLY spine, aligned to UTC hours, so the sampling phase
-    // drifts per city and the real extreme can fall up to 1.5h from any
-    // sample. Open-Meteo publishes the model's actual daily extremes and
-    // we were already fetching and discarding them.
-    //
-    // Taking the UNION rather than simply preferring Open-Meteo: on days
-    // 0-5 the spine is OWM's forecast while tempMax/tempMin come from
-    // Open-Meteo, so picking one model outright could print a high LOWER
-    // than the peak of the curve drawn right below it. Widening to cover
-    // both keeps the headline consistent with the graph — the number is
-    // never less than what the curve visibly reaches — while still
-    // catching an extreme the sampling missed. On days 6-8 the spine is
-    // Open-Meteo too, so the two agree and this is a pure improvement.
-    const dayExtremesC = (day) => {
-      if (!day || !day.temps || !day.temps.length) return null;
-      let hi = Math.max(...day.temps);
-      let lo = Math.min(...day.temps);
-      const om = day.key ? omDailyForKey(day.key) : null;
-      if (om) {
-        if (om.tempMax != null) hi = Math.max(hi, om.tempMax);
-        if (om.tempMin != null) lo = Math.min(lo, om.tempMin);
-      }
-      return { hi, lo };
+    const ctx = {
+      state, currentWeather, forecast, cityName,
+      cityChanged: this._renderedCityName !== cityName,
+      tz, dayKeyFor, todayKey, dailyData,
+      selectedDayIndex, selectedHourDt, isToday,
+      todayData: dailyData[0],
+      nowSec, nearTermByKey, lastNearTermDt,
+      todayIdx, nowDayIdx, currentDayIdx
     };
 
-    // `wholeDay` false means "rest of today": sum only the slots still
-    // ahead, the way this has always worked for the Today tab.
-    //
-    // Open-Meteo's precipSum is a CALENDAR-DAY total, so using it for
-    // today would report rain that already fell — at 6 PM on a clear
-    // evening the row would read 18 mm because of a morning downpour.
-    // The sibling popMax stat already refuses the daily figure for today
-    // for exactly this reason; this keeps the two consistent.
-    const dayTotals = (day, wholeDay = true) => {
-      // hasWindow false, not undefined: no day means no forecast window
-      // at all, and the hero must not assert "No precipitation expected"
-      // off the back of it.
-      if (!day) return { rainMM: 0, pop: 0, snowMM: null, hasWindow: false };
-      // For a whole forecast day, Open-Meteo's exact total beats
-      // re-summing sampled buckets: _omHourToOwmSlot multiplies ONE
-      // sampled hour by three to stand in for a 3h bucket, so a short
-      // convective storm either vanishes between samples or gets tripled.
-      const om = (wholeDay && day.key) ? omDailyForKey(day.key) : null;
-      if (om && om.precipSum != null) {
-        const pop = day.hourly.reduce((mx, h) => Math.max(mx, h.pop || 0), 0);
-        // snowMM unused on this path — whole-day snow comes from
-        // omDaily.snowSumCM, which is already a depth.
-        return { rainMM: om.precipSum, pop, snowMM: null, hasWindow: true };
-      }
-      // "Rest of today" has to be enforced HERE, not assumed from the
-      // slot list. buildDailyData's MIN_SLOTS top-up backfills any short
-      // day from omHourly, which deliberately reaches 24h into the past —
-      // so today's slots include hours that have already elapsed, and
-      // summing them blindly reported this morning's rain as still to
-      // come.
-      //
-      // The cutoff is source-aware because dt means different things (see
-      // _omHourToOwmSlot): an OWM bucket starting an hour ago still holds
-      // two hours of future weather and should count, whereas an
-      // Open-Meteo slot stamped an hour ago describes an hour that has
-      // entirely finished — and carries a ×3 multiplier, so admitting it
-      // would add triple a fully-elapsed hour.
-      const nowSec = Math.floor(Date.now() / 1000);
-      const stillAhead = (h) => h._omDerived
-        ? h.dt > nowSec
-        : h.dt + 3 * 3600 > nowSec;
-      const slots = wholeDay ? day.hourly : day.hourly.filter(stillAhead);
-      let rainMM = 0;
-      let snowMM = 0;
-      for (const h of slots) {
-        rainMM += (h.rain && h.rain['3h']) || 0;
-        const s = (h.snow && h.snow['3h']) || 0;
-        rainMM += s;   // total precipitation, water-equivalent
-        snowMM += s;   // the frozen share of it, tracked separately
-      }
-      // Same window as the rain sum — a 90% chance from a shower that
-      // came through at dawn isn't a forecast for the evening.
-      const pop = slots.reduce((mx, h) => Math.max(mx, h.pop || 0), 0);
-      // hasWindow false means there is nothing left of today to forecast,
-      // which is different from "nothing is expected" — see the hero
-      // precip line.
-      return { rainMM, pop, snowMM, hasWindow: slots.length > 0 };
-    };
+    ctx.activeDay      = this._activeDayFor(ctx);
+    ctx.pinnedHourSlot = this._pinnedHourSlotFor(ctx);
+    ctx.heroData       = this._heroDataFor(ctx);
 
-    // The Today tab (index 0) and the initial state (-1) both mean "today" —
-    // unify them so the rolling 24h temperature graph and the rest-of-today
-    // metrics are identical regardless of which path we got here through.
-    const isToday = selectedDayIndex === -1 || selectedDayIndex === 0;
-    const todayData = dailyData[0];
-
-    // Determine if we should perform a 3D flip animation of the hero temperature
-    const cityChanged = this._renderedCityName !== cityName;
-    let shouldFlip = false;
-    let oldTempStr = '';
-    const prevHeroTempEl = this.weatherView ? this.weatherView.querySelector('.hero-temp-large') : null;
-    if (prevHeroTempEl &&
-        !cityChanged &&
-        this._lastIsToday &&
-        this._lastPinnedHour === null &&
-        isToday &&
-        selectedHourDt === null &&
-        this._lastTempUnit === Storage.getUnits().temp) {
-      const prevBackEl = this.weatherView.querySelector('.hero-temp-flip-back');
-      oldTempStr = (prevBackEl ? prevBackEl.textContent : prevHeroTempEl.textContent).trim();
-    }
-
-    // Compute sunrise/sunset for a given calendar day at the city. For Today
-    // we trust OWM's values (sub-minute accurate); for forecast days we compute
-    // locally since OWM's free /forecast endpoint doesn't include them.
-    // Pick the most "notable" hourly slot for a day — a storm at 3 AM is
-    // a more useful daily headline than a clear noon, so we rank slots
-    // by severity first and use closeness to local noon only as a tie
-    // breaker among slots that share the highest severity. That means:
-    //   - any thunderstorm anywhere in the day → ⛈️ icon
-    //   - else any snow → 🌨️ icon
-    //   - else any rain → 🌧️ icon
-    //   - else any dust/sand/smoke/haze/mist → that atmospheric icon
-    //   - else cloudiest of the day → ☁️ / ⛅
-    //   - else clear → ☀️
-    // Used by both the daily-list row and the hero (for non-today days),
-    // so the two stay matched and the row→hero slide animation still
-    // ends on the same illustration.
-    const NOTABILITY = {
-      'thunderstorm': 9, 'thunderstorm-night': 9,
-      'snow':          8, 'snow-night':          8,
-      'shower-rain':   7, 'shower-rain-night':   7,
-      'sand':          6, 'dust':                6,
-      'smoke':         5, 'haze':                5,
-      'mist':          4,
-      'broken-clouds': 3,
-      'scattered-clouds': 2,
-      'few-clouds-day': 1, 'cloudy-night':       1,
-      'clear-day':     0, 'clear-night':         0,
-    };
-    const notableSlotFor = (day) => {
-      if (!day || !day.hourly || !day.hourly.length) return null;
-      let best = null;
-      let bestScore = -1;
-      let bestDiff  = Infinity;
-      for (const slot of day.hourly) {
-        if (!slot.weather || !slot.weather[0]) continue;
-        const asset = this._weatherAssetName(slot.weather[0].icon, slot.weather[0].id);
-        const score = NOTABILITY[asset] != null ? NOTABILITY[asset] : 0;
-        const lh = this.localHour(slot.dt, tz);
-        const diff = Math.abs(lh - 12);
-        // Strictly higher severity always wins; among ties we keep the
-        // slot closest to local noon.
-        if (score > bestScore || (score === bestScore && diff < bestDiff)) {
-          bestScore = score;
-          bestDiff  = diff;
-          best      = slot;
-        }
-      }
-      return best;
-    };
-
-    const sunTimesForDay = (dayDt) => {
-      const p = this.localParts(dayDt, tz);
-      return this._solarTimes(
-        p.year,
-        p.month,
-        p.day,
-        currentWeather.coord.lat,
-        currentWeather.coord.lon,
-        tz
-      );
-    };
-
-    const activeDay = isToday ? (() => {
-      // Rest-of-today, not the calendar day — see dayTotals.
-      const totals = dayTotals(todayData, false);
-      return {
-        main: currentWeather.main,
-        weather: currentWeather.weather,
-        wind: currentWeather.wind,
-        visibility: currentWeather.visibility,
-        // Today's graph spans NOW → NOW + 24h (rolling window). Forecast
-        // days use their local-calendar-day slots (handled in the else
-        // branch below).
-        hourly: forecast.list.slice(0, 8),
-        sunrise: currentWeather.sys.sunrise,
-        sunset: currentWeather.sys.sunset,
-        pop: totals.pop,
-        rainMM: totals.rainMM,
-        snowMM: totals.snowMM,
-        hasWindow: totals.hasWindow,
-        // Used by the hero icon picker so a phase-correct moon shows
-        // tonight if it's currently clear-night here. (Forecast days
-        // get .dt via the `mid` spread in the else branch.)
-        dt: currentWeather.dt
-      };
-    })() : (() => {
-      const day = dailyData[selectedDayIndex];
-      const mid = day.hourly[Math.floor(day.hourly.length / 2)];
-      const totals = dayTotals(day);
-      // Open-Meteo-synthesised days carry exact sunrise/sunset; otherwise
-      // compute via the U.S. Naval Observatory formula.
-      const sun = day._om
-        ? { sunrise: day._om.sunrise, sunset: day._om.sunset }
-        : sunTimesForDay(day.dt);
-      // Headline icon for the day = the most NOTABLE weather (storm /
-      // snow / rain / dust / haze / clouds, in that order), tie-broken
-      // by closeness to local noon. Matches the daily-list row picker
-      // exactly, so the row→hero slide animation lands on the same art.
-      const heroSlot = notableSlotFor(day) || mid;
-      const heroAsset = (heroSlot.weather && heroSlot.weather[0])
-        ? this._weatherAssetName(heroSlot.weather[0].icon, heroSlot.weather[0].id)
-        : null;
-      // Stash the resolved asset name on a synthetic _asset field so the
-      // hero render can pass it directly into getWeatherIconSVG (which
-      // accepts asset names as well as OWM codes).
-      const modeWeather = (heroSlot.weather && heroSlot.weather[0] && heroAsset)
-        ? [{ ...heroSlot.weather[0], _asset: heroAsset }]
-        : mid.weather;
-      return {
-        ...mid,
-        weather: modeWeather,
-        hourly: day.hourly,
-        sunrise: sun.sunrise,
-        sunset: sun.sunset,
-        pop: totals.pop,
-        rainMM: totals.rainMM,
-        // Carried so the Snow row can still work when Open-Meteo's daily
-        // summary is missing (offline, outage, OWM-only cache) — the
-        // slot-sum path computes a perfectly good snow figure that would
-        // otherwise be discarded, leaving a card showing Precipitation
-        // but no Snow for the same frozen precipitation.
-        snowMM: totals.snowMM
-      };
-    })();
-
-    // If the user has tapped a specific hourly tile, locate that exact slot
-    // so we can project ITS conditions into the hero. The day-level
-    // `activeDay` keeps driving the quick stats, temperature graph and
-    // daily-list highlight (those describe the whole day, not one hour);
-    // only the hero card swaps. A missing dt (stale pin after refresh,
-    // city change, etc.) silently falls back to the day view.
-    let pinnedHourSlot = null;
-    if (selectedHourDt != null) {
-      for (const d of dailyData) {
-        if (!d || !d.hourly) continue;
-        const found = d.hourly.find(h => h.dt === selectedHourDt);
-        if (found) { pinnedHourSlot = found; break; }
-      }
-      // Not on the 3h spine? The pin is one of the near-term 2h tiles —
-      // display-layer slots that never live in day.hourly. Resolve it
-      // straight from the Open-Meteo hourly series (which also keeps an
-      // older 2h pin alive after it drifts out of the 24h tile window).
-      if (!pinnedHourSlot) {
-        const om = (state.omHourly || []).find(h => h.dt === selectedHourDt);
-        if (om) pinnedHourSlot = this._omHourToOwmSlot(om);
-      }
-    }
-
-    // heroData mirrors the fields the hero card reads (main, weather, wind,
-    // dt) — defaulting to activeDay so the existing render path "just
-    // works" when no hour is pinned. When pinned, we layer the slot's
-    // values on top, recomputing the hero icon's asset name (and the
-    // matching ambient-fx selection downstream) so it tracks the hour.
-    let heroData = activeDay;
-    if (pinnedHourSlot) {
-      const w0 = (pinnedHourSlot.weather && pinnedHourSlot.weather[0]) || activeDay.weather[0];
-      const heroAsset = w0 ? this._weatherAssetName(w0.icon, w0.id) : null;
-      const weatherWithAsset = (w0 && heroAsset)
-        ? [{ ...w0, _asset: heroAsset }]
-        : [w0];
-      heroData = {
-        ...activeDay,
-        main:    pinnedHourSlot.main    || activeDay.main,
-        weather: weatherWithAsset,
-        wind:    pinnedHourSlot.wind    || activeDay.wind,
-        dt:      pinnedHourSlot.dt
-      };
-    }
-
-    const dewPoint = this.calculateDewPoint(activeDay.main.temp, activeDay.main.humidity);
-    // Breeze description tracks the hero (pinned hour wind if set,
-    // otherwise the day's wind) so the "Feels like X — windy" subtitle
-    // stays consistent with the rest of the hero card.
-    const breeze = this.windDescription(heroData.wind.speed);
-
-    // Hero subtitle clock: short city name (before any comma) + local time.
-    const cityShort = (cityName || '').split(',')[0].trim() || cityName || '';
-    const cityClock = this.formatTime(nowSec, true, tz);
-    this._clockTimezone = tz;
-    this._ensureClockTimer();
-
-    // Small label above the weather icon. Default behaviour:
-    //   - today (no hour pinned)            → "Right now"
-    //   - other day (no hour pinned)        → "Tuesday's forecast"
-    // When a specific hourly tile is pinned, swap in a contextual phrase
-    // that names both the relative day and the time-of-day band:
-    //   - today + morning/afternoon hour    → "Today at 11 AM"
-    //   - today + evening hour (17–20)      → "This evening at 8 PM"
-    //   - today + night hour (21–23, 0–4)   → "Tonight at 10 PM"
-    //   - any other day                     → "Tuesday at 3 PM"
-    // The day-of-week comes from the hour's CITY-local date (via dayKeyFor),
-    // not the dashboard's selectedDayIndex, so a tile from tomorrow's
-    // slots in the scroller reads "Wednesday at..." even though the
-    // dashboard day is also being switched.
-    let heroWhen = 'Right now';
-    if (pinnedHourSlot) {
-      const hourLabel = this.formatTime(pinnedHourSlot.dt, true, tz);
-      const hourDayKey = dayKeyFor(pinnedHourSlot.dt);
-      const localHour = this.localHour(pinnedHourSlot.dt, tz);
-      if (hourDayKey === todayKey) {
-        if (localHour >= 17 && localHour <= 20)      heroWhen = `This evening at ${hourLabel}`;
-        else if (localHour >= 21 || localHour <= 4)  heroWhen = `Tonight at ${hourLabel}`;
-        else                                          heroWhen = `Today at ${hourLabel}`;
-      } else {
-        // Derive the weekday from the slot's canonical city-local dayKey
-        // so a slot that's "Wednesday in Tokyo" doesn't render as
-        // "Tuesday" just because the browser is in New York.
-        heroWhen = `${this._weekdayFromDayKey(hourDayKey)} at ${hourLabel}`;
-      }
-    } else if (!isToday) {
-      const day = dailyData[selectedDayIndex];
-      if (day && day.key) heroWhen = `${this._weekdayFromDayKey(day.key)}'s forecast`;
-    }
-
-    // Big temperature readout.
-    //   - hour pinned         → that hour's single temp (regardless of day)
-    //   - today, no pin       → current temp
-    //   - other day, no pin   → the day's high / low
-    let heroTempHTML;
-    if (pinnedHourSlot) {
-      heroTempHTML = `<div class="hero-temp-large">${this.formatTemp(heroData.main.temp)}°</div>`;
-    } else if (isToday) {
-      const newTempStr = `${this.formatTemp(activeDay.main.temp)}°`;
-      if (oldTempStr && oldTempStr !== newTempStr) {
-        shouldFlip = true;
-        heroTempHTML = `
-          <div class="hero-temp-flip-container">
-            <div class="hero-temp-flip-card">
-              <div class="hero-temp-flip-front hero-temp-large">${oldTempStr}</div>
-              <div class="hero-temp-flip-back hero-temp-large">${newTempStr}</div>
-            </div>
-          </div>
-        `;
-      } else {
-        heroTempHTML = `<div class="hero-temp-large">${newTempStr}</div>`;
-      }
-    } else {
-      const day = dailyData[selectedDayIndex];
-      const ex = dayExtremesC(day);
-      const hi = Math.round(this.convertTemp(ex ? ex.hi : Math.max(...day.temps)));
-      const lo = Math.round(this.convertTemp(ex ? ex.lo : Math.min(...day.temps)));
-      heroTempHTML = `<div class="hero-temp-large">${hi}° / ${lo}°</div>`;
-    }
-
-    // UV: current for today, daily-max for forecast days. Falls back to '—' if
-    // Open-Meteo was unreachable or returned no data for this slot.
-    // The daily max is matched by city-local day KEY, not array index —
-    // Open-Meteo's daily[0] is "today", but rendered day 0 can already
-    // be tomorrow near local midnight (OWM's forecast window), which
-    // used to show every forecast day the previous day's UV max.
-    const uv = state.uv || { current: null, daily: [] };
-    // omDailyForKey is defined further up, alongside dayExtremesC.
-    const uvForKey = (key) => {
-      const om = omDailyForKey(key);
-      return om && om.uvIndexMax != null ? om.uvIndexMax : null;
-    };
-    const activeDayEntry = isToday ? dailyData[0] : dailyData[selectedDayIndex];
-    const activeDayUvKey = activeDayEntry ? activeDayEntry.key : null;
+    const { activeDay, pinnedHourSlot } = ctx;
+    ctx.activeDayEntry = isToday ? dailyData[0] : dailyData[selectedDayIndex];
+    ctx.activeDayKey   = ctx.activeDayEntry ? ctx.activeDayEntry.key : null;
     // Open-Meteo's daily summary for the active day — the authoritative
     // whole-day numbers (max precip probability, max wind, sunshine)
     // that beat anything derived from sampled 3h slots.
-    const activeOmDay = omDailyForKey(activeDayUvKey);
+    ctx.activeOmDay    = this._omDailyForKey(ctx, ctx.activeDayKey);
+
+    // UV: current for today, daily-max for forecast days. Falls back to
+    // '—' downstream if Open-Meteo was unreachable or had no data.
+    const uv = state.uv || { current: null, daily: [] };
+    const uvForKey = (key) => {
+      const om = this._omDailyForKey(ctx, key);
+      return om && om.uvIndexMax != null ? om.uvIndexMax : null;
+    };
     let uvValue = isToday
-      ? (uv.current != null ? uv.current : uvForKey(activeDayUvKey))
-      : uvForKey(activeDayUvKey);
+      ? (uv.current != null ? uv.current : uvForKey(ctx.activeDayKey))
+      : uvForKey(ctx.activeDayKey);
     // A pinned hour shows THAT hour's UV when Open-Meteo has it, not the
     // day max — matches how the rest of the hero tracks the pinned slot.
     if (pinnedHourSlot) {
       const omHour = (state.omHourly || []).find(h => h.dt === pinnedHourSlot.dt);
       if (omHour && omHour.uvIndex != null) uvValue = omHour.uvIndex;
     }
+    ctx.uvValue = uvValue;
 
     // Precip chance: for forecast days prefer the daily max probability
     // over the max of sampled slots. Today keeps the rest-of-day slot
     // figure — the daily max can reflect rain that already fell.
-    const popValue = (!isToday && activeOmDay && activeOmDay.popMax != null)
-      ? activeOmDay.popMax / 100
+    ctx.popValue = (!isToday && ctx.activeOmDay && ctx.activeOmDay.popMax != null)
+      ? ctx.activeOmDay.popMax / 100
       : (activeDay.pop || 0);
 
     // Cloud cover: pinned hour → that slot; today → current conditions;
     // forecast day → mean over the day's slots that carry a value.
-    const cloudCover = (() => {
+    ctx.cloudCover = (() => {
       if (pinnedHourSlot && pinnedHourSlot.clouds && pinnedHourSlot.clouds.all != null) {
         return pinnedHourSlot.clouds.all;
       }
       if (isToday && currentWeather.clouds && currentWeather.clouds.all != null) {
         return currentWeather.clouds.all;
       }
-      const vals = ((activeDayEntry && activeDayEntry.hourly) || [])
+      const vals = ((ctx.activeDayEntry && ctx.activeDayEntry.hourly) || [])
         .map(h => h.clouds && h.clouds.all)
         .filter(v => v != null);
       if (!vals.length) return null;
       return vals.reduce((s, v) => s + v, 0) / vals.length;
     })();
 
-    const sunriseStat = activeDay.sunrise != null ? `
-      <div class="stat-item">
-        <span class="stat-label">Sunrise</span>
-        <span class="stat-value">${this.formatTime(activeDay.sunrise, true, tz)}</span>
-      </div>` : '';
-    const sunsetStat = activeDay.sunset != null ? `
-      <div class="stat-item">
-        <span class="stat-label">Sunset</span>
-        <span class="stat-value">${this.formatTime(activeDay.sunset, true, tz)}</span>
-      </div>` : '';
+    ctx.dewPoint = this.calculateDewPoint(activeDay.main.temp, activeDay.main.humidity);
+    ctx.aq = state.airQuality || { aqi: null, pollen: null, treePollen: null, grassPollen: null, weedPollen: null };
 
-    // Quick-stats grid is 3 columns. Count what will be shown so we can
-    // The quick-stats grid is capped at 2 rows / 6 items per page. Items
-    // beyond that go on additional cube-swipeable pages. Order matters:
-    // the first 6 most-important items live on page 1; everything else
-    // appears at the top of page 2+ as the user swipes.
-    const hasGust       = this.isNoteworthyGust(activeDay.wind.speed, activeDay.wind.gust);
-    const hasPressure   = this.isNoteworthyPressure(activeDay.main.pressure);
-    const hasVisibility = this.isNoteworthyVisibility(activeDay.visibility);
-    const aq = state.airQuality || { aqi: null, pollen: null, treePollen: null, grassPollen: null, weedPollen: null };
+    // Coastal tests. Two separate questions, deliberately not conflated:
+    //   marineCellIsLocal — is Open-Meteo's marine grid cell actually
+    //     near this city? Governs WATER TEMP, which comes only from that
+    //     cell. Longitude degrees shrink toward the poles, so the
+    //     longitude term is scaled by cos(lat) for a true ~7km radius
+    //     everywhere (a raw Pythagorean distance demoted Nordic coastal
+    //     cities to the last stats page).
+    //   touchesWater — should tide rows show at all? A matched NOAA
+    //     station IS the coastal signal — stations only exist on tidal
+    //     water — and is a far stronger yes than the proximity heuristic.
+    // Reusing one flag for both would let a nearby station vouch for an
+    // SST reading taken 40km offshore, behind a headland or up a bay.
+    ctx.marineCellIsLocal = false;
+    if (currentWeather.coord && state.tideCoords) {
+      const latRad = currentWeather.coord.lat * Math.PI / 180;
+      const dLat = state.tideCoords.lat - currentWeather.coord.lat;
+      const dLon = (state.tideCoords.lon - currentWeather.coord.lon) * Math.cos(latRad);
+      const degDiff = Math.sqrt(dLat * dLat + dLon * dLon);
+      ctx.marineCellIsLocal = degDiff <= 0.065;
+    }
+    ctx.touchesWater = !!state.tidePredictions || ctx.marineCellIsLocal;
 
-    const item = (label, value) => `
+    ctx.cityClock = this.formatTime(nowSec, true, tz);
+    return ctx;
+  },
+
+  // ── Hero ────────────────────────────────────────────────────────────
+
+  // Small label above the weather icon. Default behaviour:
+  //   - today (no hour pinned)            → "Right now"
+  //   - other day (no hour pinned)        → "Tuesday's forecast"
+  // When a specific hourly tile is pinned, swap in a contextual phrase
+  // that names both the relative day and the time-of-day band:
+  //   - today + morning/afternoon hour    → "Today at 11 AM"
+  //   - today + evening hour (17–20)      → "This evening at 8 PM"
+  //   - today + night hour (21–23, 0–4)   → "Tonight at 10 PM"
+  //   - any other day                     → "Tuesday at 3 PM"
+  // The day-of-week comes from the hour's CITY-local date (via dayKeyFor),
+  // not the dashboard's selectedDayIndex, so a tile from tomorrow's
+  // slots in the scroller reads "Wednesday at..." even though the
+  // dashboard day is also being switched.
+  _heroWhen(ctx) {
+    const { pinnedHourSlot, tz, dayKeyFor, todayKey, isToday, dailyData, selectedDayIndex } = ctx;
+    if (pinnedHourSlot) {
+      const hourLabel = this.formatTime(pinnedHourSlot.dt, true, tz);
+      const hourDayKey = dayKeyFor(pinnedHourSlot.dt);
+      const localHour = this.localHour(pinnedHourSlot.dt, tz);
+      if (hourDayKey === todayKey) {
+        if (localHour >= 17 && localHour <= 20)      return `This evening at ${hourLabel}`;
+        else if (localHour >= 21 || localHour <= 4)  return `Tonight at ${hourLabel}`;
+        return `Today at ${hourLabel}`;
+      }
+      // Derive the weekday from the slot's canonical city-local dayKey
+      // so a slot that's "Wednesday in Tokyo" doesn't render as
+      // "Tuesday" just because the browser is in New York.
+      return `${this._weekdayFromDayKey(hourDayKey)} at ${hourLabel}`;
+    }
+    if (!isToday) {
+      const day = dailyData[selectedDayIndex];
+      if (day && day.key) return `${this._weekdayFromDayKey(day.key)}'s forecast`;
+    }
+    return 'Right now';
+  },
+
+  // The previously rendered "today" temperature, when the new render is
+  // ALSO a same-city, same-unit, unpinned today view — the only case
+  // where a changed number should play the 3D flip. Reads the OUTGOING
+  // DOM, so it must run before the innerHTML swap. '' means no flip.
+  _previousHeroTemp(ctx) {
+    const prevHeroTempEl = this.weatherView ? this.weatherView.querySelector('.hero-temp-large') : null;
+    if (prevHeroTempEl &&
+        !ctx.cityChanged &&
+        this._lastIsToday &&
+        this._lastPinnedHour === null &&
+        ctx.isToday &&
+        ctx.selectedHourDt === null &&
+        this._lastTempUnit === Storage.getUnits().temp) {
+      const prevBackEl = this.weatherView.querySelector('.hero-temp-flip-back');
+      return (prevBackEl ? prevBackEl.textContent : prevHeroTempEl.textContent).trim();
+    }
+    return '';
+  },
+
+  // Big temperature readout.
+  //   - hour pinned         → that hour's single temp (regardless of day)
+  //   - today, no pin       → current temp (flip-animated when it changed)
+  //   - other day, no pin   → the day's high / low
+  // Returns { html, shouldFlip }.
+  _heroTempHTML(ctx) {
+    const { pinnedHourSlot, heroData, isToday, activeDay, dailyData, selectedDayIndex } = ctx;
+    if (pinnedHourSlot) {
+      return { html: `<div class="hero-temp-large">${this.formatTemp(heroData.main.temp)}°</div>`, shouldFlip: false };
+    }
+    if (isToday) {
+      const oldTempStr = this._previousHeroTemp(ctx);
+      const newTempStr = `${this.formatTemp(activeDay.main.temp)}°`;
+      if (oldTempStr && oldTempStr !== newTempStr) {
+        return {
+          shouldFlip: true,
+          html: `
+          <div class="hero-temp-flip-container">
+            <div class="hero-temp-flip-card">
+              <div class="hero-temp-flip-front hero-temp-large">${oldTempStr}</div>
+              <div class="hero-temp-flip-back hero-temp-large">${newTempStr}</div>
+            </div>
+          </div>
+        `
+        };
+      }
+      return { html: `<div class="hero-temp-large">${newTempStr}</div>`, shouldFlip: false };
+    }
+    const day = dailyData[selectedDayIndex];
+    const ex = this._dayExtremesC(ctx, day);
+    const hi = Math.round(this.convertTemp(ex ? ex.hi : Math.max(...day.temps)));
+    const lo = Math.round(this.convertTemp(ex ? ex.lo : Math.min(...day.temps)));
+    return { html: `<div class="hero-temp-large">${hi}° / ${lo}°</div>`, shouldFlip: false };
+  },
+
+  // Precip line under the hero. A 15-minute nowcast transition inside
+  // the next 2h beats the day-level percentage — "Rain starting around
+  // 3:15 PM" is strictly more useful than "60% chance". Nowcast only
+  // applies to the live "today" view.
+  // Late in the evening the last 3h slot of today has passed, so the
+  // rest-of-day window is empty and pop is 0 — which is the absence of
+  // a forecast, not a forecast of nothing. Asserting "No precipitation
+  // expected" there put that text on screen at 22:30 in a downpour,
+  // next to a rain icon and a graph full of rain bars. Say nothing
+  // instead; the hero already shows current conditions.
+  _heroPrecipMsg(ctx) {
+    const { isToday, activeDay, popValue, pinnedHourSlot, state, nowSec, tz } = ctx;
+    const noWindow = isToday && activeDay.hasWindow === false;
+    let precipMsg = popValue > 0.1
+      ? `${Math.round(popValue * 100)}% chance of precipitation`
+      : (noWindow ? '' : 'No precipitation expected');
+    if (isToday && !pinnedHourSlot) {
+      const cast = this._precipNowcast(state.omMinutely, nowSec);
+      if (cast) {
+        precipMsg = `Rain ${cast.type === 'starts' ? 'starting' : 'ending'} around ${this.formatTime(cast.dt, true, tz)}`;
+      }
+    }
+    return precipMsg;
+  },
+
+  // "Warmer/cooler than this time yesterday" — the past_days=1 slice
+  // of Open-Meteo's hourly series. Compare in the user's display unit
+  // so the rounded degree difference matches what the hero shows.
+  _heroYesterdayMsg(ctx) {
+    const { isToday, pinnedHourSlot, nowSec, state, currentWeather } = ctx;
+    if (!isToday || pinnedHourSlot) return '';
+    const target = nowSec - 86400;
+    let best = null, bestDiff = Infinity;
+    for (const h of (state.omHourly || [])) {
+      const d = Math.abs(h.dt - target);
+      if (d < bestDiff) { bestDiff = d; best = h; }
+    }
+    if (!(best && bestDiff <= 3600 && best.temp != null)) return '';
+    const diff = Math.round(this.convertTemp(currentWeather.main.temp) - this.convertTemp(best.temp));
+    return diff === 0
+      ? 'About the same as yesterday'
+      : `${Math.abs(diff)}° ${diff > 0 ? 'warmer' : 'cooler'} than this time yesterday`;
+  },
+
+  // Returns { html, shouldFlip }.
+  _heroHTML(ctx) {
+    const { heroData } = ctx;
+    const temp = this._heroTempHTML(ctx);
+    // Breeze description tracks the hero (pinned hour wind if set,
+    // otherwise the day's wind) so the "Feels like X — windy" subtitle
+    // stays consistent with the rest of the hero card.
+    const breeze = this.windDescription(heroData.wind.speed);
+    const yesterdayMsg = this._heroYesterdayMsg(ctx);
+    const precipMsg = this._heroPrecipMsg(ctx);
+    const html = `<section class="hero-section">
+        <div class="hero-when">${this.esc(this._heroWhen(ctx))}</div>
+        <div class="hero-condition">
+          <div class="hero-icon-large">${this.getWeatherIconSVG(
+            heroData.weather[0]._asset || heroData.weather[0].icon,
+            48,
+            heroData.weather[0].id,
+            // dt for phase substitution: today (no pin) uses the current
+            // weather's dt (= now), forecast days use the mid-of-day
+            // slot's dt; a pinned hour uses that hour's exact dt so the
+            // moon-phase / day-vs-night art is hour-accurate.
+            heroData.dt
+          )}</div>
+          <span class="hero-desc">${this.esc(heroData.weather[0].description)}</span>
+        </div>
+        ${temp.html}
+        <div class="hero-feels-like">Feels like ${this.formatTemp(heroData.main.feels_like)}° - ${this.esc(breeze)}</div>
+        ${yesterdayMsg ? `<div class="hero-yesterday">${this.esc(yesterdayMsg)}</div>` : ''}
+        ${precipMsg ? `<div class="precip-message">${precipMsg}</div>` : ''}
+      </section>`;
+    return { html, shouldFlip: temp.shouldFlip };
+  },
+
+  // ── Quick stats ─────────────────────────────────────────────────────
+
+  // One cell. The label is escaped, so cells whose label carries markup
+  // (moon icon, UV / AQI pills) are built by hand.
+  _statItem(label, value) {
+    return `
       <div class="stat-item">
         <span class="stat-label">${this.esc(label)}</span>
         <span class="stat-value">${value}</span>
       </div>`;
+  },
+
+  // The full-moon card, when the hero's moment falls inside a
+  // full-moon-visible window (sunset - 12h of the full-moon day through
+  // the next sunrise). Returns { name, html } or null.
+  _fullMoonCard(ctx) {
+    const { heroData, tz } = ctx;
+    const currentDt = heroData.dt;
+    // Only the 3 full moons closest to currentDt can possibly bracket
+    // it (previous / nearest / next by index). No year-scoped table
+    // needed and no fixed 13-entry scan per render.
+    for (const fm of getRelevantFullMoons(currentDt)) {
+      const fmSun = this._sunTimesAt(ctx, fm.dt);
+      const nextDaySun = this._sunTimesAt(ctx, fm.dt + 86400);
+      if (!(fmSun.sunset && nextDaySun.sunrise)) continue;
+      const startDt = fmSun.sunset - 12 * 3600;
+      const endDt = nextDaySun.sunrise;
+      if (!(currentDt >= startDt && currentDt <= endDt)) continue;
+
+      let optimalDt = fm.dt;
+      const fmPeakIsAtNight = fm.dt >= fmSun.sunset && fm.dt <= nextDaySun.sunrise;
+      if (!fmPeakIsAtNight) {
+        optimalDt = fmSun.sunset + (nextDaySun.sunrise - fmSun.sunset) / 2;
+      }
+      const optimalTimeStr = this.formatTime(optimalDt, true, tz);
+      const moonFilter = FULL_MOON_FILTERS[fm.name] || FULL_MOON_FILTER_DEFAULT;
+      const html = `
+        <div class="stat-item full-moon-card" style="grid-column: span 3; display: flex; flex-direction: row; align-items: center; text-align: left; padding: 16px 20px; background: rgba(255, 255, 255, 0.03); border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.08); gap: 16px;">
+          <img src="assets/icons/weather/moon-full.svg" alt="Full Moon" style="width: 48px; height: 48px; flex-shrink: 0; filter: ${moonFilter};" />
+          <div style="min-width: 0;">
+            <div style="font-size: 1.25rem; font-weight: 700; color: #eaeaea; line-height: 1.2;">${this.esc(fm.name)}</div>
+            <div style="font-size: 0.95rem; color: #a0a0a0; margin-top: 4px;">Most Pronounced: ${optimalTimeStr}</div>
+          </div>
+        </div>
+      `;
+      return { name: fm.name, html };
+    }
+    return null;
+  },
+
+  // High / low tide cells. Two distinct questions depending on what
+  // you're looking at:
+  //
+  //   Today, nothing pinned  → "what's next from right now"
+  //   Any other day/hour     → "what happens on the day I selected"
+  //
+  // The old code always used `heroData.dt`, which on a forecast day is
+  // the day's MIDDAY slot. That produced rows labelled "Next high tide"
+  // that actually meant "first high tide after noon on that day" — and
+  // the matching low routinely landed after local midnight, rendered as
+  // a bare "1:40 AM" with nothing saying it belonged to the next day.
+  //
+  // Returns { high, low } (cell HTML) or null when there's no tide series.
+  _tideStatItems(ctx) {
+    const { state, isToday, pinnedHourSlot, heroData, activeDayKey, tz, dayKeyFor, currentWeather } = ctx;
+    if (!(state.tideExtrema && state.tideExtrema.length > 0)) return null;
+
+    const liveNow = isToday && !pinnedHourSlot;
+    const anchorDt = heroData.dt;
+
+    // Local-day window for the selected day, used for the non-live case.
+    const dayStartSec = activeDayKey
+      ? this._dayStartSec(activeDayKey, tz, state.omDaily, currentWeather.timezone)
+      : null;
+
+    const pick = (type) => {
+      if (liveNow || dayStartSec == null) {
+        return state.tideExtrema.find(e => e.type === type && e.dt > anchorDt) || null;
+      }
+      // Take the end from the NEXT day's local midnight rather than
+      // +86400: Open-Meteo's per-day dt is DST-correct, so on a
+      // spring-forward day the fixed offset would bleed an hour into
+      // tomorrow (surfacing tomorrow's tide with no "tomorrow" label),
+      // and on a fall-back day it would drop the last hour.
+      const nextDay = (state.omDaily || []).find(d => d.dt > dayStartSec);
+      const dayEndSec = nextDay ? nextDay.dt : dayStartSec + 86400;
+      return state.tideExtrema.find(
+        e => e.type === type && e.dt >= dayStartSec && e.dt < dayEndSec
+      ) || null;
+    };
+
+    // The marine series covers the same 8 days as the forecast, so a
+    // missing extremum is a genuine gap, not the range running out.
+    // Render the em dash rather than dropping the row, matching how
+    // Moonrise / Moonset handle a skipped rise.
+    const tideValue = (e) => {
+      if (!e) return '—';
+      // Heights are metres relative to MSL; below ±1.5 m the number is
+      // noise for most readers, so only the time is shown.
+      const heightStr = Math.abs(e.h) > 1.5 ? ` (${this.formatTideHeight(e.h)})` : '';
+      // Only reachable in the live case, where "next" can cross midnight.
+      const dayStr = dayKeyFor(e.dt) !== dayKeyFor(anchorDt) ? ' tomorrow' : '';
+      return `${this.formatTime(e.dt, true, tz)}${dayStr}${heightStr}`;
+    };
+
+    return {
+      high: this._statItem(liveNow ? 'Next high tide' : 'High tide', tideValue(pick('High'))),
+      low:  this._statItem(liveNow ? 'Next low tide'  : 'Low tide',  tideValue(pick('Low')))
+    };
+  },
+
+  // The quick-stats pages. The grid is capped at 2 rows / 6 cells per
+  // page; items beyond that go on additional cube-swipeable pages.
+  //
+  // Page 1 is the top six of [notable..., routine...]: priority follows
+  // NOTEWORTHINESS — extreme or unusual readings (a gale gust, Unhealthy
+  // air, storm-low pressure) always outrank routine everyday stats,
+  // which then fill whatever page-1 slots remain in their own order. A
+  // "Moderate" AQI or a calm day's max wind is background info, not a
+  // headline. Local time flexes into any spare page-1 slot. Page 2 leads
+  // with Sunrise / Sunset / (Moon or UV) / Dew point / Moonrise /
+  // Moonset, then the page-1 overflow, then low-priority extras.
+  _buildStatsPages(ctx) {
+    const { activeDay, activeOmDay, isToday, tz, uvValue, popValue, cloudCover, aq, dewPoint, cityClock, currentWeather, activeDayKey, state } = ctx;
+    const item = (label, value) => this._statItem(label, value);
+    const STATS_PER_PAGE = this.STATS_PER_PAGE;
+
+    const hasGust       = this.isNoteworthyGust(activeDay.wind.speed, activeDay.wind.gust);
+    const hasPressure   = this.isNoteworthyPressure(activeDay.main.pressure);
+    const hasVisibility = this.isNoteworthyVisibility(activeDay.visibility);
 
     const windArrow = Number.isFinite(activeDay.wind.deg)
       ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate(${activeDay.wind.deg}deg); margin-left: 2px; vertical-align: -2px;"><line x1="12" y1="4" x2="12" y2="20"></line><polyline points="18 14 12 20 6 14"></polyline></svg>`
@@ -2567,15 +2811,6 @@ const UI = {
     const uvIsNoteworthy = uvRounded > 2;
     const uvOnPage1 = uvIsNoteworthy || !isNightAtCity;
 
-    // Page-1 candidates (in priority order). Sunrise / Sunset / Dew point
-    // are always on page 2. Moon phase / UV index swap pages based on
-    // whether it's day or night at the city.
-    // Page-1 candidates. Only the first six render on page 1, so order
-    // is priority — and priority follows NOTEWORTHINESS: extreme or
-    // unusual readings (a gale gust, Unhealthy air, storm-low pressure)
-    // always outrank routine everyday stats, which then fill whatever
-    // page-1 slots remain in their own order. A "Moderate" AQI or a
-    // calm day's max wind is background info, not a headline.
     const notable = [];
     const routine = [];
 
@@ -2668,205 +2903,20 @@ const UI = {
       }
     }
 
-    const getSunTimesForTimestamp = (ts) => {
-      const local = this.localParts(ts, tz);
-      return this._solarTimes(
-        local.year,
-        local.month,
-        local.day,
-        currentWeather.coord.lat,
-        currentWeather.coord.lon,
-        tz
-      );
-    };
+    const fullMoon = this._fullMoonCard(ctx);
+    const tideItems = this._tideStatItems(ctx);
+    const { touchesWater, marineCellIsLocal } = ctx;
 
-    let activeFullMoon = null;
-    let optimalTimeStr = '';
-    let moonFilter = '';
-    const currentDt = heroData.dt;
-
-    // Only the 3 full moons closest to currentDt can possibly bracket
-    // it (previous / nearest / next by index). No year-scoped table
-    // needed and no fixed 13-entry scan per render.
-    for (const fm of getRelevantFullMoons(currentDt)) {
-      const fmSun = getSunTimesForTimestamp(fm.dt);
-      const nextDaySun = getSunTimesForTimestamp(fm.dt + 86400);
-
-      if (fmSun.sunset && nextDaySun.sunrise) {
-        const startDt = fmSun.sunset - 12 * 3600;
-        const endDt = nextDaySun.sunrise;
-
-        if (currentDt >= startDt && currentDt <= endDt) {
-          activeFullMoon = fm;
-
-          let optimalDt = fm.dt;
-          const fmPeakIsAtNight = fm.dt >= fmSun.sunset && fm.dt <= nextDaySun.sunrise;
-          
-          if (!fmPeakIsAtNight) {
-            optimalDt = fmSun.sunset + (nextDaySun.sunrise - fmSun.sunset) / 2;
-          }
-
-          optimalTimeStr = this.formatTime(optimalDt, true, tz);
-
-          switch (fm.name) {
-            case 'Wolf Moon':
-            case 'Snow Moon':
-              moonFilter = 'drop-shadow(0 0 10px rgba(255, 255, 255, 0.25))';
-              break;
-            case 'Worm Moon':
-              moonFilter = 'drop-shadow(0 0 10px rgba(255, 220, 150, 0.35)) saturate(1.2) hue-rotate(15deg)';
-              break;
-            case 'Pink Moon':
-              moonFilter = 'drop-shadow(0 0 12px rgba(255, 105, 180, 0.45)) saturate(1.4) hue-rotate(320deg)';
-              break;
-            case 'Flower Moon':
-              moonFilter = 'drop-shadow(0 0 12px rgba(255, 182, 193, 0.35)) saturate(1.3) hue-rotate(340deg)';
-              break;
-            case 'Blue Moon':
-              moonFilter = 'drop-shadow(0 0 12px rgba(30, 144, 255, 0.5)) saturate(1.6) hue-rotate(180deg)';
-              break;
-            case 'Strawberry Moon':
-              moonFilter = 'drop-shadow(0 0 14px rgba(255, 100, 100, 0.55)) saturate(1.5) hue-rotate(345deg)';
-              break;
-            case 'Buck Moon':
-              moonFilter = 'drop-shadow(0 0 12px rgba(218, 165, 32, 0.45)) saturate(1.4) hue-rotate(10deg)';
-              break;
-            case 'Sturgeon Moon':
-              moonFilter = 'drop-shadow(0 0 10px rgba(176, 196, 222, 0.35))';
-              break;
-            case 'Harvest Moon':
-              moonFilter = 'drop-shadow(0 0 14px rgba(255, 140, 0, 0.6)) saturate(1.7) hue-rotate(15deg)';
-              break;
-            case 'Hunter\'s Moon':
-              moonFilter = 'drop-shadow(0 0 14px rgba(255, 69, 0, 0.6)) saturate(1.6) hue-rotate(5deg)';
-              break;
-            case 'Beaver Moon':
-              moonFilter = 'drop-shadow(0 0 12px rgba(205, 133, 63, 0.4)) saturate(1.1)';
-              break;
-            case 'Cold Moon':
-              moonFilter = 'drop-shadow(0 0 12px rgba(0, 255, 255, 0.45)) saturate(1.3) hue-rotate(150deg)';
-              break;
-            default:
-              moonFilter = 'drop-shadow(0 0 10px rgba(255, 255, 255, 0.25))';
-          }
-          break;
-        }
-      }
-    }
-
-    let moonCardHTML = '';
-    if (activeFullMoon) {
-      moonCardHTML = `
-        <div class="stat-item full-moon-card" style="grid-column: span 3; display: flex; flex-direction: row; align-items: center; text-align: left; padding: 16px 20px; background: rgba(255, 255, 255, 0.03); border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.08); gap: 16px;">
-          <img src="assets/icons/weather/moon-full.svg" alt="Full Moon" style="width: 48px; height: 48px; flex-shrink: 0; filter: ${moonFilter};" />
-          <div style="min-width: 0;">
-            <div style="font-size: 1.25rem; font-weight: 700; color: #eaeaea; line-height: 1.2;">${this.esc(activeFullMoon.name)}</div>
-            <div style="font-size: 0.95rem; color: #a0a0a0; margin-top: 4px;">Most Pronounced: ${optimalTimeStr}</div>
-          </div>
-        </div>
-      `;
-    }
-
-    // Tides. Two distinct questions depending on what you're looking at:
-    //
-    //   Today, nothing pinned  → "what's next from right now"
-    //   Any other day/hour     → "what happens on the day I selected"
-    //
-    // The old code always used `heroData.dt`, which on a forecast day is
-    // the day's MIDDAY slot. That produced rows labelled "Next high tide"
-    // that actually meant "first high tide after noon on that day" — and
-    // the matching low routinely landed after local midnight, rendered as
-    // a bare "1:40 AM" with nothing saying it belonged to the next day.
-    let nextHighItem = null;
-    let nextLowItem = null;
-    let tideRowsExpected = false;
-
-    if (state.tideExtrema && state.tideExtrema.length > 0) {
-      const liveNow = isToday && !pinnedHourSlot;
-      const anchorDt = heroData.dt;
-
-      // Local-day window for the selected day, used for the non-live case.
-      const dayStartSec = activeDayUvKey
-        ? this._dayStartSec(activeDayUvKey, tz, state.omDaily, currentWeather.timezone)
-        : null;
-
-      const pick = (type) => {
-        if (liveNow || dayStartSec == null) {
-          return state.tideExtrema.find(e => e.type === type && e.dt > anchorDt) || null;
-        }
-        // Take the end from the NEXT day's local midnight rather than
-        // +86400: Open-Meteo's per-day dt is DST-correct, so on a
-        // spring-forward day the fixed offset would bleed an hour into
-        // tomorrow (surfacing tomorrow's tide with no "tomorrow" label),
-        // and on a fall-back day it would drop the last hour.
-        const nextDay = (state.omDaily || []).find(d => d.dt > dayStartSec);
-        const dayEndSec = nextDay ? nextDay.dt : dayStartSec + 86400;
-        return state.tideExtrema.find(
-          e => e.type === type && e.dt >= dayStartSec && e.dt < dayEndSec
-        ) || null;
-      };
-
-      // The marine series covers the same 8 days as the forecast, so a
-      // missing extremum is a genuine gap, not the range running out.
-      // Render the em dash rather than dropping the row, matching how
-      // Moonrise / Moonset handle a skipped rise.
-      tideRowsExpected = true;
-
-      const tideValue = (e) => {
-        if (!e) return '—';
-        // Heights are metres relative to MSL; below ±1.5 m the number is
-        // noise for most readers, so only the time is shown.
-        const heightStr = Math.abs(e.h) > 1.5 ? ` (${this.formatTideHeight(e.h)})` : '';
-        // Only reachable in the live case, where "next" can cross midnight.
-        const dayStr = dayKeyFor(e.dt) !== dayKeyFor(anchorDt) ? ' tomorrow' : '';
-        return `${this.formatTime(e.dt, true, tz)}${dayStr}${heightStr}`;
-      };
-
-      const highLabel = liveNow ? 'Next high tide' : 'High tide';
-      const lowLabel  = liveNow ? 'Next low tide'  : 'Low tide';
-      nextHighItem = item(highLabel, tideValue(pick('High')));
-      nextLowItem  = item(lowLabel,  tideValue(pick('Low')));
-    }
-
-    // Fallback coastal test: how close the marine grid cell the API
-    // snapped to is to the city itself. Longitude degrees shrink toward
-    // the poles, so the raw Pythagorean distance used before made the
-    // effective radius ~7km at the equator but only ~3.5km at 60°N —
-    // Nordic coastal cities were being demoted to the last stats page.
-    // Scale the longitude term by cos(lat) for a true ~7km everywhere.
-    //
-    // A matched NOAA station IS the coastal signal — stations only exist
-    // on tidal water, and it's a far stronger statement than "the marine
-    // model grid snapped somewhere nearby". Checked first so a location
-    // with good tide data never gets demoted to the last stats page
-    // because the Open-Meteo grid cell happened to land far offshore.
-    // Two separate questions, deliberately not conflated:
-    //   marineCellIsLocal — is Open-Meteo's grid cell actually near this
-    //     city? Governs WATER TEMP, which comes only from that cell.
-    //   touchesWater — should tide rows show at all? A NOAA station is a
-    //     stronger yes than any proximity heuristic.
-    // Reusing one flag for both would let a nearby station vouch for an
-    // SST reading taken 40km offshore, behind a headland or up a bay.
-    let marineCellIsLocal = false;
-    if (currentWeather.coord && state.tideCoords) {
-      const latRad = currentWeather.coord.lat * Math.PI / 180;
-      const dLat = state.tideCoords.lat - currentWeather.coord.lat;
-      const dLon = (state.tideCoords.lon - currentWeather.coord.lon) * Math.cos(latRad);
-      const degDiff = Math.sqrt(dLat * dLat + dLon * dLon);
-      marineCellIsLocal = degDiff <= 0.065;
-    }
-    const touchesWater = !!state.tidePredictions || marineCellIsLocal;
-
-    if (touchesWater && tideRowsExpected) {
-      routine.push(nextHighItem);
-      routine.push(nextLowItem);
+    if (touchesWater && tideItems) {
+      routine.push(tideItems.high);
+      routine.push(tideItems.low);
     }
 
     // Sea-surface temperature for the hour being viewed. Gated on
     // marineCellIsLocal rather than touchesWater: Open-Meteo's marine
     // cell is the sole source, so if that cell isn't near the city the
     // number isn't this city's water, whatever the tide station says.
-    const waterTemp = this._waterTempAt(state.tides, heroData.dt);
+    const waterTemp = this._waterTempAt(state.tides, ctx.heroData.dt);
     if (marineCellIsLocal && waterTemp != null) {
       routine.push(item('Water temp', `${this.formatTemp(waterTemp)}°`));
     }
@@ -2884,8 +2934,6 @@ const UI = {
     // whatever the top six of that combined order turn out to be.
     const page1Candidates = [...notable, ...routine];
 
-    const STATS_PER_PAGE = 6;
-
     // Local time is a "flex" item: it fills any unused slot on page 1
     // (so the city's current time stays visible by default whenever
     // possible), and falls back to page 2 if page 1 is already full.
@@ -2902,8 +2950,6 @@ const UI = {
     const page2Forced = [
       item('Sunrise',    activeDay.sunrise != null ? this.formatTime(activeDay.sunrise, true, tz) : '—'),
       item('Sunset',     activeDay.sunset  != null ? this.formatTime(activeDay.sunset,  true, tz) : '—'),
-      // Whichever of moon / UV did NOT make it onto page 1 lives here.
-      // The two together always cover both values exactly once.
       uvOnPage1 ? moonStatHTML : uvStatItem,
     ];
     if (!localTimeOnPage1) page2Forced.push(localTimeItem);
@@ -2912,8 +2958,8 @@ const UI = {
     // Moonrise / moonset for the active day, computed for the city's
     // local midnight (Open-Meteo's per-day dt when available — the
     // DST-correct instant — else derived from the day key + offset).
-    if (activeDayUvKey) {
-      const dayStartSec = this._dayStartSec(activeDayUvKey, tz, state.omDaily, currentWeather.timezone);
+    if (activeDayKey) {
+      const dayStartSec = this._dayStartSec(activeDayKey, tz, state.omDaily, currentWeather.timezone);
       const mt = this._moonTimes(dayStartSec, currentWeather.coord.lat, currentWeather.coord.lon);
       // A null is real astronomy (the moon skips a rise or set roughly
       // every couple of weeks) — show the em dash rather than hiding.
@@ -2921,10 +2967,9 @@ const UI = {
       page2Forced.push(item('Moonset',  mt.set  != null ? this.formatTime(mt.set,  true, tz) : '—'));
     }
 
-    // First 6 candidates fill page 1; rest overflows to page 2 after the
-    // forced items. Every page is padded out to exactly 6 cells with
-    // invisible placeholders so the grid is always 2 rows tall — keeps
-    // the cube-flip animation from causing a height change at the end.
+    // Every page is padded out to exactly 6 cells with invisible
+    // placeholders so the grid is always 2 rows tall — keeps the
+    // cube-flip animation from causing a height change at the end.
     const PLACEHOLDER = '<div class="stat-item stat-item-placeholder" aria-hidden="true"><span class="stat-label">&nbsp;</span><span class="stat-value">&nbsp;</span></div>';
     const padToFull = (cells) => {
       const out = [...cells];
@@ -2956,270 +3001,149 @@ const UI = {
     // Marine data exists but the snapped grid cell is far from the city
     // (a lake town, or a coastal cell reached across a headland). Still
     // worth showing, just not competing for a page-1 slot.
-    if (!touchesWater && tideRowsExpected) {
-      lowPriority.push(nextHighItem);
-      lowPriority.push(nextLowItem);
+    if (!touchesWater && tideItems) {
+      lowPriority.push(tideItems.high);
+      lowPriority.push(tideItems.low);
     }
 
-    let statsPages = [];
+    // The full-moon card spans all three columns of page 1's top row,
+    // leaving room for three candidates beside it; the rest overflow.
+    const page1Take = fullMoon ? 3 : STATS_PER_PAGE;
+    const page1 = fullMoon
+      ? [fullMoon.html, ...page1Candidates.slice(0, page1Take)].join('')
+      : padToFull(page1Candidates.slice(0, page1Take));
+    const overflow = page1Candidates.slice(page1Take);
+    const page2AndAfter = [...page2Forced, ...overflow, ...lowPriority];
 
-    if (activeFullMoon) {
-      const page1Items = [moonCardHTML, ...page1Candidates.slice(0, 3)];
-      statsPages.push(page1Items.join(''));
-
-      const overflow = page1Candidates.slice(3);
-      const page2AndAfter = [...page2Forced, ...overflow, ...lowPriority];
-      for (let i = 0; i < page2AndAfter.length; i += STATS_PER_PAGE) {
-        statsPages.push(padToFull(page2AndAfter.slice(i, i + STATS_PER_PAGE)));
-      }
-    } else {
-      const page1 = page1Candidates.slice(0, STATS_PER_PAGE);
-      const overflow = page1Candidates.slice(STATS_PER_PAGE);
-      const page2AndAfter = [...page2Forced, ...overflow, ...lowPriority];
-
-      statsPages.push(padToFull(page1));
-      for (let i = 0; i < page2AndAfter.length; i += STATS_PER_PAGE) {
-        statsPages.push(padToFull(page2AndAfter.slice(i, i + STATS_PER_PAGE)));
-      }
+    const statsPages = [page1];
+    for (let i = 0; i < page2AndAfter.length; i += STATS_PER_PAGE) {
+      statsPages.push(padToFull(page2AndAfter.slice(i, i + STATS_PER_PAGE)));
     }
-    // Reset to page 0 whenever the city changes; otherwise preserve.
-    if (this._renderedCityName !== cityName) this._statsPageIdx = 0;
-    if (this._statsPageIdx == null || this._statsPageIdx >= statsPages.length) this._statsPageIdx = 0;
-    this._statsPages = statsPages;
+    return statsPages;
+  },
 
-    // Precip line under the hero. A 15-minute nowcast transition inside
-    // the next 2h beats the day-level percentage — "Rain starting around
-    // 3:15 PM" is strictly more useful than "60% chance". Nowcast only
-    // applies to the live "today" view.
-    // Late in the evening the last 3h slot of today has passed, so the
-    // rest-of-day window is empty and pop is 0 — which is the absence of
-    // a forecast, not a forecast of nothing. Asserting "No precipitation
-    // expected" there put that text on screen at 22:30 in a downpour,
-    // next to a rain icon and a graph full of rain bars. Say nothing
-    // instead; the hero already shows current conditions.
-    const noWindow = isToday && activeDay.hasWindow === false;
-    let precipMsg = popValue > 0.1
-      ? `${Math.round(popValue * 100)}% chance of precipitation`
-      : (noWindow ? '' : 'No precipitation expected');
-    if (isToday && !pinnedHourSlot) {
-      const cast = this._precipNowcast(state.omMinutely, nowSec);
-      if (cast) {
-        precipMsg = `Rain ${cast.type === 'starts' ? 'starting' : 'ending'} around ${this.formatTime(cast.dt, true, tz)}`;
+  // ── Hourly scroller + daily list ────────────────────────────────────
+
+  // Tiles for every day, with a synthetic "Now" tile leading today.
+  //
+  // Drops any slot whose start time is no longer in the future. OWM 3h
+  // slots use their START time as dt — so once the 12 PM slot has
+  // started, "Now" is the right label for it and the dedicated Now tile
+  // takes over the visual spot. This also keeps the timeline from
+  // showing a stale 9 AM tile next to "Now" at 11:30 AM. Open-Meteo
+  // filler slots are 1h-spaced and only appear on forecast days
+  // (entirely in the future), so the rule is a no-op there.
+  //
+  // The Now tile is sourced from the live currentWeather — its label
+  // and data always reflect THIS moment, not a 3h-block snapshot.
+  // Tapping it clears any pinned hour and returns the hero to the
+  // "Right now" view (via onDayClick(nowDayIdx), which is what
+  // handleDayClick does).
+  //
+  // Any day that becomes empty after filtering is skipped, and the
+  // day-divider is suppressed before the first day actually rendered,
+  // so the scroller can't lead with an orphan divider. Today never
+  // becomes empty because the Now tile is always present.
+  _hourlyScrollerHTML(ctx) {
+    const { currentWeather: cw, dailyData, nowSec, nearTermByKey, lastNearTermDt, nowDayIdx, currentDayIdx, isToday, selectedHourDt, tz } = ctx;
+    let out = '';
+    let firstShown = true;
+    for (let dayIdx = 0; dayIdx < dailyData.length; dayIdx++) {
+      const day = dailyData[dayIdx];
+      if (!day || !day.hourly) continue;
+      let slots = day.hourly.filter(h => h.dt > nowSec);
+      // Swap in the denser near-term 2h tiles where they cover
+      // this day, keeping only 3h slots that start ≥2h after the
+      // last 2h tile so the seam doesn't produce near-duplicate
+      // neighbours.
+      const near = nearTermByKey.get(day.key);
+      if (near && near.length) {
+        slots = near.concat(slots.filter(h => h.dt >= lastNearTermDt + 2 * 3600));
       }
-    }
+      const isTodayCol = dayIdx === nowDayIdx;
+      if (!slots.length && !isTodayCol) continue;
+      if (!firstShown) out += '<div class="hourly-day-divider"></div>';
+      firstShown = false;
 
-    // "Warmer/cooler than this time yesterday" — the past_days=1 slice
-    // of Open-Meteo's hourly series. Compare in the user's display unit
-    // so the rounded degree difference matches what the hero shows.
-    let yesterdayMsg = '';
-    if (isToday && !pinnedHourSlot) {
-      const target = nowSec - 86400;
-      let best = null, bestDiff = Infinity;
-      for (const h of (state.omHourly || [])) {
-        const d = Math.abs(h.dt - target);
-        if (d < bestDiff) { bestDiff = d; best = h; }
-      }
-      if (best && bestDiff <= 3600 && best.temp != null) {
-        const diff = Math.round(this.convertTemp(currentWeather.main.temp) - this.convertTemp(best.temp));
-        yesterdayMsg = diff === 0
-          ? 'About the same as yesterday'
-          : `${Math.abs(diff)}° ${diff > 0 ? 'warmer' : 'cooler'} than this time yesterday`;
-      }
-    }
-
-    // Index of the real "today" entry in dailyData, matched by day KEY
-    // instead of trusting array position (same rule as the daily list).
-    // Today is chronologically first whenever present, so this is 0 in
-    // practice — but near local midnight, when OWM's window has rolled
-    // past the city's calendar day AND enrichment couldn't fill it in,
-    // dailyData[0] is already tomorrow and no key matches. Fall back to
-    // 0 then so the Now tile still anchors the scroller.
-    const todayIdx = dailyData.findIndex(d => d.key === todayKey);
-    const nowDayIdx = todayIdx !== -1 ? todayIdx : 0;
-    // Index of the currently-displayed day in dailyData, used by the
-    // hourly-scroll to highlight its tiles and detect scroll-driven day
-    // changes. Both -1 (initial) and 0 (Today tab) map to the Now day.
-    const currentDayIdx = isToday ? nowDayIdx : selectedDayIndex;
-
-    let html = `
-      <!-- Left-column wrapper: hero + stats + temperature graph. Pairs
-           with .dashboard-right (below) so the landscape two-column
-           layout has exactly two grid cells, and the swipe-between-
-           cities cube transition can spin each column independently
-           instead of as one big cube. In portrait both wrappers stack
-           as plain blocks, preserving the single-column layout. -->
-      <div class="dashboard-left">
-      <section class="hero-section">
-        <div class="hero-when">${this.esc(heroWhen)}</div>
-        <div class="hero-condition">
-          <div class="hero-icon-large">${this.getWeatherIconSVG(
-            heroData.weather[0]._asset || heroData.weather[0].icon,
-            48,
-            heroData.weather[0].id,
-            // dt for phase substitution: today (no pin) uses the current
-            // weather's dt (= now), forecast days use the mid-of-day
-            // slot's dt; a pinned hour uses that hour's exact dt so the
-            // moon-phase / day-vs-night art is hour-accurate.
-            heroData.dt
-          )}</div>
-          <span class="hero-desc">${this.esc(heroData.weather[0].description)}</span>
-        </div>
-        ${heroTempHTML}
-        <div class="hero-feels-like">Feels like ${this.formatTemp(heroData.main.feels_like)}° - ${this.esc(breeze)}</div>
-        ${yesterdayMsg ? `<div class="hero-yesterday">${this.esc(yesterdayMsg)}</div>` : ''}
-        ${precipMsg ? `<div class="precip-message">${precipMsg}</div>` : ''}
-      </section>
-
-      <!-- .stats-pager stays the OUTER box so every existing selector
-           that reaches for it — the context-menu exclusion list, the
-           city-swipe opt-out — keeps matching, arrows included. The id
-           moves to the inner faces div: that's what _changeStatsPage
-           replaces wholesale and spins, so anything meant to persist
-           across a page flip has to live OUTSIDE it. -->
-      <div class="stats-pager">
-        <div class="stats-pager-faces" id="stats-pager">
-          <section class="quick-stats-grid">
-            ${statsPages[this._statsPageIdx] || ''}
-          </section>
-        </div>
-        ${statsPages.length > 1 ? `
-          <button type="button" class="stats-page-arrow prev" aria-label="Previous stats page">${STATS_ARROW_SVG}</button>
-          <button type="button" class="stats-page-arrow next" aria-label="Next stats page">${STATS_ARROW_SVG}</button>
-        ` : ''}
-      </div>
-
-      <section class="day-detail-section">
-        <div class="graph-container" id="graph-container"></div>
-      </section>
-      </div>
-
-      <!-- Right-column wrapper: hourly bar + 8-day hi/lo list. See
-           comment on .dashboard-left above for why both columns are
-           wrapped. -->
-      <div class="dashboard-right">
-      <section class="hourly-scroll">
-        ${(() => {
-          // Drop any slot whose start time is no longer in the future.
-          // OWM 3h slots use their START time as dt — so once the 12 PM
-          // slot has started, "Now" is the right label for it and the
-          // dedicated Now tile (below) takes over the visual spot. This
-          // also keeps the timeline from showing a stale 9 AM tile next
-          // to "Now" at 11:30 AM. Open-Meteo filler slots are 1h-spaced
-          // and only appear on forecast days (entirely in the future),
-          // so the rule is a no-op there.
-          //
-          // Today's section is also prefixed with a synthetic "Now" tile
-          // sourced from the live currentWeather — its label and data
-          // always reflect THIS moment, not a 3h-block snapshot. Tapping
-          // it clears any pinned hour and returns the hero to the
-          // "Right now" view (via onDayClick(nowDayIdx), which is what
-          // handleDayClick does).
-          //
-          // We also skip any day that becomes empty after filtering and
-          // suppress the day-divider before the first day actually
-          // rendered, so the scroller can't lead with an orphan divider.
-          // Today never becomes empty because the Now tile is always
-          // present.
-          const cw = currentWeather;
-          let out = '';
-          let firstShown = true;
-          for (let dayIdx = 0; dayIdx < dailyData.length; dayIdx++) {
-            const day = dailyData[dayIdx];
-            if (!day || !day.hourly) continue;
-            let slots = day.hourly.filter(h => h.dt > nowSec);
-            // Swap in the denser near-term 2h tiles where they cover
-            // this day, keeping only 3h slots that start ≥2h after the
-            // last 2h tile so the seam doesn't produce near-duplicate
-            // neighbours.
-            const near = nearTermByKey.get(day.key);
-            if (near && near.length) {
-              slots = near.concat(slots.filter(h => h.dt >= lastNearTermDt + 2 * 3600));
-            }
-            const isTodayCol = dayIdx === nowDayIdx;
-            if (!slots.length && !isTodayCol) continue;
-            if (!firstShown) out += '<div class="hourly-day-divider"></div>';
-            firstShown = false;
-
-            if (isTodayCol) {
-              // The Now tile is the hero-equivalent in the scroller: it
-              // glows when the hero is showing "Right now" (i.e. today
-              // is selected AND no hour is pinned) so the user can see
-              // at a glance which tile their hero card represents.
-              const nowActive =
-                isToday && selectedHourDt == null
-                  ? 'active-hour' : '';
-              const nowStyle = CONFIG_TEMP_LINE_COLOR.enabled && nowActive
-                ? `style="box-shadow: inset 0 0 0 2px ${getTempColor(cw.main.temp)} !important;"`
-                : '';
-              const w0 = cw.weather && cw.weather[0] ? cw.weather[0] : null;
-              const nowIcon = w0
-                ? this.getWeatherIconSVG(w0.icon, 28, w0.id, cw.dt)
-                : '';
-              out += `
+      if (isTodayCol) {
+        // The Now tile is the hero-equivalent in the scroller: it
+        // glows when the hero is showing "Right now" (i.e. today
+        // is selected AND no hour is pinned) so the user can see
+        // at a glance which tile their hero card represents.
+        const nowActive =
+          isToday && selectedHourDt == null
+            ? 'active-hour' : '';
+        const nowStyle = CONFIG_TEMP_LINE_COLOR.enabled && nowActive
+          ? `style="box-shadow: inset 0 0 0 2px ${getTempColor(cw.main.temp)} !important;"`
+          : '';
+        const w0 = cw.weather && cw.weather[0] ? cw.weather[0] : null;
+        const nowIcon = w0
+          ? this.getWeatherIconSVG(w0.icon, 28, w0.id, cw.dt)
+          : '';
+        out += `
                 <div class="hourly-tile active-day ${nowActive}" data-day-index="${nowDayIdx}" data-now="1" role="button" tabindex="0" aria-label="Now, ${this.formatTemp(cw.main.temp)}°" ${nowStyle}>
                   <span class="hourly-time">Now</span>
                   <span class="hourly-icon">${nowIcon}</span>
                   <span class="hourly-temp">${this.formatTemp(cw.main.temp)}°</span>
                   <span class="hourly-pop">&nbsp;</span>
                 </div>`;
-            }
+      }
 
-            for (const h of slots) {
-              const isActive = selectedHourDt === h.dt;
-              const cls =
-                (dayIdx === currentDayIdx ? 'active-day ' : '') +
-                (isActive ? 'active-hour' : '');
-              const tileStyle = CONFIG_TEMP_LINE_COLOR.enabled && isActive
-                ? `style="box-shadow: inset 0 0 0 2px ${getTempColor(h.main.temp)} !important;"`
-                : '';
-              // Guard weather[0] like the Now tile above does — a
-              // malformed synthesised slot shouldn't kill the render.
-              const hw = h.weather && h.weather[0] ? h.weather[0] : null;
-              // Precip chance under the tile once it's worth acting on
-              // (≥20%). The span always renders (nbsp when dry) so every
-              // tile keeps the same height.
-              const popPct = Math.round((h.pop || 0) * 100);
-              const popTxt = popPct >= 20 ? `${popPct}%` : '&nbsp;';
-              const popAria = popPct >= 20 ? `, ${popPct}% chance of precipitation` : '';
-              out += `
+      for (const h of slots) {
+        const isActive = selectedHourDt === h.dt;
+        const cls =
+          (dayIdx === currentDayIdx ? 'active-day ' : '') +
+          (isActive ? 'active-hour' : '');
+        const tileStyle = CONFIG_TEMP_LINE_COLOR.enabled && isActive
+          ? `style="box-shadow: inset 0 0 0 2px ${getTempColor(h.main.temp)} !important;"`
+          : '';
+        // Guard weather[0] like the Now tile above does — a
+        // malformed synthesised slot shouldn't kill the render.
+        const hw = h.weather && h.weather[0] ? h.weather[0] : null;
+        // Precip chance under the tile once it's worth acting on
+        // (≥20%). The span always renders (nbsp when dry) so every
+        // tile keeps the same height.
+        const popPct = Math.round((h.pop || 0) * 100);
+        const popTxt = popPct >= 20 ? `${popPct}%` : '&nbsp;';
+        const popAria = popPct >= 20 ? `, ${popPct}% chance of precipitation` : '';
+        out += `
                 <div class="hourly-tile ${cls.trim()}" data-day-index="${dayIdx}" data-dt="${h.dt}" role="button" tabindex="0" aria-label="${this.formatTime(h.dt, true, tz)}, ${this.formatTemp(h.main.temp)}°${popAria}" ${tileStyle}>
                   <span class="hourly-time">${this.formatTime(h.dt, true, tz)}</span>
                   <span class="hourly-icon">${hw ? this.getWeatherIconSVG(hw.icon, 28, hw.id, h.dt) : ''}</span>
                   <span class="hourly-temp">${this.formatTemp(h.main.temp)}°</span>
                   <span class="hourly-pop">${popTxt}</span>
                 </div>`;
-            }
-          }
-          return out;
-        })()}
-      </section>
+      }
+    }
+    return out;
+  },
 
-      <section class="daily-list">
-        ${dailyData.slice(0, 8).map((d, i) => {
-          // Derive the weekday/date strings from the canonical dayKey so the
-          // label can never disagree with the entry's date (which used to
-          // happen when re-shifting dt back through state.timezone).
-          const date = this._dateFromDayKey(d.key);
-          const isThisDayToday = d.key === todayKey;
-          const dayName = isThisDayToday
-            ? 'Today'
-            : date.toLocaleDateString([], { weekday: 'short', timeZone: 'UTC' });
-          const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric', timeZone: 'UTC' });
-          // Round AFTER converting to the user's unit to avoid compounding errors.
-          const dEx = dayExtremesC(d);
-          const maxTemp = Math.round(this.convertTemp(dEx ? dEx.hi : Math.max(...d.temps)));
-          const minTemp = Math.round(this.convertTemp(dEx ? dEx.lo : Math.min(...d.temps)));
-          // Most-notable-weather icon for the day (storm > snow > rain >
-          // dust/haze > clouds > clear), tie-broken by closeness to
-          // local noon. Identical picker as the hero, so tapping this
-          // row slides into a matching hero illustration.
-          const notable = notableSlotFor(d);
-          const icon = (notable && notable.weather && notable.weather[0])
-            ? this._weatherAssetName(notable.weather[0].icon, notable.weather[0].id)
-            : (d.icons[Math.floor(d.icons.length / 2)] || d.icons[0]);
-          const isActive = selectedDayIndex === i || (isToday && i === nowDayIdx);
+  // The 8-day hi/lo rows.
+  _dailyListHTML(ctx) {
+    const { dailyData, todayKey, selectedDayIndex, isToday, nowDayIdx } = ctx;
+    return dailyData.slice(0, 8).map((d, i) => {
+      // Derive the weekday/date strings from the canonical dayKey so the
+      // label can never disagree with the entry's date (which used to
+      // happen when re-shifting dt back through state.timezone).
+      const date = this._dateFromDayKey(d.key);
+      const isThisDayToday = d.key === todayKey;
+      const dayName = isThisDayToday
+        ? 'Today'
+        : date.toLocaleDateString([], { weekday: 'short', timeZone: 'UTC' });
+      const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric', timeZone: 'UTC' });
+      // Round AFTER converting to the user's unit to avoid compounding errors.
+      const dEx = this._dayExtremesC(ctx, d);
+      const maxTemp = Math.round(this.convertTemp(dEx ? dEx.hi : Math.max(...d.temps)));
+      const minTemp = Math.round(this.convertTemp(dEx ? dEx.lo : Math.min(...d.temps)));
+      // Most-notable-weather icon for the day, identical picker as the
+      // hero, so tapping this row slides into a matching illustration.
+      const notable = this._notableSlotFor(ctx, d);
+      const icon = (notable && notable.weather && notable.weather[0])
+        ? this._weatherAssetName(notable.weather[0].icon, notable.weather[0].id)
+        : (d.icons[Math.floor(d.icons.length / 2)] || d.icons[0]);
+      const isActive = selectedDayIndex === i || (isToday && i === nowDayIdx);
 
-          return `
+      return `
             <div class="daily-item ${isActive ? 'active' : ''}" data-index="${i}" role="button" tabindex="0" aria-label="${dayName} ${dateStr}, high ${maxTemp}°, low ${minTemp}°">
               <div class="daily-day-date">
                 <span class="daily-day">${dayName}</span>
@@ -3231,48 +3155,34 @@ const UI = {
               </div>
             </div>
           `;
-        }).join('')}
-      </section>
-      </div>
+    }).join('');
+  },
+
+  // ── Wiring ──────────────────────────────────────────────────────────
+
+  // Header star. Include cityName so name-match catches entries that
+  // already sit in the saved list but whose stored coords drifted more
+  // than SAME_LOCATION_DEG from what /weather just returned — otherwise
+  // the star would flicker between saved and unsaved for the same place.
+  _renderSaveButton(ctx, onSave) {
+    const { currentWeather, cityName } = ctx;
+    const savedList = Storage.getSavedList();
+    const isSaved = Storage.isDuplicate(savedList, currentWeather.coord.lat, currentWeather.coord.lon, cityName);
+    this.saveBtnContainer.innerHTML = `
+      <button class="save-loc-btn ${isSaved ? 'saved' : ''}" id="save-btn" aria-label="${isSaved ? 'Remove Saved Location' : 'Save Location'}">
+        ${isSaved
+          ? `<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>`
+          : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>`
+        }
+      </button>
     `;
+    document.getElementById('save-btn').addEventListener('click', onSave);
+  },
 
-    // Capture the existing hourly scroll position BEFORE we blow away the
-    // DOM, so a same-city re-render (background refresh, day switch) can
-    // keep the user's scroll exactly where it was.
-    const prevHourly = this.weatherView.querySelector('.hourly-scroll');
-    const prevHourlyScrollLeft = prevHourly ? prevHourly.scrollLeft : null;
-    this._renderedCityName = cityName;
-
-    this.weatherView.innerHTML = html;
-
-    // Trigger flip animation if pending
-    if (shouldFlip) {
-      const flipCard = this.weatherView.querySelector('.hero-temp-flip-card');
-      if (flipCard) {
-        void flipCard.offsetHeight; // force reflow
-        flipCard.classList.add('animate-flip');
-      }
-    }
-
-    // Drive the ambient background-effects layer from whatever icon the
-    // hero just landed on. Picks among fx-clouds / fx-rain / fx-snow /
-    // fx-thunder / fx-fog / fx-haze / fx-smoke / fx-dust based on the
-    // resolved asset name; clear-day / clear-night / moon-* deliberately
-    // map to no effect (a clear sky has nothing to drift past).
-    this.applyWeatherFX(
-      (heroData.weather && heroData.weather[0] && heroData.weather[0]._asset) ||
-      this._weatherAssetName(
-        heroData.weather && heroData.weather[0] ? heroData.weather[0].icon : '',
-        heroData.weather && heroData.weather[0] ? heroData.weather[0].id   : null
-      ),
-      // Pass wind so cloud/fog/dust drift direction matches the actual
-      // wind direction (and speed scales animation duration). When an
-      // hour is pinned this is the hour's wind; otherwise the day's.
-      heroData.wind,
-      // Pass the OWM weather id so the fx picker can distinguish light
-      // rain / drizzle (sparse drops) from heavier rain (denser drops).
-      heroData.weather && heroData.weather[0] ? heroData.weather[0].id : null
-    );
+  // Listeners on the freshly rendered dashboard: hero dblclick unit
+  // flip, daily-list rows, hourly tiles.
+  _bindDashboard(ctx, onDayClick, onHourClick) {
+    const { currentDayIdx, selectedHourDt, isToday, nowDayIdx } = ctx;
 
     // Double-click / double-tap the big hero temperature to flip the
     // temperature unit (°F ↔ °C). Mirrors the segmented control on the
@@ -3366,8 +3276,8 @@ const UI = {
     //
     // The synthetic Now tile (data-now="1", no data-dt) is the inverse:
     // tapping it CLEARS any pinned hour and returns the hero to the
-    // "Right now" view via onDayClick(0) (handleDayClick wipes
-    // selectedHourDt and sets selectedDayIndex to 0).
+    // "Right now" view via onDayClick(nowDayIdx) (handleDayClick wipes
+    // selectedHourDt).
     if (onHourClick) {
       this.weatherView.querySelectorAll('.hourly-tile').forEach(el => {
         this._bindActivate(el, () => {
@@ -3390,41 +3300,152 @@ const UI = {
         });
       });
     }
+  },
 
-    // Position the hourly scroll: preserve user's scroll on same-city
-    // re-renders, otherwise center on the active day's first tile so a
-    // city change or click-driven day change always frames the right day.
+  // Position the hourly scroll: preserve the user's scroll on same-city
+  // re-renders, otherwise frame the active day's first tile so a city
+  // change or click-driven day change always shows the right day. Then
+  // arm the scroll-into-new-day watcher.
+  _positionHourlyScroll(ctx, prevHourlyScrollLeft, onDayClick) {
     const hourlyEl = this.weatherView.querySelector('.hourly-scroll');
-    if (hourlyEl) {
-      // Suppress the scroll-into-new-day handler in _bindHourlyDayScroll
-      // for a beat after we set scrollLeft programmatically. Without this,
-      // clicking the LAST day in the daily list runs into a feedback loop:
-      // we try to scroll the hourly bar to that day's first tile, but
-      // there aren't enough tiles after it to fill the bar so the browser
-      // silently CLAMPS scrollLeft to its max — short of the target tile.
-      // The scroll event from that clamp fires, the handler sees a tile
-      // from the second-to-last day as the leading tile, and bounces the
-      // user back to that day. The 600ms window comfortably outlasts the
-      // 180ms debounce in the scroll handler.
-      this._suppressScrollDayChangeUntil = Date.now() + 600;
-      if (!cityChanged && prevHourlyScrollLeft != null && !this._snapHourlyToActiveDay) {
-        hourlyEl.scrollLeft = prevHourlyScrollLeft;
-      } else {
-        const firstActiveTile = hourlyEl.querySelector(`.hourly-tile[data-day-index="${currentDayIdx}"]`);
-        if (firstActiveTile) {
-          // Bounding-rect math instead of offsetLeft — see comment in
-          // the daily-item same-day handler above. In landscape, the
-          // .hourly-scroll isn't a positioned ancestor, so a tile's
-          // offsetLeft can include the full x-offset of the right
-          // grid column, causing this "snap to start" to overshoot.
-          const tileRect = firstActiveTile.getBoundingClientRect();
-          const scrollRect = hourlyEl.getBoundingClientRect();
-          hourlyEl.scrollLeft += (tileRect.left - scrollRect.left);
-        }
+    if (!hourlyEl) return;
+    // Suppress the scroll-into-new-day handler in _bindHourlyDayScroll
+    // for a beat after we set scrollLeft programmatically. Without this,
+    // clicking the LAST day in the daily list runs into a feedback loop:
+    // we try to scroll the hourly bar to that day's first tile, but
+    // there aren't enough tiles after it to fill the bar so the browser
+    // silently CLAMPS scrollLeft to its max — short of the target tile.
+    // The scroll event from that clamp fires, the handler sees a tile
+    // from the second-to-last day as the leading tile, and bounces the
+    // user back to that day. The 600ms window comfortably outlasts the
+    // 180ms debounce in the scroll handler.
+    this._suppressScrollDayChangeUntil = Date.now() + 600;
+    if (!ctx.cityChanged && prevHourlyScrollLeft != null && !this._snapHourlyToActiveDay) {
+      hourlyEl.scrollLeft = prevHourlyScrollLeft;
+    } else {
+      const firstActiveTile = hourlyEl.querySelector(`.hourly-tile[data-day-index="${ctx.currentDayIdx}"]`);
+      if (firstActiveTile) {
+        // Bounding-rect math instead of offsetLeft — see the same-day
+        // handler in _bindDashboard. In landscape, the .hourly-scroll
+        // isn't a positioned ancestor, so a tile's offsetLeft can
+        // include the full x-offset of the right grid column, causing
+        // this "snap to start" to overshoot.
+        const tileRect = firstActiveTile.getBoundingClientRect();
+        const scrollRect = hourlyEl.getBoundingClientRect();
+        hourlyEl.scrollLeft += (tileRect.left - scrollRect.left);
       }
-      this._snapHourlyToActiveDay = false;
-      this._bindHourlyDayScroll(hourlyEl, currentDayIdx, onDayClick);
     }
+    this._snapHourlyToActiveDay = false;
+    this._bindHourlyDayScroll(hourlyEl, ctx.currentDayIdx, onDayClick);
+  },
+
+  renderDashboard(state, onDayClick, onSave, onHourClick) {
+    const ctx = this._dashboardContext(state);
+    const { cityName, heroData, tz, isToday, pinnedHourSlot, selectedHourDt, dailyData, currentDayIdx, activeDay } = ctx;
+
+    this.locationName.textContent = this.prettifyLocationName(cityName);
+    this._renderSaveButton(ctx, onSave);
+
+    // Hero subtitle clock keeps ticking between renders.
+    this._clockTimezone = tz;
+    this._ensureClockTimer();
+
+    // Reads the OUTGOING DOM for the temperature flip — before the swap.
+    const hero = this._heroHTML(ctx);
+
+    const statsPages = this._buildStatsPages(ctx);
+    // Reset to page 0 whenever the city changes; otherwise preserve.
+    if (ctx.cityChanged) this._statsPageIdx = 0;
+    if (this._statsPageIdx == null || this._statsPageIdx >= statsPages.length) this._statsPageIdx = 0;
+    this._statsPages = statsPages;
+
+    const html = `
+      <!-- Left-column wrapper: hero + stats + temperature graph. Pairs
+           with .dashboard-right (below) so the landscape two-column
+           layout has exactly two grid cells, and the swipe-between-
+           cities cube transition can spin each column independently
+           instead of as one big cube. In portrait both wrappers stack
+           as plain blocks, preserving the single-column layout. -->
+      <div class="dashboard-left">
+      ${hero.html}
+
+      <!-- .stats-pager stays the OUTER box so every existing selector
+           that reaches for it — the context-menu exclusion list, the
+           city-swipe opt-out — keeps matching, arrows included. The id
+           moves to the inner faces div: that's what _changeStatsPage
+           replaces wholesale and spins, so anything meant to persist
+           across a page flip has to live OUTSIDE it. -->
+      <div class="stats-pager">
+        <div class="stats-pager-faces" id="stats-pager">
+          <section class="quick-stats-grid">
+            ${statsPages[this._statsPageIdx] || ''}
+          </section>
+        </div>
+        ${statsPages.length > 1 ? `
+          <button type="button" class="stats-page-arrow prev" aria-label="Previous stats page">${STATS_ARROW_SVG}</button>
+          <button type="button" class="stats-page-arrow next" aria-label="Next stats page">${STATS_ARROW_SVG}</button>
+        ` : ''}
+      </div>
+
+      <section class="day-detail-section">
+        <div class="graph-container" id="graph-container"></div>
+      </section>
+      </div>
+
+      <!-- Right-column wrapper: hourly bar + 8-day hi/lo list. See
+           comment on .dashboard-left above for why both columns are
+           wrapped. -->
+      <div class="dashboard-right">
+      <section class="hourly-scroll">
+        ${this._hourlyScrollerHTML(ctx)}
+      </section>
+
+      <section class="daily-list">
+        ${this._dailyListHTML(ctx)}
+      </section>
+      </div>
+    `;
+
+    // Capture the existing hourly scroll position BEFORE we blow away the
+    // DOM, so a same-city re-render (background refresh, day switch) can
+    // keep the user's scroll exactly where it was.
+    const prevHourly = this.weatherView.querySelector('.hourly-scroll');
+    const prevHourlyScrollLeft = prevHourly ? prevHourly.scrollLeft : null;
+    this._renderedCityName = cityName;
+
+    this.weatherView.innerHTML = html;
+
+    // Trigger flip animation if pending
+    if (hero.shouldFlip) {
+      const flipCard = this.weatherView.querySelector('.hero-temp-flip-card');
+      if (flipCard) {
+        void flipCard.offsetHeight; // force reflow
+        flipCard.classList.add('animate-flip');
+      }
+    }
+
+    // Drive the ambient background-effects layer from whatever icon the
+    // hero just landed on. Picks among fx-clouds / fx-rain / fx-snow /
+    // fx-thunder / fx-fog / fx-haze / fx-smoke / fx-dust based on the
+    // resolved asset name; clear-day / clear-night / moon-* deliberately
+    // map to no effect (a clear sky has nothing to drift past).
+    this.applyWeatherFX(
+      (heroData.weather && heroData.weather[0] && heroData.weather[0]._asset) ||
+      this._weatherAssetName(
+        heroData.weather && heroData.weather[0] ? heroData.weather[0].icon : '',
+        heroData.weather && heroData.weather[0] ? heroData.weather[0].id   : null
+      ),
+      // Pass wind so cloud/fog/dust drift direction matches the actual
+      // wind direction (and speed scales animation duration). When an
+      // hour is pinned this is the hour's wind; otherwise the day's.
+      heroData.wind,
+      // Pass the OWM weather id so the fx picker can distinguish light
+      // rain / drizzle (sparse drops) from heavier rain (denser drops).
+      heroData.weather && heroData.weather[0] ? heroData.weather[0].id : null
+    );
+
+    this._bindDashboard(ctx, onDayClick, onHourClick);
+    this._positionHourlyScroll(ctx, prevHourlyScrollLeft, onDayClick);
 
     // Position marker: a solid line at the hour you pinned, or a dimmer
     // one at the live "now" on today. On a forecast day with nothing
@@ -3443,7 +3464,7 @@ const UI = {
       || state.tides;
 
     this.renderGraph(activeDay.hourly, tz, state.omHourly || [], {
-      tides: touchesWater ? tideSeries : null,
+      tides: ctx.touchesWater ? tideSeries : null,
       markerDt: pinnedHourSlot ? pinnedHourSlot.dt : null,
       markerIsNow: isToday && !pinnedHourSlot
     });
