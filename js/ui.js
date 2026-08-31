@@ -313,13 +313,7 @@ const UI = {
       });
     }
 
-    const setFeedback = (msg, kind) => {
-      if (!feedback) return;
-      feedback.textContent = msg || '';
-      feedback.classList.remove('is-success', 'is-error');
-      if (kind === 'success') feedback.classList.add('is-success');
-      if (kind === 'error')   feedback.classList.add('is-error');
-    };
+    const setFeedback = (msg, kind) => this.setFeedback(feedback, msg, kind);
 
     saveBtn.addEventListener('click', () => {
       const value = (input.value || '').trim();
@@ -555,7 +549,7 @@ const UI = {
     }
   },
 
-  closeOverlayWithCube(overlayId) {
+  async closeOverlayWithCube(overlayId) {
     const overlay = document.getElementById(overlayId);
     if (!overlay || !overlay.classList.contains('open')) return;
 
@@ -578,36 +572,14 @@ const UI = {
       return this._closeOverlayWithDualCube(overlay, leftEl, rightEl);
     }
 
-    const perspective = document.createElement('div');
-    perspective.className = 'cube-perspective';
-    perspective.style.position = 'fixed';
-    perspective.style.top = '0';
-    perspective.style.left = '50%';
-    perspective.style.transform = 'translateX(-50%)';
-    perspective.style.width = '100%';
-    perspective.style.maxWidth = '500px';
-    perspective.style.height = '100%';
-    perspective.style.zIndex = '9999';
-
-    const stage = document.createElement('div');
-    stage.className = 'cube-stage';
-    stage.style.width = '100%';
-    stage.style.height = '100%';
-
-    const front = document.createElement('div');
-    front.className = 'cube-face cube-face-front';
     const overlayClone = overlay.cloneNode(true);
     overlayClone.style.transform = 'none'; // Ensure the clone is visible
-    front.appendChild(overlayClone);
-    this._prepCubeFace(front, true); // clone — strip its duplicated ids
+    const front = this._makeCubeFace('cube-face-front', true, overlayClone); // clone — strip its duplicated ids
 
-    const back = document.createElement('div');
-    back.className = 'cube-face cube-face-left'; // We rotate right, so left face slides in
-    
     // Clone the main app to place on the incoming face
     const headerClone = document.querySelector('.app-header').cloneNode(true);
     const mainClone = document.querySelector('.main-content').cloneNode(true);
-    
+
     const fakeApp = document.createElement('div');
     fakeApp.className = 'app-container';
     fakeApp.style.height = '100%';
@@ -623,32 +595,25 @@ const UI = {
 
     fakeApp.appendChild(headerClone);
     fakeApp.appendChild(mainClone);
-    back.appendChild(fakeApp);
-    // Clones of the whole header + main content: without stripping,
-    // #weather-view / #save-btn / #city-clock etc. are duplicated in
-    // document.body and getElementById can resolve to the dead copy.
-    this._prepCubeFace(back, true);
+    // We rotate right, so the left face slides in. Clones of the whole
+    // header + main content: without stripping, #weather-view /
+    // #save-btn / #city-clock etc. are duplicated in document.body and
+    // getElementById can resolve to the dead copy.
+    const back = this._makeCubeFace('cube-face-left', true, fakeApp);
 
-    stage.appendChild(front);
-    stage.appendChild(back);
-    perspective.appendChild(stage);
+    const stage = this._makeCubeStage(front, back);
+    stage.style.width = '100%';
+    stage.style.height = '100%';
+
+    const perspective = this._makeCubePerspective(stage);
+    Object.assign(perspective.style, {
+      position: 'fixed', top: '0', left: '50%', transform: 'translateX(-50%)',
+      width: '100%', maxWidth: '500px', height: '100%', zIndex: '9999'
+    });
     document.body.appendChild(perspective);
 
-    return new Promise(resolve => {
-      stage.offsetHeight; // Force reflow
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          stage.classList.add('rotate-right');
-        });
-      });
-
-      const finish = () => {
-        perspective.remove();
-        resolve();
-      };
-      stage.addEventListener('transitionend', finish, { once: true });
-      setTimeout(finish, 800);
-    });
+    await this._spinCube(stage, 'rotate-right');
+    perspective.remove();
   },
 
   // Landscape variant of closeOverlayWithCube: two fixed-position
@@ -670,25 +635,7 @@ const UI = {
     const vh = window.innerHeight;
 
     const buildSide = (rect, columnEl) => {
-      const perspective = document.createElement('div');
-      perspective.className = 'cube-perspective';
-      perspective.style.position = 'fixed';
-      perspective.style.left   = `${rect.left}px`;
-      perspective.style.top    = `${rect.top}px`;
-      perspective.style.width  = `${rect.width}px`;
-      perspective.style.height = `${rect.height}px`;
-      perspective.style.zIndex = '9999';
-      // Cube depth tuned per column so each side's rotation looks correct
-      // at its actual width (instead of the global 250px default that's
-      // sized for the portrait 500px cube).
-      perspective.style.setProperty('--cube-half', `${rect.width / 2}px`);
-
-      const stage = document.createElement('div');
-      stage.className = 'cube-stage';
-
       // ----- Front face: full-viewport overlay clone, clipped -----
-      const front = document.createElement('div');
-      front.className = 'cube-face cube-face-front';
       const overlayClone = overlay.cloneNode(true);
       // Force the clone into absolute positioning relative to the front
       // face so we can place it deterministically — bypasses any
@@ -702,21 +649,23 @@ const UI = {
       overlayClone.style.transform = 'none';
       // Front face already has overflow:hidden via .cube-face CSS, so
       // only the column-shaped slice of the overlay will be visible.
-      front.appendChild(overlayClone);
-      this._prepCubeFace(front, true); // clone — strip its duplicated ids
+      const front = this._makeCubeFace('cube-face-front', true, overlayClone); // clone — strip its duplicated ids
 
       // ----- Back face: clone of the column wrapper -----
-      const back = document.createElement('div');
-      back.className = 'cube-face cube-face-left'; // rotate-right brings this in
       const colClone = columnEl.cloneNode(true);
       colClone.style.transform = 'none';
       // Fill the cube face so the clone matches the real column's render.
-      back.appendChild(colClone);
-      this._prepCubeFace(back, true); // also a clone — strip ids
+      const back = this._makeCubeFace('cube-face-left', true, colClone); // rotate-right brings this in
 
-      stage.appendChild(front);
-      stage.appendChild(back);
-      perspective.appendChild(stage);
+      const stage = this._makeCubeStage(front, back);
+      // Cube depth tuned per column so each side's rotation looks correct
+      // at its actual width (instead of the global 250px default that's
+      // sized for the portrait 500px cube).
+      const perspective = this._makeCubePerspective(stage, { cubeHalf: rect.width / 2 });
+      Object.assign(perspective.style, {
+        position: 'fixed', left: `${rect.left}px`, top: `${rect.top}px`,
+        width: `${rect.width}px`, height: `${rect.height}px`, zIndex: '9999'
+      });
       document.body.appendChild(perspective);
       return { perspective, stage };
     };
@@ -724,31 +673,9 @@ const UI = {
     const left  = buildSide(leftRect,  leftEl);
     const right = buildSide(rightRect, rightEl);
 
-    return new Promise(resolve => {
-      // Force layout, then rotate both stages on the same frame so they
-      // spin in lockstep instead of one finishing before the other.
-      // eslint-disable-next-line no-unused-expressions
-      left.stage.offsetHeight; right.stage.offsetHeight;
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          left.stage.classList.add('rotate-right');
-          right.stage.classList.add('rotate-right');
-        });
-      });
-
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        left.perspective.remove();
-        right.perspective.remove();
-        resolve();
-      };
-      // Either stage's transitionend is fine — they fire on the same
-      // frame since the duration / easing are identical.
-      left.stage.addEventListener('transitionend', finish, { once: true });
-      setTimeout(finish, 800);
-    });
+    await this._spinCube([left.stage, right.stage], 'rotate-right');
+    left.perspective.remove();
+    right.perspective.remove();
   },
 
   showLoading() {
@@ -1191,6 +1118,34 @@ const UI = {
     return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
   },
 
+  // A day key as a Date at UTC midnight of that calendar date. Only ever
+  // paired with `timeZone: 'UTC'` formatters, so a label derived from it
+  // can't disagree with the key (which used to happen when dt was
+  // re-shifted through state.timezone).
+  _dateFromDayKey(key) {
+    const [y, m, d] = key.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d));
+  },
+
+  // Weekday name for a city-local day key: 'long' → "Wednesday",
+  // 'short' → "Wed". Browser locale, like the rest of the date labels.
+  _weekdayFromDayKey(key, style = 'long') {
+    return this._dateFromDayKey(key).toLocaleDateString([], { weekday: style, timeZone: 'UTC' });
+  },
+
+  // True UTC instant of a city-local day's midnight. Prefers Open-Meteo's
+  // per-day dt (already the DST-correct local midnight); falls back to
+  // fixed-offset arithmetic — `tz` when it's a numeric offset, else
+  // `fallbackOffset` (OWM's state.timezone) — for a day Open-Meteo
+  // doesn't cover.
+  _dayStartSec(key, tz, omDaily, fallbackOffset) {
+    for (const di of (omDaily || [])) {
+      if (this.dayKey(di.dt, tz) === key) return di.dt;
+    }
+    const off = typeof tz === 'number' ? tz : (fallbackOffset || 0);
+    return Math.floor(this._dateFromDayKey(key).getTime() / 1000) - off;
+  },
+
   formatTime(unix, showMinutes = true, tz = 0) {
     const unit = Storage.getUnits().time;
     const { hour: h, minute: m } = this.localParts(unix, tz);
@@ -1619,6 +1574,16 @@ const UI = {
     return parts.join(', ');
   },
 
+  // Status line under a form (BYOK panel, import/export screen). kind is
+  // 'success' | 'error' | null (neutral). Every feedback write goes
+  // through here so the class names can't drift between the panels.
+  setFeedback(el, msg, kind) {
+    if (!el) return;
+    el.textContent = msg || '';
+    el.className = 'byok-feedback' +
+      (kind === 'success' ? ' is-success' : kind === 'error' ? ' is-error' : '');
+  },
+
   // HTML-escape a string for safe interpolation into innerHTML templates.
   esc(s) {
     return String(s == null ? '' : s)
@@ -1996,18 +1961,10 @@ const UI = {
     // ends mid-day). Top those up with Open-Meteo's hourly so every day's
     // graph has ~8 evenly-spaced points like a normal full day.
     const MIN_SLOTS = 8;
-    // True UTC instant of a day's local midnight. Prefer Open-Meteo's
-    // per-day dt (already the DST-correct local midnight); fall back to
-    // fixed-offset arithmetic when the day has no Open-Meteo counterpart
-    // (in which case omHourly is usually empty and the top-up is a no-op).
-    const omMidnightByKey = new Map(omDaily.map(di => [dayKeyFor(di.dt), di.dt]));
-    const dayStartFor = (day) => {
-      const fromOm = omMidnightByKey.get(day.key);
-      if (fromOm != null) return fromOm;
-      const [yy, mo, dd] = day.key.split('-').map(Number);
-      const off = typeof tz === 'number' ? tz : (currentWeather.timezone || 0);
-      return Math.floor(Date.UTC(yy, mo - 1, dd) / 1000) - off;
-    };
+    // True UTC instant of a day's local midnight (DST-correct where
+    // Open-Meteo covers the day; a day it doesn't cover usually means
+    // omHourly is empty too and the top-up is a no-op).
+    const dayStartFor = (day) => this._dayStartSec(day.key, tz, omDaily, currentWeather.timezone);
     for (const day of allDays.values()) {
       if (day.hourly.length >= MIN_SLOTS) continue;
       const dayStart = dayStartFor(day);
@@ -2424,19 +2381,11 @@ const UI = {
         // Derive the weekday from the slot's canonical city-local dayKey
         // so a slot that's "Wednesday in Tokyo" doesn't render as
         // "Tuesday" just because the browser is in New York.
-        const [ky, km, kd] = hourDayKey.split('-').map(Number);
-        const d = new Date(Date.UTC(ky, km - 1, kd));
-        const weekday = d.toLocaleDateString([], { weekday: 'long', timeZone: 'UTC' });
-        heroWhen = `${weekday} at ${hourLabel}`;
+        heroWhen = `${this._weekdayFromDayKey(hourDayKey)} at ${hourLabel}`;
       }
     } else if (!isToday) {
       const day = dailyData[selectedDayIndex];
-      if (day && day.key) {
-        const [yy, mo, dd] = day.key.split('-').map(Number);
-        const date = new Date(Date.UTC(yy, mo - 1, dd));
-        const weekday = date.toLocaleDateString([], { weekday: 'long', timeZone: 'UTC' });
-        heroWhen = `${weekday}'s forecast`;
-      }
+      if (day && day.key) heroWhen = `${this._weekdayFromDayKey(day.key)}'s forecast`;
     }
 
     // Big temperature readout.
@@ -2837,13 +2786,9 @@ const UI = {
       const anchorDt = heroData.dt;
 
       // Local-day window for the selected day, used for the non-live case.
-      const dayStartSec = activeOmDay
-        ? activeOmDay.dt
-        : (activeDayUvKey ? (() => {
-            const [yy, mo, dd] = activeDayUvKey.split('-').map(Number);
-            const off = typeof tz === 'number' ? tz : (currentWeather.timezone || 0);
-            return Math.floor(Date.UTC(yy, mo - 1, dd) / 1000) - off;
-          })() : null);
+      const dayStartSec = activeDayUvKey
+        ? this._dayStartSec(activeDayUvKey, tz, state.omDaily, currentWeather.timezone)
+        : null;
 
       const pick = (type) => {
         if (liveNow || dayStartSec == null) {
@@ -2968,11 +2913,7 @@ const UI = {
     // local midnight (Open-Meteo's per-day dt when available — the
     // DST-correct instant — else derived from the day key + offset).
     if (activeDayUvKey) {
-      const dayStartSec = activeOmDay ? activeOmDay.dt : (() => {
-        const [yy, mo, dd] = activeDayUvKey.split('-').map(Number);
-        const off = typeof tz === 'number' ? tz : (currentWeather.timezone || 0);
-        return Math.floor(Date.UTC(yy, mo - 1, dd) / 1000) - off;
-      })();
+      const dayStartSec = this._dayStartSec(activeDayUvKey, tz, state.omDaily, currentWeather.timezone);
       const mt = this._moonTimes(dayStartSec, currentWeather.coord.lat, currentWeather.coord.lon);
       // A null is real astronomy (the moon skips a rise or set roughly
       // every couple of weeks) — show the em dash rather than hiding.
@@ -3258,8 +3199,7 @@ const UI = {
           // Derive the weekday/date strings from the canonical dayKey so the
           // label can never disagree with the entry's date (which used to
           // happen when re-shifting dt back through state.timezone).
-          const [yy, mm, dd] = d.key.split('-').map(Number);
-          const date = new Date(Date.UTC(yy, mm - 1, dd));
+          const date = this._dateFromDayKey(d.key);
           const isThisDayToday = d.key === todayKey;
           const dayName = isThisDayToday
             ? 'Today'
@@ -3537,53 +3477,10 @@ const UI = {
     if (!el) return;
     const hit = el.closest('.stats-pager') || el;
 
-    const THRESHOLD = 50;
-    const SLOP      = 1.2;
-    let startX = 0, startY = 0, pointerId = null, tracking = false, peeking = false;
-
-    hit.addEventListener('pointerdown', (e) => {
-      if (e.pointerType === 'mouse' && e.button !== 0) return;
-      startX = e.clientX;
-      startY = e.clientY;
-      pointerId = e.pointerId;
-      tracking = true;
-      peeking = false;
-    });
-
-    hit.addEventListener('pointermove', (e) => {
-      if (!tracking || e.pointerId !== pointerId) return;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      if (!peeking && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * SLOP) {
-        peeking = true;
-      }
-      if (peeking) {
-        if (e.cancelable) e.preventDefault();
-        el.style.transform = `translateX(${dx * 0.2}px)`;
-      }
-    }, { passive: false });
-
-    const reset = () => {
-      el.style.transition = 'transform 0.2s ease';
-      el.style.transform = '';
-      setTimeout(() => { el.style.transition = ''; }, 220);
-    };
-
-    hit.addEventListener('pointerup', (e) => {
-      if (!tracking || e.pointerId !== pointerId) return;
-      tracking = false;
-      const wasPeeking = peeking;
-      reset();
-      if (!wasPeeking) return;
-      const dx = e.clientX - startX;
-      if (Math.abs(dx) < THRESHOLD) return;
-      this._changeStatsPage(dx < 0 ? 'next' : 'prev');
-    });
-
-    hit.addEventListener('pointercancel', (e) => {
-      if (!tracking || e.pointerId !== pointerId) return;
-      tracking = false;
-      el.style.transform = '';
+    this._bindHorizontalSwipe(hit, {
+      onNudge: (dx) => { el.style.transform = `translateX(${dx * 0.2}px)`; },
+      onRelease: () => this._releaseNudge(el),
+      onSwipe: (dir) => this._changeStatsPage(dir)
     });
   },
 
@@ -3730,6 +3627,76 @@ const UI = {
     face.inert = true;
   },
 
+  // ── Cube-transition building blocks ─────────────────────────────────
+  // Five transitions share this scaffold — overlay close (one cube, or
+  // two side by side in landscape), city swipe (likewise), and the
+  // element cube behind the graph and the stats pager. Each site only
+  // decides what goes on the two faces, where the perspective mounts,
+  // and what to do once the spin lands.
+
+  // One face. `content` is a Node, an array of Nodes (moved, not
+  // cloned — listeners survive), or an HTML string. stripIds per
+  // _prepCubeFace: true for clones, false for live nodes or for markup
+  // whose ids must keep working mid-spin (the graph gradient).
+  _makeCubeFace(faceClass, stripIds, content) {
+    const face = document.createElement('div');
+    face.className = 'cube-face ' + faceClass;
+    if (typeof content === 'string') {
+      face.innerHTML = content;
+    } else if (content) {
+      for (const node of [].concat(content)) face.appendChild(node);
+    }
+    this._prepCubeFace(face, stripIds);
+    return face;
+  },
+
+  _makeCubeStage(front, back) {
+    const stage = document.createElement('div');
+    stage.className = 'cube-stage';
+    stage.appendChild(front);
+    stage.appendChild(back);
+    return stage;
+  },
+
+  // Perspective wrapper around a stage. `height` in px. `cubeHalf`
+  // overrides the CSS --cube-half depth — half the face's width, or its
+  // height for X-axis spins — where the portrait default (sized for one
+  // ~500px cube) would be wrong.
+  _makeCubePerspective(stage, { height, cubeHalf } = {}) {
+    const perspective = document.createElement('div');
+    perspective.className = 'cube-perspective';
+    if (height != null) perspective.style.height = `${height}px`;
+    if (cubeHalf != null) perspective.style.setProperty('--cube-half', `${cubeHalf}px`);
+    perspective.appendChild(stage);
+    return perspective;
+  },
+
+  // Play the rotation. Forces a layout, then adds the rotate class on
+  // the next frame so the transition actually runs instead of collapsing
+  // into one frame. Every stage passed gets the class on the SAME frame
+  // (the landscape dual cubes spin in lockstep). Resolves on the first
+  // stage's transitionend, or after 800ms if that never fires (tab
+  // backgrounded) — whichever comes first, exactly once.
+  _spinCube(stages, rotateClass) {
+    const list = [].concat(stages);
+    return new Promise((resolve) => {
+      list.forEach(s => { void s.offsetHeight; });
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          list.forEach(s => s.classList.add(rotateClass));
+        });
+      });
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      list[0].addEventListener('transitionend', finish, { once: true });
+      setTimeout(finish, 800);
+    });
+  },
+
   // Run a 3D cube-rotation transition between two dashboards. The current
   // contents of #weather-view (the NEW city, which the caller has already
   // rendered) are moved onto one side of the cube; the supplied snapshot of
@@ -3774,62 +3741,29 @@ const UI = {
     const newHeight = this.weatherView.offsetHeight;
     const stageHeight = Math.max(oldHeight, newHeight, 400);
 
-    const perspective = document.createElement('div');
-    perspective.className = 'cube-perspective';
-    perspective.style.height = `${stageHeight}px`;
-
-    const stage = document.createElement('div');
-    stage.className = 'cube-stage';
-
-    const front = document.createElement('div');
-    front.className = 'cube-face cube-face-front';
-    while (oldClone.firstChild) front.appendChild(oldClone.firstChild);
-    this._prepCubeFace(front, true); // clone — strip its duplicated ids
-
-    const back = document.createElement('div');
-    back.className = 'cube-face ' + (isNext ? 'cube-face-right' : 'cube-face-left');
-    // Move the freshly-rendered NEW dashboard onto the cube's incoming face.
-    // We move (not clone) the children so their event listeners survive.
-    while (this.weatherView.firstChild) back.appendChild(this.weatherView.firstChild);
-    this._prepCubeFace(back, false); // LIVE nodes — ids must survive
-
-    stage.appendChild(front);
-    stage.appendChild(back);
-    perspective.appendChild(stage);
+    // Old dashboard (a clone) on the front — strip its duplicated ids.
+    const front = this._makeCubeFace('cube-face-front', true, Array.from(oldClone.childNodes));
+    // Move (not clone) the freshly-rendered NEW dashboard onto the incoming
+    // face so its event listeners survive. LIVE nodes — ids must survive.
+    const back = this._makeCubeFace(
+      isNext ? 'cube-face-right' : 'cube-face-left', false, Array.from(this.weatherView.childNodes));
+    const stage = this._makeCubeStage(front, back);
+    const perspective = this._makeCubePerspective(stage, { height: stageHeight });
     this.weatherView.appendChild(perspective);
 
-    return new Promise((resolve) => {
-      // Force a layout, then on the next frame trigger the rotation so the
-      // transition actually plays (rather than collapsing into one frame).
-      // eslint-disable-next-line no-unused-expressions
-      stage.offsetHeight;
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          stage.classList.add(isNext ? 'rotate-left' : 'rotate-right');
-        });
-      });
+    await this._spinCube(stage, isNext ? 'rotate-left' : 'rotate-right');
 
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        // Restore the new dashboard's nodes to weather-view so the rest of
-        // the app continues to find them via getElementById/querySelector —
-        // but only while the cube is still mounted. If something replaced
-        // #weather-view's contents mid-spin (showLoading, showError), the
-        // nodes held in `back` are stale and re-appending them would
-        // duplicate the dashboard.
-        if (perspective.isConnected) {
-          while (back.firstChild) this.weatherView.appendChild(back.firstChild);
-        }
-        perspective.remove();
-        this._cubeDone();
-        resolve();
-      };
-      stage.addEventListener('transitionend', finish, { once: true });
-      // Fallback in case transitionend doesn't fire (e.g. tab backgrounded).
-      setTimeout(finish, 800);
-    });
+    // Restore the new dashboard's nodes to weather-view so the rest of
+    // the app continues to find them via getElementById/querySelector —
+    // but only while the cube is still mounted. If something replaced
+    // #weather-view's contents mid-spin (showLoading, showError), the
+    // nodes held in `back` are stale and re-appending them would
+    // duplicate the dashboard.
+    if (perspective.isConnected) {
+      while (back.firstChild) this.weatherView.appendChild(back.firstChild);
+    }
+    perspective.remove();
+    this._cubeDone();
   },
 
   // Landscape (two-column) variant of the city-swipe cube. Builds two
@@ -3863,29 +3797,12 @@ const UI = {
         200
       );
 
-      const perspective = document.createElement('div');
-      perspective.className = 'cube-perspective';
+      const front = this._makeCubeFace('cube-face-front', true, oldCol); // clone — strip its duplicated ids
+      const back  = this._makeCubeFace(backFaceClass, false, newCol);    // LIVE nodes — ids must survive
+      const stage = this._makeCubeStage(front, back);
+      const perspective = this._makeCubePerspective(stage, { height: stageHeight, cubeHalf: colWidth / 2 });
       perspective.style.gridColumn = gridColumn;
       perspective.style.gridRow = '1';
-      perspective.style.height = `${stageHeight}px`;
-      perspective.style.setProperty('--cube-half', `${colWidth / 2}px`);
-
-      const stage = document.createElement('div');
-      stage.className = 'cube-stage';
-
-      const front = document.createElement('div');
-      front.className = 'cube-face cube-face-front';
-      front.appendChild(oldCol);
-      this._prepCubeFace(front, true); // clone — strip its duplicated ids
-
-      const back = document.createElement('div');
-      back.className = 'cube-face ' + backFaceClass;
-      back.appendChild(newCol);
-      this._prepCubeFace(back, false); // LIVE nodes — ids must survive
-
-      stage.appendChild(front);
-      stage.appendChild(back);
-      perspective.appendChild(stage);
       return { perspective, stage };
     };
 
@@ -3895,69 +3812,143 @@ const UI = {
     this.weatherView.appendChild(left.perspective);
     this.weatherView.appendChild(right.perspective);
 
-    return new Promise((resolve) => {
-      // Force layout, then rotate on the next frame so the transition
-      // actually plays rather than collapsing into one frame.
-      // eslint-disable-next-line no-unused-expressions
-      left.stage.offsetHeight; right.stage.offsetHeight;
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          left.stage.classList.add(rotateClass);
-          right.stage.classList.add(rotateClass);
-        });
-      });
+    await this._spinCube([left.stage, right.stage], rotateClass);
 
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        // Restore the new wrappers back into weather-view so the rest
-        // of the app continues to find them via querySelector. Grid
-        // placement is by class (.dashboard-left → col 1, etc.), so
-        // append order doesn't matter. Skip the restore if the cubes
-        // were detached mid-spin (see runCubeTransition's finish) —
-        // the wrappers are stale then and would duplicate the view.
-        if (left.perspective.isConnected || right.perspective.isConnected) {
-          this.weatherView.appendChild(newLeft);
-          this.weatherView.appendChild(newRight);
-        }
-        left.perspective.remove();
-        right.perspective.remove();
-        this._cubeDone();
-        resolve();
-      };
-      // Listen on one stage — both finish on the same frame since the
-      // transition duration / easing are identical.
-      left.stage.addEventListener('transitionend', finish, { once: true });
-      setTimeout(finish, 800);
-    });
+    // Restore the new wrappers back into weather-view so the rest
+    // of the app continues to find them via querySelector. Grid
+    // placement is by class (.dashboard-left → col 1, etc.), so
+    // append order doesn't matter. Skip the restore if the cubes
+    // were detached mid-spin (see runCubeTransition) — the wrappers
+    // are stale then and would duplicate the view.
+    if (left.perspective.isConnected || right.perspective.isConnected) {
+      this.weatherView.appendChild(newLeft);
+      this.weatherView.appendChild(newRight);
+    }
+    left.perspective.remove();
+    right.perspective.remove();
+    this._cubeDone();
   },
 
-  // FLIP-style slide: capture position + computed type metrics of the
-  // clicked (or swiped-to) daily row's temps and icon BEFORE the re-render,
-  // and return a continuation that, once the new hero is in the DOM, floats
-  // ghost clones from the row up to the hero's high/low and icon slots.
+  // FLIP-style slide shared by the daily-list rows and the hourly tiles:
+  // capture the source's temperature + icon (rects, markup, computed type
+  // metrics) BEFORE the re-render, and return a continuation that, once
+  // the new hero is in the DOM, floats ghost clones from the source up to
+  // the hero's temperature and icon slots.
   //
   // The ghost is anchored to the hero's center and animates two things in
-  // parallel: a transform translation (centers travel from row → hero) and
-  // the *real* font-size / svg dimensions (text grows smoothly instead of
-  // being scaled bitmap-style). When the transition lands the ghost it is
+  // parallel: a transform translation (centers travel from source → hero)
+  // and the *real* font-size / img dimensions (text grows smoothly instead
+  // of being scaled bitmap-style). When the transition lands, the ghost is
   // already at the hero's exact computed type metrics, so swapping it for
   // the real hero element produces no visible pop.
+  //
+  //   src.tempEl / src.iconEl — the small source elements
+  //   src.tempRect / src.tempHTML — optional overrides (the Today row
+  //                                 flies just its high number)
+  //   findNewSource() — the source's counterparts in the re-rendered DOM,
+  //                     hidden for the flight so the number isn't seen twice
+  _captureForHeroSlide(src, findNewSource) {
+    const { tempEl, iconEl } = src;
+    // Weather icons render as <img> now (was inline <svg>); the size
+    // animation targets that element.
+    const iconImg = iconEl && iconEl.querySelector('img, svg');
+    if (!tempEl || !iconEl || !iconImg) return null;
+
+    const tempRect = src.tempRect || tempEl.getBoundingClientRect();
+    const iconRect = iconEl.getBoundingClientRect();
+    const tempHTML = src.tempHTML || tempEl.outerHTML;
+    const iconHTML = iconEl.outerHTML;
+
+    const srcTempCS = getComputedStyle(tempEl);
+    const srcTempFS     = srcTempCS.fontSize;
+    const srcTempWeight = srcTempCS.fontWeight;
+    const srcIconSize   = getComputedStyle(iconImg).width; // square
+
+    return () => {
+      const heroTemp = this.weatherView.querySelector('.hero-temp-large');
+      const heroIcon = this.weatherView.querySelector('.hero-icon-large');
+      const heroIconImg = heroIcon && heroIcon.querySelector('img, svg');
+      if (!heroTemp || !heroIcon || !heroIconImg) return;
+
+      const destTempRect = heroTemp.getBoundingClientRect();
+      const destIconRect = heroIcon.getBoundingClientRect();
+      const destTempCS   = getComputedStyle(heroTemp);
+      const destTempFS     = destTempCS.fontSize;
+      const destTempWeight = destTempCS.fontWeight;
+      const destIconSize   = getComputedStyle(heroIconImg).width;
+
+      const hidden = [heroTemp, heroIcon, ...(findNewSource ? findNewSource() : [])].filter(Boolean);
+      hidden.forEach(el => el.classList.add('hero-slide-hidden'));
+
+      const tempGhost = this._makeSlideGhost(
+        tempHTML, tempRect, destTempRect,
+        (inner) => {
+          inner.style.fontSize   = srcTempFS;
+          inner.style.fontWeight = srcTempWeight;
+        },
+        (inner) => {
+          inner.style.fontSize   = destTempFS;
+          inner.style.fontWeight = destTempWeight;
+        },
+      );
+
+      const iconGhost = this._makeSlideGhost(
+        iconHTML, iconRect, destIconRect,
+        (inner) => {
+          const img = inner.querySelector('img, svg');
+          if (img) { img.style.width = srcIconSize; img.style.height = srcIconSize; }
+        },
+        (inner) => {
+          const img = inner.querySelector('img, svg');
+          if (img) { img.style.width = destIconSize; img.style.height = destIconSize; }
+        },
+      );
+
+      setTimeout(() => {
+        tempGhost.remove();
+        iconGhost.remove();
+        hidden.forEach(el => el.classList.remove('hero-slide-hidden'));
+      }, 560);
+    };
+  },
+
+  // Anchor: position the ghost so its center sits exactly on the hero
+  // element's center, then translate by (src - dest) to start it on the
+  // source. Animating the translation back to (0,0) lands it on the hero
+  // regardless of how the ghost's auto-sizing reflows mid-animation.
+  _makeSlideGhost(html, srcRect, destRect, applyStart, applyEnd) {
+    const ghost = document.createElement('div');
+    ghost.className = 'day-slide-ghost';
+    const destCX = destRect.left + destRect.width  / 2;
+    const destCY = destRect.top  + destRect.height / 2;
+    const srcCX  = srcRect.left  + srcRect.width   / 2;
+    const srcCY  = srcRect.top   + srcRect.height  / 2;
+    ghost.style.left = `${destCX}px`;
+    ghost.style.top  = `${destCY}px`;
+    ghost.innerHTML = html;
+    const inner = ghost.firstElementChild;
+    applyStart(inner);
+    // Centered on dest, offset back to src for frame 0.
+    ghost.style.transform = `translate(calc(-50% + ${srcCX - destCX}px), calc(-50% + ${srcCY - destCY}px))`;
+    document.body.appendChild(ghost);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        ghost.classList.add('day-slide-ghost--flying');
+        ghost.style.transform = 'translate(-50%, -50%)';
+        applyEnd(inner);
+      });
+    });
+    return ghost;
+  },
+
+  // Daily-list row → hero. See _captureForHeroSlide.
   captureDayRowForHeroSlide(rowEl) {
     if (!rowEl) return null;
-    const srcTemps = rowEl.querySelector('.daily-temps');
-    const srcIcon  = rowEl.querySelector('.daily-icon');
-    // Weather icons render as <img> now (was inline <svg>); animation
-    // logic below targets the img element for width/height transitions.
-    const srcIconSvg = srcIcon && srcIcon.querySelector('img, svg');
-    if (!srcTemps || !srcIcon || !srcIconSvg) return null;
-
-    let  tempsRect = srcTemps.getBoundingClientRect();
-    const iconRect = srcIcon.getBoundingClientRect();
-    let  tempsHTML = srcTemps.outerHTML;
-    const iconHTML = srcIcon.outerHTML;
+    const tempEl = rowEl.querySelector('.daily-temps');
+    const iconEl = rowEl.querySelector('.daily-icon');
+    if (!tempEl) return null;
     const rowIndex = rowEl.getAttribute('data-index');
+    const src = { tempEl, iconEl };
 
     // The hero shows a single current temp on Today, but two numbers
     // (high / low) on every other day. When the user taps the Today row,
@@ -3970,231 +3961,47 @@ const UI = {
     const dayLabel = rowEl.querySelector('.daily-day');
     const isTodayRow = !!(dayLabel && dayLabel.textContent.trim() === 'Today');
     if (isTodayRow) {
-      const fullText = srcTemps.textContent || '';
+      const fullText = tempEl.textContent || '';
       // Row format from the renderer is `${max}° / ${min}°` — split on
       // " /" so we keep the degree glyph attached to the high number.
       const sepIdx = fullText.indexOf(' /');
       const highText = sepIdx > -1 ? fullText.slice(0, sepIdx) : fullText;
 
-      const textNode = srcTemps.firstChild;
+      const textNode = tempEl.firstChild;
       if (textNode && textNode.nodeType === Node.TEXT_NODE && highText.length > 0) {
         const range = document.createRange();
         range.setStart(textNode, 0);
         range.setEnd(textNode, Math.min(highText.length, textNode.length));
         const r = range.getBoundingClientRect();
-        if (r.width > 0) tempsRect = r;
+        if (r.width > 0) src.tempRect = r;
       }
-      tempsHTML = `<span class="daily-temps">${this.esc(highText)}</span>`;
+      src.tempHTML = `<span class="daily-temps">${this.esc(highText)}</span>`;
     }
 
-    const srcTempsCS = getComputedStyle(srcTemps);
-    const srcIconCS  = getComputedStyle(srcIconSvg);
-    const srcTempsFS    = srcTempsCS.fontSize;
-    const srcTempsWeight = srcTempsCS.fontWeight;
-    const srcSvgSize    = srcIconCS.width; // square
-
-    return () => {
-      const heroTemp = this.weatherView.querySelector('.hero-temp-large');
-      const heroIcon = this.weatherView.querySelector('.hero-icon-large');
-      const heroIconSvg = heroIcon && heroIcon.querySelector('img, svg');
-      if (!heroTemp || !heroIcon || !heroIconSvg) return;
-
-      const destTempRect = heroTemp.getBoundingClientRect();
-      const destIconRect = heroIcon.getBoundingClientRect();
-      const destTempCS   = getComputedStyle(heroTemp);
-      const destIconCS   = getComputedStyle(heroIconSvg);
-      const destTempsFS    = destTempCS.fontSize;
-      const destTempsWeight = destTempCS.fontWeight;
-      const destSvgSize    = destIconCS.width;
-
-      heroTemp.classList.add('hero-slide-hidden');
-      heroIcon.classList.add('hero-slide-hidden');
-
+    return this._captureForHeroSlide(src, () => {
       const newRow = this.weatherView.querySelector(`.daily-item[data-index="${rowIndex}"]`);
-      const newRowTemps = newRow && newRow.querySelector('.daily-temps');
-      const newRowIcon  = newRow && newRow.querySelector('.daily-icon');
-      if (newRowTemps) newRowTemps.classList.add('hero-slide-hidden');
-      if (newRowIcon)  newRowIcon.classList.add('hero-slide-hidden');
-
-      // Anchor: position the ghost so its center sits exactly on the hero
-      // element's center, then translate by (src - dest) to start it on the
-      // row. Animating the translation back to (0,0) lands it on the hero
-      // regardless of how the ghost's auto-sizing reflows mid-animation.
-      const makeGhost = (html, srcRect, destRect, applyStart, applyEnd) => {
-        const ghost = document.createElement('div');
-        ghost.className = 'day-slide-ghost';
-        const destCX = destRect.left + destRect.width  / 2;
-        const destCY = destRect.top  + destRect.height / 2;
-        const srcCX  = srcRect.left  + srcRect.width   / 2;
-        const srcCY  = srcRect.top   + srcRect.height  / 2;
-        ghost.style.left = `${destCX}px`;
-        ghost.style.top  = `${destCY}px`;
-        ghost.innerHTML = html;
-        const inner = ghost.firstElementChild;
-        applyStart(inner);
-        // Centered on dest, offset back to src for frame 0.
-        ghost.style.transform = `translate(calc(-50% + ${srcCX - destCX}px), calc(-50% + ${srcCY - destCY}px))`;
-        document.body.appendChild(ghost);
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            ghost.classList.add('day-slide-ghost--flying');
-            ghost.style.transform = 'translate(-50%, -50%)';
-            applyEnd(inner);
-          });
-        });
-        return ghost;
-      };
-
-      const tempsGhost = makeGhost(
-        tempsHTML, tempsRect, destTempRect,
-        (inner) => {
-          inner.style.fontSize   = srcTempsFS;
-          inner.style.fontWeight = srcTempsWeight;
-        },
-        (inner) => {
-          inner.style.fontSize   = destTempsFS;
-          inner.style.fontWeight = destTempsWeight;
-        },
-      );
-
-      const iconGhost = makeGhost(
-        iconHTML, iconRect, destIconRect,
-        (inner) => {
-          const svg = inner.querySelector('img, svg');
-          if (svg) { svg.style.width = srcSvgSize; svg.style.height = srcSvgSize; }
-        },
-        (inner) => {
-          const svg = inner.querySelector('img, svg');
-          if (svg) { svg.style.width = destSvgSize; svg.style.height = destSvgSize; }
-        },
-      );
-
-      const cleanup = () => {
-        tempsGhost.remove();
-        iconGhost.remove();
-        heroTemp.classList.remove('hero-slide-hidden');
-        heroIcon.classList.remove('hero-slide-hidden');
-        if (newRowTemps) newRowTemps.classList.remove('hero-slide-hidden');
-        if (newRowIcon)  newRowIcon.classList.remove('hero-slide-hidden');
-      };
-      setTimeout(cleanup, 560);
-    };
+      return newRow
+        ? [newRow.querySelector('.daily-temps'), newRow.querySelector('.daily-icon')]
+        : [];
+    });
   },
 
-  // FLIP-style slide for the hourly tiles: same idea as
-  // captureDayRowForHeroSlide above, but sourced from the small tile in
-  // the hourly scroller (temp number + condition icon) rather than from
-  // a daily-list row. Ghost flies the temp and icon up to the hero's
-  // large slots, growing in size mid-flight so the landing is seamless.
-  //
-  // Called before re-render; returns a continuation that mounts the
-  // ghosts once the new hero is in the DOM. Source tile is located in
-  // the re-rendered DOM by data-dt so we can hide its "real" temp/icon
-  // for the duration of the flight (the tile itself does not change,
-  // just sprouts a pinned highlight).
+  // Hourly tile → hero. Same flight as the daily rows, sourced from the
+  // small tile in the scroller. The tile itself doesn't change on
+  // re-render (it just sprouts a pinned highlight), so it's located by
+  // data-dt to hide its real temp/icon for the duration.
   captureHourlyTileForHeroSlide(tileEl) {
     if (!tileEl) return null;
-    const srcTemp = tileEl.querySelector('.hourly-temp');
-    const srcIcon = tileEl.querySelector('.hourly-icon');
-    const srcIconImg = srcIcon && srcIcon.querySelector('img, svg');
-    if (!srcTemp || !srcIcon || !srcIconImg) return null;
-
-    const tempRect = srcTemp.getBoundingClientRect();
-    const iconRect = srcIcon.getBoundingClientRect();
-    const tempHTML = srcTemp.outerHTML;
-    const iconHTML = srcIcon.outerHTML;
-    const tileDt   = tileEl.getAttribute('data-dt');
-
-    const srcTempCS = getComputedStyle(srcTemp);
-    const srcIconCS = getComputedStyle(srcIconImg);
-    const srcTempFS     = srcTempCS.fontSize;
-    const srcTempWeight = srcTempCS.fontWeight;
-    const srcIconSize   = srcIconCS.width; // square
-
-    return () => {
-      const heroTemp = this.weatherView.querySelector('.hero-temp-large');
-      const heroIcon = this.weatherView.querySelector('.hero-icon-large');
-      const heroIconImg = heroIcon && heroIcon.querySelector('img, svg');
-      if (!heroTemp || !heroIcon || !heroIconImg) return;
-
-      const destTempRect = heroTemp.getBoundingClientRect();
-      const destIconRect = heroIcon.getBoundingClientRect();
-      const destTempCS   = getComputedStyle(heroTemp);
-      const destIconCS   = getComputedStyle(heroIconImg);
-      const destTempFS     = destTempCS.fontSize;
-      const destTempWeight = destTempCS.fontWeight;
-      const destIconSize   = destIconCS.width;
-
-      heroTemp.classList.add('hero-slide-hidden');
-      heroIcon.classList.add('hero-slide-hidden');
-
-      const newTile = this.weatherView.querySelector(`.hourly-tile[data-dt="${tileDt}"]`);
-      const newTileTemp = newTile && newTile.querySelector('.hourly-temp');
-      const newTileIcon = newTile && newTile.querySelector('.hourly-icon');
-      if (newTileTemp) newTileTemp.classList.add('hero-slide-hidden');
-      if (newTileIcon) newTileIcon.classList.add('hero-slide-hidden');
-
-      // Same makeGhost pattern as captureDayRowForHeroSlide. Anchored on
-      // the hero's center; transform starts offset to the tile and
-      // animates back to (0, 0).
-      const makeGhost = (html, srcRect, destRect, applyStart, applyEnd) => {
-        const ghost = document.createElement('div');
-        ghost.className = 'day-slide-ghost';
-        const destCX = destRect.left + destRect.width  / 2;
-        const destCY = destRect.top  + destRect.height / 2;
-        const srcCX  = srcRect.left  + srcRect.width   / 2;
-        const srcCY  = srcRect.top   + srcRect.height  / 2;
-        ghost.style.left = `${destCX}px`;
-        ghost.style.top  = `${destCY}px`;
-        ghost.innerHTML = html;
-        const inner = ghost.firstElementChild;
-        applyStart(inner);
-        ghost.style.transform = `translate(calc(-50% + ${srcCX - destCX}px), calc(-50% + ${srcCY - destCY}px))`;
-        document.body.appendChild(ghost);
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            ghost.classList.add('day-slide-ghost--flying');
-            ghost.style.transform = 'translate(-50%, -50%)';
-            applyEnd(inner);
-          });
-        });
-        return ghost;
-      };
-
-      const tempGhost = makeGhost(
-        tempHTML, tempRect, destTempRect,
-        (inner) => {
-          inner.style.fontSize   = srcTempFS;
-          inner.style.fontWeight = srcTempWeight;
-        },
-        (inner) => {
-          inner.style.fontSize   = destTempFS;
-          inner.style.fontWeight = destTempWeight;
-        },
-      );
-
-      const iconGhost = makeGhost(
-        iconHTML, iconRect, destIconRect,
-        (inner) => {
-          const img = inner.querySelector('img, svg');
-          if (img) { img.style.width = srcIconSize; img.style.height = srcIconSize; }
-        },
-        (inner) => {
-          const img = inner.querySelector('img, svg');
-          if (img) { img.style.width = destIconSize; img.style.height = destIconSize; }
-        },
-      );
-
-      const cleanup = () => {
-        tempGhost.remove();
-        iconGhost.remove();
-        heroTemp.classList.remove('hero-slide-hidden');
-        heroIcon.classList.remove('hero-slide-hidden');
-        if (newTileTemp) newTileTemp.classList.remove('hero-slide-hidden');
-        if (newTileIcon) newTileIcon.classList.remove('hero-slide-hidden');
-      };
-      setTimeout(cleanup, 560);
-    };
+    const tileDt = tileEl.getAttribute('data-dt');
+    return this._captureForHeroSlide(
+      { tempEl: tileEl.querySelector('.hourly-temp'), iconEl: tileEl.querySelector('.hourly-icon') },
+      () => {
+        const newTile = this.weatherView.querySelector(`.hourly-tile[data-dt="${tileDt}"]`);
+        return newTile
+          ? [newTile.querySelector('.hourly-temp'), newTile.querySelector('.hourly-icon')]
+          : [];
+      }
+    );
   },
 
   // Switch to a different forecast day and play the graph's 3D cube
@@ -4249,56 +4056,90 @@ const UI = {
     const isVerticalAxis = direction === 'up' || direction === 'down';
     const height = targetEl.offsetHeight || 200;
 
-    const perspective = document.createElement('div');
-    perspective.className = 'cube-perspective';
-    perspective.style.height = `${height}px`;
+    // Don't strip ids here: the graph SVG needs its (per-render unique)
+    // gradient id to paint during the spin. Hide from AT / tab order only.
+    const front = this._makeCubeFace('cube-face-front', false, oldHTML);
+    const back  = this._makeCubeFace(BACK_FACE[direction] || 'cube-face-right', false, newHTML);
+    const stage = this._makeCubeStage(front, back);
     // X-axis rotation: the face depth is half the face HEIGHT — the
     // default --cube-half is sized for the wide Y-axis cubes and would
     // make a 200px-tall graph fly absurdly far out of plane.
-    if (isVerticalAxis) perspective.style.setProperty('--cube-half', `${height / 2}px`);
-
-    const stage = document.createElement('div');
-    stage.className = 'cube-stage';
-
-    const front = document.createElement('div');
-    front.className = 'cube-face cube-face-front';
-    front.innerHTML = oldHTML;
-    // Don't strip ids here: the graph SVG needs its (per-render unique)
-    // gradient id to paint during the spin. Hide from AT / tab order only.
-    this._prepCubeFace(front, false);
-
-    const back = document.createElement('div');
-    back.className = 'cube-face ' + (BACK_FACE[direction] || 'cube-face-right');
-    back.innerHTML = newHTML;
-    this._prepCubeFace(back, false);
-
-    stage.appendChild(front);
-    stage.appendChild(back);
-    perspective.appendChild(stage);
+    const perspective = this._makeCubePerspective(stage, {
+      height,
+      cubeHalf: isVerticalAxis ? height / 2 : undefined
+    });
 
     // Replace the element's content with the cube while we animate.
     targetEl.innerHTML = '';
     targetEl.appendChild(perspective);
 
-    return new Promise((resolve) => {
-      // eslint-disable-next-line no-unused-expressions
-      stage.offsetHeight; // force reflow so the transition actually plays
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          stage.classList.add(ROTATE[direction] || 'rotate-left');
-        });
-      });
+    await this._spinCube(stage, ROTATE[direction] || 'rotate-left');
+    targetEl.innerHTML = newHTML;
+  },
 
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        targetEl.innerHTML = newHTML;
-        resolve();
-      };
-      stage.addEventListener('transitionend', finish, { once: true });
-      setTimeout(finish, 800);
+  // ── Horizontal-swipe recogniser ─────────────────────────────────────
+  // Shared by the city swipe (document-wide), the graph's day swipe and
+  // the stats pager. Pointer Events throughout. A press becomes a swipe
+  // once |dx| > 10px AND beats |dy| by SLOP — from then on the gesture is
+  // claimed (preventDefault) and `onNudge(dx)` follows the finger. On
+  // release, |dx| ≥ THRESHOLD fires `onSwipe('next' | 'prev')` ('next'
+  // is leftward, like turning a page).
+  //
+  //   hitEl        — element (or document) that receives the pointer events
+  //   shouldStart  — optional predicate on pointerdown; return false to ignore
+  //   onStart      — once, when the press is recognised as horizontal
+  //   onNudge(dx)  — follow-the-finger feedback while horizontal
+  //   onRelease()  — undo the nudge; runs on every up/cancel after a nudge
+  //   onSwipe(dir) — the committed gesture
+  _bindHorizontalSwipe(hitEl, { shouldStart, onStart, onNudge, onRelease, onSwipe }) {
+    const THRESHOLD = 50;  // px of horizontal travel to count as a swipe
+    const SLOP      = 1.2; // dx must beat dy by this factor → horizontal
+    let startX = 0, startY = 0, pointerId = null, tracking = false, peeking = false;
+
+    hitEl.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (shouldStart && shouldStart(e) === false) return;
+      startX = e.clientX;
+      startY = e.clientY;
+      pointerId = e.pointerId;
+      tracking = true;
+      peeking = false;
     });
+
+    hitEl.addEventListener('pointermove', (e) => {
+      if (!tracking || e.pointerId !== pointerId) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      // Only take over the gesture once it's clearly horizontal.
+      if (!peeking && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * SLOP) {
+        peeking = true;
+        if (onStart) onStart();
+      }
+      if (peeking) {
+        if (e.cancelable) e.preventDefault();
+        if (onNudge) onNudge(dx);
+      }
+    }, { passive: false });
+
+    const end = (e, cancelled) => {
+      if (!tracking || e.pointerId !== pointerId) return;
+      tracking = false;
+      const wasPeeking = peeking;
+      if (wasPeeking && onRelease) onRelease();
+      if (cancelled || !wasPeeking) return;
+      const dx = e.clientX - startX;
+      if (Math.abs(dx) < THRESHOLD) return;
+      onSwipe(dx < 0 ? 'next' : 'prev');
+    };
+    hitEl.addEventListener('pointerup', (e) => end(e, false));
+    hitEl.addEventListener('pointercancel', (e) => end(e, true));
+  },
+
+  // Ease a nudged element back to rest.
+  _releaseNudge(el) {
+    el.style.transition = 'transform 0.2s ease';
+    el.style.transform = '';
+    setTimeout(() => { el.style.transition = ''; }, 220);
   },
 
   // Horizontal swipe anywhere ABOVE the temperature graph cycles through
@@ -4307,9 +4148,6 @@ const UI = {
     if (this._citySwipeBound) return;
     this._citySwipeBound = true;
 
-    const THRESHOLD = 50;
-    const SLOP      = 1.2; // dx must beat dy by this factor → horizontal
-    let startX = 0, startY = 0, pointerId = null, tracking = false, peeking = false;
     let nudgeTargets = null;
 
     const liveTargets = () => {
@@ -4322,79 +4160,41 @@ const UI = {
       ].filter(Boolean);
     };
 
-    document.addEventListener('pointerdown', (e) => {
-      if (e.pointerType === 'mouse' && e.button !== 0) return;
-      // Don't trigger from inside an overlay (locations / menu / units).
-      if (e.target.closest('.overlay-screen')) return;
-      // Don't trigger from interactive controls — they should still tap.
-      if (e.target.closest('button, input, a')) return;
-      // The quick-stats pager has its own swipe handler that pages between
-      // stat groups — don't also fire the city swipe from there.
-      if (e.target.closest('.stats-pager, .quick-stats-grid')) return;
-      // Regions that own their own horizontal gestures. The geometric
-      // "above the graph" check below isn't enough in the landscape
-      // two-column layout, where the hourly scroller and daily list sit
-      // in the right column — geometrically above the left column's
-      // graph — and a drag meant to scroll the timeline would change
-      // city instead.
-      if (e.target.closest('.hourly-scroll, .daily-list, .graph-container')) return;
+    this._bindHorizontalSwipe(document, {
+      shouldStart: (e) => {
+        // Don't trigger from inside an overlay (locations / menu / units).
+        if (e.target.closest('.overlay-screen')) return false;
+        // Don't trigger from interactive controls — they should still tap.
+        if (e.target.closest('button, input, a')) return false;
+        // The quick-stats pager has its own swipe handler that pages between
+        // stat groups — don't also fire the city swipe from there.
+        if (e.target.closest('.stats-pager, .quick-stats-grid')) return false;
+        // Regions that own their own horizontal gestures. The geometric
+        // "above the graph" check below isn't enough in the landscape
+        // two-column layout, where the hourly scroller and daily list sit
+        // in the right column — geometrically above the left column's
+        // graph — and a drag meant to scroll the timeline would change
+        // city instead.
+        if (e.target.closest('.hourly-scroll, .daily-list, .graph-container')) return false;
 
-      // Only above the temperature graph counts.
-      const graph = document.getElementById('graph-container');
-      if (graph) {
-        const r = graph.getBoundingClientRect();
-        if (e.clientY >= r.top) return;
-      }
-
-      startX = e.clientX;
-      startY = e.clientY;
-      pointerId = e.pointerId;
-      tracking = true;
-      peeking = false;
-      nudgeTargets = null;
-    });
-
-    document.addEventListener('pointermove', (e) => {
-      if (!tracking || e.pointerId !== pointerId) return;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      if (!peeking && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * SLOP) {
-        peeking = true;
-        nudgeTargets = liveTargets();
-      }
-      if (peeking) {
-        if (e.cancelable) e.preventDefault();
+        // Only above the temperature graph counts.
+        const graph = document.getElementById('graph-container');
+        if (graph) {
+          const r = graph.getBoundingClientRect();
+          if (e.clientY >= r.top) return false;
+        }
+        return true;
+      },
+      onStart: () => { nudgeTargets = liveTargets(); },
+      onNudge: (dx) => {
         const t = `translateX(${dx * 0.2}px)`;
         nudgeTargets.forEach(el => { el.style.transform = t; });
-      }
-    }, { passive: false });
-
-    const reset = () => {
-      if (nudgeTargets) {
-        nudgeTargets.forEach(el => {
-          el.style.transition = 'transform 0.2s ease';
-          el.style.transform = '';
-          setTimeout(() => { el.style.transition = ''; }, 220);
-        });
+      },
+      onRelease: () => {
+        if (nudgeTargets) nudgeTargets.forEach(el => this._releaseNudge(el));
         nudgeTargets = null;
-      }
-    };
-
-    document.addEventListener('pointerup', (e) => {
-      if (!tracking || e.pointerId !== pointerId) return;
-      tracking = false;
-      const wasPeeking = peeking;
-      reset();
-      if (!wasPeeking) return;
-      const dx = e.clientX - startX;
-      if (Math.abs(dx) < THRESHOLD) return;
-      onSwipe(dx < 0 ? 'next' : 'prev');
-    });
-
-    document.addEventListener('pointercancel', (e) => {
-      if (!tracking || e.pointerId !== pointerId) return;
-      tracking = false;
-      reset();
+      },
+      onSwipe
     });
   },
 
@@ -4402,63 +4202,22 @@ const UI = {
     const el = document.getElementById('graph-container');
     if (!el) return;
 
-    const THRESHOLD = 50;     // px of horizontal travel to count as a swipe
-    const SLOP      = 1.2;    // dx must beat dy by this factor to be horizontal
-    let startX = 0, startY = 0, pointerId = null, tracking = false, peeking = false;
-
-    el.addEventListener('pointerdown', (e) => {
-      if (e.pointerType === 'mouse' && e.button !== 0) return;
-      startX = e.clientX;
-      startY = e.clientY;
-      pointerId = e.pointerId;
-      tracking = true;
-      peeking = false;
-    });
-
-    el.addEventListener('pointermove', (e) => {
-      if (!tracking || e.pointerId !== pointerId) return;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      // Only take over the gesture once it's clearly horizontal.
-      if (!peeking && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * SLOP) {
-        peeking = true;
+    this._bindHorizontalSwipe(el, {
+      // Slight follow-the-finger nudge for tactile feedback.
+      onNudge: (dx) => { el.style.transform = `translateX(${dx * 0.25}px)`; },
+      onRelease: () => this._releaseNudge(el),
+      onSwipe: (dir) => {
+        // Wrap around the ends: last day + swipe-left → first; first + swipe-right → last.
+        const dayCount = maxIdx + 1;
+        const next = dir === 'next'
+          ? (currentIdx + 1) % dayCount
+          : (currentIdx - 1 + dayCount) % dayCount;
+        if (next === currentIdx) return;
+        const targetRow = this.weatherView.querySelector(`.daily-item[data-index="${next}"]`);
+        const finishHeroSlide = this.captureDayRowForHeroSlide(targetRow);
+        this.changeDayWithGraphCube(next, dir, onDayClick);
+        if (finishHeroSlide) finishHeroSlide();
       }
-      if (peeking) {
-        if (e.cancelable) e.preventDefault();
-        // Slight follow-the-finger nudge for tactile feedback.
-        el.style.transform = `translateX(${dx * 0.25}px)`;
-      }
-    }, { passive: false });
-
-    const finish = (e) => {
-      if (!tracking || e.pointerId !== pointerId) return;
-      tracking = false;
-      el.style.transition = 'transform 0.2s ease';
-      el.style.transform = '';
-      setTimeout(() => { el.style.transition = ''; }, 220);
-
-      if (!peeking) return;
-      const dx = e.clientX - startX;
-      if (Math.abs(dx) < THRESHOLD) return;
-
-      // Wrap around the ends: last day + swipe-left → first; first + swipe-right → last.
-      const dayCount = maxIdx + 1;
-      const next = dx < 0
-        ? (currentIdx + 1) % dayCount
-        : (currentIdx - 1 + dayCount) % dayCount;
-      if (next === currentIdx) return;
-      const dir = dx < 0 ? 'next' : 'prev';
-      const targetRow = this.weatherView.querySelector(`.daily-item[data-index="${next}"]`);
-      const finishHeroSlide = this.captureDayRowForHeroSlide(targetRow);
-      this.changeDayWithGraphCube(next, dir, onDayClick);
-      if (finishHeroSlide) finishHeroSlide();
-    };
-
-    el.addEventListener('pointerup', finish);
-    el.addEventListener('pointercancel', (e) => {
-      if (!tracking || e.pointerId !== pointerId) return;
-      tracking = false;
-      el.style.transform = '';
     });
   },
 
@@ -5294,10 +5053,7 @@ const UI = {
     if (this.importExportTextarea) {
       this.importExportTextarea.value = '';
     }
-    if (this.importExportFeedback) {
-      this.importExportFeedback.textContent = '';
-      this.importExportFeedback.className = 'byok-feedback';
-    }
+    this.setFeedback(this.importExportFeedback, '', null);
     this.updateImportButtonState();
   },
 
@@ -5343,10 +5099,7 @@ const UI = {
     const feedback = this.importExportFeedback;
     const textarea = this.importExportTextarea;
     if (!navigator.clipboard || !navigator.clipboard.readText) {
-      if (feedback) {
-        feedback.textContent = 'Clipboard API not supported. Please paste manually using Ctrl+V.';
-        feedback.className = 'byok-feedback is-error';
-      }
+      this.setFeedback(feedback, 'Clipboard API not supported. Please paste manually using Ctrl+V.', 'error');
       return;
     }
     try {
@@ -5355,16 +5108,10 @@ const UI = {
         textarea.value = text;
         this.updateImportButtonState();
       }
-      if (feedback) {
-        feedback.textContent = 'Clipboard pasted successfully.';
-        feedback.className = 'byok-feedback is-success';
-      }
+      this.setFeedback(feedback, 'Clipboard pasted successfully.', 'success');
     } catch (err) {
       console.error('Failed to read clipboard:', err);
-      if (feedback) {
-        feedback.textContent = 'Could not access clipboard. Please paste manually.';
-        feedback.className = 'byok-feedback is-error';
-      }
+      this.setFeedback(feedback, 'Could not access clipboard. Please paste manually.', 'error');
     }
   },
 
@@ -5374,25 +5121,16 @@ const UI = {
     if (!textarea || !textarea.value.trim()) return;
     
     if (!navigator.clipboard || !navigator.clipboard.writeText) {
-      if (feedback) {
-        feedback.textContent = 'Clipboard API not supported. Please select and copy manually.';
-        feedback.className = 'byok-feedback is-error';
-      }
+      this.setFeedback(feedback, 'Clipboard API not supported. Please select and copy manually.', 'error');
       return;
     }
     
     try {
       await navigator.clipboard.writeText(textarea.value);
-      if (feedback) {
-        feedback.textContent = 'Copied to clipboard successfully!';
-        feedback.className = 'byok-feedback is-success';
-      }
+      this.setFeedback(feedback, 'Copied to clipboard successfully!', 'success');
     } catch (err) {
       console.error('Failed to write clipboard:', err);
-      if (feedback) {
-        feedback.textContent = 'Could not copy to clipboard. Please select and copy manually.';
-        feedback.className = 'byok-feedback is-error';
-      }
+      this.setFeedback(feedback, 'Could not copy to clipboard. Please select and copy manually.', 'error');
     }
   },
 

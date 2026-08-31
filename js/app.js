@@ -1379,10 +1379,7 @@ const App = {
       UI.updateImportButtonState();
     }
     
-    if (UI.importExportFeedback) {
-      UI.importExportFeedback.textContent = 'Data exported successfully.';
-      UI.importExportFeedback.className = 'byok-feedback is-success';
-    }
+    UI.setFeedback(UI.importExportFeedback, 'Data exported successfully.', 'success');
   },
 
   async handleImportData() {
@@ -1394,10 +1391,7 @@ const App = {
     try {
       data = JSON.parse(text);
     } catch (e) {
-      if (UI.importExportFeedback) {
-        UI.importExportFeedback.textContent = 'Invalid JSON format.';
-        UI.importExportFeedback.className = 'byok-feedback is-error';
-      }
+      UI.setFeedback(UI.importExportFeedback, 'Invalid JSON format.', 'error');
       return;
     }
     
@@ -1442,13 +1436,10 @@ const App = {
     }
     
     // 4. Update UI feedback
-    if (UI.importExportFeedback) {
-      let msg = `Successfully imported ${addedCount} location(s).`;
-      if (apiImported) msg += ' Custom API key imported.';
-      if (locationChanged) msg += ' Current location updated.';
-      UI.importExportFeedback.textContent = msg;
-      UI.importExportFeedback.className = 'byok-feedback is-success';
-    }
+    let msg = `Successfully imported ${addedCount} location(s).`;
+    if (apiImported) msg += ' Custom API key imported.';
+    if (locationChanged) msg += ' Current location updated.';
+    UI.setFeedback(UI.importExportFeedback, msg, 'success');
     
     // 5. Refresh / Re-render dashboard
     if (locationChanged) {
