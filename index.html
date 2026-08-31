@@ -356,6 +356,7 @@
                 <p>Coastal locations automatically display high and low tide times on the quick-stats grid, along with the current <strong>water temperature</strong>. Heights are shown alongside the time wherever the range is large enough to be worth reading. Select a forecast day and the rows switch from "next" tide to that day's tides.</p>
                 <p>Near a U.S. coast, tide times come from the nearest <strong>NOAA tide station</strong> — the same harmonic predictions printed tide tables use. Elsewhere they fall back to a global ocean model, which is fine for "is the tide in or out" but can be over an hour off at a specific harbour.</p>
                 <p>At the coast the graph gains a third view: a <strong>tide curve</strong> showing sea level across the day. Tap the <strong>R / W / T</strong> letters in the graph's right edge — or double-tap the graph — to cycle precipitation → wind → tide. Inland locations keep the two-way R / W switch, and your choice of tide view is remembered for when you come back to the coast.</p>
+                <p>On days that reach the WHO <strong>Very High</strong> UV band a fourth letter, <strong>U</strong>, joins the switch: a UV-index curve with the Very High threshold marked, so you can see when the sun is actually worth avoiding. Like the tide view, it only appears where it applies and your choice is remembered.</p>
                 <p>If a full moon is happening within 12 hours of nightfall, it takes center stage on the stats grid with its traditional name and optimal viewing time.</p>
               </div>
             </div>
@@ -422,18 +423,19 @@
                 <svg class="accordion-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
               <div class="accordion-content">
-                <p>Right-click (on desktop) or press and hold (on touch screens) anywhere on the main weather dashboard to open a quick-access context menu. This lets you quickly jump to locations, units, data settings, or copy the sharing URL without opening the main menu.</p>
+                <p>Right-click (on desktop) or press and hold (on touch screens) anywhere on the main weather dashboard to open a quick-access context menu. This lets you quickly jump to locations, units, data settings, install the app, or copy the sharing URL without opening the main menu.</p>
               </div>
             </div>
 
             <div class="accordion-item">
               <button class="accordion-header" aria-expanded="false">
                 <svg class="accordion-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                <span>Severe weather alerts</span>
+                <span>Weather alerts &amp; forecast discussion</span>
                 <svg class="accordion-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
               <div class="accordion-content">
-                <p>When there are active U.S. National Weather Service warnings for your current location, an alert bar will appear at the bottom of the dashboard. Tap the bar to open the alerts overlay and view the full text and severity of each active advisory.</p>
+                <p>When there are active U.S. National Weather Service alerts for your current location, a bar appears at the bottom of the dashboard — <strong>red</strong> for Severe or Extreme warnings, <strong>amber</strong> for lesser watches, advisories and statements. Tap the bar to open the alerts overlay and view the full text and severity of each one.</p>
+                <p>U.S. locations also get a blue <strong>Forecast discussion</strong> bar: the local NWS office's own narrative of what is driving the forecast, updated a few times a day. Tap it to read the full discussion, split into its sections.</p>
               </div>
             </div>
 
@@ -468,7 +470,7 @@
             </li>
             <li>
               <a class="about-source-name" href="https://www.weather.gov" target="_blank" rel="noopener noreferrer">U.S. National Weather Service ↗</a>
-              <span class="about-source-desc">Severe weather alerts (Severe / Extreme), area forecast discussions, and CO-OPS station tide predictions for U.S. locations.</span>
+              <span class="about-source-desc">Weather alerts (all severities), area forecast discussions, and CO-OPS station tide predictions for U.S. locations.</span>
             </li>
             <li>
               <a class="about-source-name" href="https://www.geonames.org" target="_blank" rel="noopener noreferrer">GeoNames ↗</a>
