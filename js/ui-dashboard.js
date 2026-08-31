@@ -1277,6 +1277,38 @@ Object.assign(UI, {
     }).join('');
   },
 
+  // "Forecaster's Notes" — opens the NWS Area Forecast Discussion
+  // overlay. Rendered only when a discussion exists (US locations), and
+  // for every day and pinned hour, since the discussion covers the whole
+  // forecast period. It lives under the graph — the end of the overview
+  // block — rather than on the bottom edge: that strip is reserved for
+  // weather alerts, and a bar that was up ~100% of the time for any US
+  // city had stopped meaning "something needs your attention".
+  _notesButtonHTML(ctx) {
+    const d = ctx.state.discussion;
+    if (!d || !d.text) return '';
+    const office = d.office ? ` — NWS ${this.esc(d.office)} forecast discussion` : '';
+    return `
+        <button type="button" class="notes-btn" aria-label="Forecaster's Notes${office}">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          <span>Forecaster's Notes</span>
+          <svg class="notes-btn-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>`;
+  },
+
+  // One delegated listener, like the stats arrows: the button is rebuilt
+  // on every render, so a listener on the element itself would be
+  // orphaned immediately.
+  _bindNotesButton() {
+    if (this._notesBtnBound) return;
+    this._notesBtnBound = true;
+    this.weatherView.addEventListener('click', (e) => {
+      if (!e.target.closest('.notes-btn')) return;
+      this.renderDiscussionOverlay(this._currentDiscussion);
+      this.toggleScreen('discussion', true);
+    });
+  },
+
   // ── Wiring ──────────────────────────────────────────────────────────
 
   // Header star. Include cityName so name-match catches entries that
@@ -1508,6 +1540,7 @@ Object.assign(UI, {
 
       <section class="day-detail-section">
         <div class="graph-container" id="graph-container"></div>
+        ${this._notesButtonHTML(ctx)}
       </section>
       </div>
 
@@ -1596,6 +1629,8 @@ Object.assign(UI, {
     // (anything beyond the first 6) using a 3D cube transition. Loops.
     this._bindStatsSwipe();
     this._bindStatsArrows();
+    this._currentDiscussion = state.discussion || null;
+    this._bindNotesButton();
 
     this._lastIsToday = isToday;
     this._lastPinnedHour = selectedHourDt;

@@ -1215,7 +1215,6 @@ const App = {
       (dt, dayIdx) => this.handleHourClick(dt, dayIdx)
     );
     UI.renderAlertBar(this.state.alerts || []);
-    UI.renderDiscussionBar(this.state.discussion || null);
   },
 
   // First-launch seed for the saved-locations list.

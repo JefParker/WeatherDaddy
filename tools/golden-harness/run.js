@@ -101,14 +101,13 @@ function snapshot(window, UI, App) {
   const d = window.document;
   const fx = d.getElementById('weather-fx');
   const alertBar = d.getElementById('alert-bar');
-  const discBar = d.getElementById('discussion-bar');
   return {
     weatherView: d.getElementById('weather-view').innerHTML,
     saveBtn: d.getElementById('save-btn-container').innerHTML,
     locationName: d.getElementById('location-name').textContent,
     fx: { className: fx.className, style: fx.getAttribute('style') },
     alertBar: { hidden: alertBar.hidden, className: alertBar.className, text: d.getElementById('alert-bar-text').textContent },
-    discBar: { hidden: discBar.hidden, className: discBar.className, text: d.getElementById('discussion-bar-text').textContent },
+    notesBtn: (d.querySelector('.notes-btn') || {}).outerHTML || null,
     bodyClass: d.body.className,
     statsPages: UI._statsPages,
     statsPageIdx: UI._statsPageIdx,

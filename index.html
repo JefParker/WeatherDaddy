@@ -435,7 +435,7 @@
               </button>
               <div class="accordion-content">
                 <p>When there are active U.S. National Weather Service alerts for your current location, a bar appears at the bottom of the dashboard — <strong>red</strong> for Severe or Extreme warnings, <strong>amber</strong> for lesser watches, advisories and statements. Tap the bar to open the alerts overlay and view the full text and severity of each one.</p>
-                <p>U.S. locations also get a blue <strong>Forecast discussion</strong> bar: the local NWS office's own narrative of what is driving the forecast, updated a few times a day. Tap it to read the full discussion, split into its sections.</p>
+                <p>U.S. locations also get a <strong>Forecaster's Notes</strong> button under the day graph: the local NWS office's own narrative of what is driving the forecast, updated a few times a day. Tap it to read the full discussion, split into its sections. It sits with the forecast rather than on the bottom edge so that strip stays reserved for alerts.</p>
               </div>
             </div>
 
@@ -626,20 +626,6 @@
         <!-- JS injects one .alert-card per active alert -->
       </div>
     </div>
-
-    <!-- NWS forecast discussion bar — the alert bar's quieter cousin.
-         Shows whenever the local forecast office's Area Forecast
-         Discussion is available (US-only); stacks above the alert bar
-         when both are present. Tapping opens the overlay below. -->
-    <button class="discussion-bar" id="discussion-bar" type="button" hidden>
-      <span class="discussion-bar-icon" aria-hidden="true">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-        </svg>
-      </span>
-      <span class="discussion-bar-text" id="discussion-bar-text">Forecast discussion</span>
-      <span class="alert-bar-cta">Read<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-left:4px;vertical-align:-2px"><polyline points="9 18 15 12 9 6"/></svg></span>
-    </button>
 
     <!-- Forecast discussion overlay — the office's full AFD narrative,
          parsed into sections. -->

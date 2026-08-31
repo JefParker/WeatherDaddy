@@ -2670,44 +2670,38 @@ body.has-alert .a2hs-prompt {
 .stat-label.uv-band-veryhigh { background: #e53210; }
 .stat-label.uv-band-extreme  { background: #b567a4; }
 
-/* === NWS forecast discussion bar + overlay =========================== */
-/* Same skeleton as .alert-bar, neutral blue instead of warning red. */
-.discussion-bar {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
+/* === NWS forecast discussion: notes button + overlay ================= */
+/* "Forecaster's Notes" — a quiet ghost button under the day graph that
+   opens the Area Forecast Discussion overlay. Present only when a
+   discussion exists (US locations). Deliberately unobtrusive: it is a
+   footnote to the graph, not a call to action — it borrows the muted
+   secondary-text tone rather than an alert colour, and it stays put
+   for every day and pinned hour because the discussion covers the whole
+   forecast period. The bottom edge is reserved for weather alerts. */
+.notes-btn {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
-  background: #0d1a26;
-  border: none;
-  border-top: 3px solid #4a90d9;
-  color: #fff;
-  text-decoration: none;
-  font: 500 0.92rem/1.4 inherit;
-  text-align: left;
+  justify-content: center;
+  gap: 8px;
+  margin: 12px auto 0;
+  padding: 7px 14px 7px 12px;
+  min-height: 32px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  color: #a0a0a0;
+  font: 500 0.82rem/1 inherit;
+  letter-spacing: 0.2px;
   cursor: pointer;
-  z-index: 89; /* just under the alert bar */
-  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.5);
-  width: 100%;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
 }
-.discussion-bar[hidden] { display: none; }
-.discussion-bar:active { background: #132636; }
-.discussion-bar-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* An active weather alert owns the bottom edge (and the safe-area
-   inset); stack the discussion bar directly above it. */
-body.has-alert .discussion-bar {
-  bottom: calc(46px + env(safe-area-inset-bottom, 0px));
-  padding-bottom: 12px;
-}
+.notes-btn:hover { border-color: rgba(255, 255, 255, 0.24); color: #d4d4d4; }
+.notes-btn:active { background: rgba(255, 255, 255, 0.06); color: #eaeaea; }
+.notes-btn:focus-visible { outline: 2px solid #4db6ac; outline-offset: 2px; }
+.notes-btn svg { flex-shrink: 0; opacity: 0.85; }
+.notes-btn-chevron { margin-left: -3px; }
 
 .discussion-meta {
   color: var(--text-secondary);

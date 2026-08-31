@@ -50,13 +50,15 @@ const boxOf = async (page, sel) => {
     graphCycle: UI._graphCycle,
     fx: document.getElementById('weather-fx').className,
     alertHidden: document.getElementById('alert-bar').hidden,
-    discHidden: document.getElementById('discussion-bar').hidden,
+    notesBtn: !!document.querySelector('.notes-btn'),
     tz: App.state.tzName,
     build: App.BUILD,
     files: [...document.scripts].map(s => s.src.split('/').pop()).filter(Boolean)
   }));
   console.log('LOADED', JSON.stringify(summary, null, 1));
+  await page.evaluate(() => document.querySelector('.day-detail-section').scrollIntoView({ block: 'center' })); await sleep(400);
   await page.screenshot({ path: path.join(OUT, 'smoke-portrait.png') });
+  await page.evaluate(() => window.scrollTo(0, 0)); await sleep(300);
 
   // Daily row tap → cube → new day
   await page.click('.daily-item[data-index="3"]');
@@ -130,6 +132,16 @@ const boxOf = async (page, sel) => {
   const locs = await page.evaluate(() => ({ open: document.getElementById('locations-screen').classList.contains('open'), cards: document.querySelectorAll('.location-card').length }));
   await page.click('#locations-back-btn'); await sleep(1000);
   console.log('LOCATIONS', JSON.stringify({ ...locs, closed: await page.evaluate(() => !document.getElementById('locations-screen').classList.contains('open') && !document.querySelector('.cube-perspective')) }));
+
+  // Forecaster's Notes button → discussion overlay → back
+  const notes = await page.$('.notes-btn');
+  if (notes) {
+    await page.evaluate(() => document.querySelector('.notes-btn').scrollIntoView({ block: 'center' })); await sleep(300);
+    await notes.click(); await sleep(400);
+    const opened = await page.evaluate(() => ({ open: document.getElementById('discussion-screen').classList.contains('open'), sections: document.querySelectorAll('#discussion-body .discussion-section').length }));
+    await page.click('#discussion-back-btn'); await sleep(400);
+    console.log('NOTES', JSON.stringify({ ...opened, closed: await page.evaluate(() => !document.getElementById('discussion-screen').classList.contains('open')) }));
+  } else console.log('NOTES', 'no button (city has no discussion)');
 
   // About → build readout
   await page.click('#menu-btn'); await sleep(300);

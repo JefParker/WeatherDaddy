@@ -1,5 +1,5 @@
 // WeatherDaddy UI — shell: DOM handles, init, screens, BYOK panel,
-// context menu, alert / discussion bars, import-export, toast.
+// context menu, alert bar, discussion overlay, import-export, toast.
 //
 // The UI object is DEFINED here and EXTENDED by the ui-*.js files that
 // index.html loads after this one (Object.assign onto the same object):
@@ -115,10 +115,15 @@ const UI = {
       this.closeOverlayWithCube('import-export-screen');
     });
 
+    // Forecast-discussion overlay: opened by the Forecaster's Notes
+    // button under the graph (ui-dashboard.js), closed here.
+    const discussionBack = document.getElementById('discussion-back-btn');
+    if (discussionBack) discussionBack.addEventListener('click', () => this.toggleScreen('discussion', false));
+
     // Close any open overlay on Escape
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return;
-      ['alerts', 'about', 'units', 'locations', 'main-menu', 'import-export'].forEach(s => {
+      ['alerts', 'discussion', 'about', 'units', 'locations', 'main-menu', 'import-export'].forEach(s => {
         const el = document.getElementById(s + '-screen') || document.getElementById(s);
         if (el && el.classList.contains('open')) {
           if (['about', 'units', 'locations', 'import-export'].includes(s)) {
@@ -544,46 +549,6 @@ const UI = {
       bar.classList.add('alert-bar-slide-in');
       this._lastAnimatedAlertCity = currentCity;
       this._lastAnimatedAlertEvent = currentEvent;
-    }
-  },
-
-  // Quieter cousin of renderAlertBar: the NWS Area Forecast Discussion
-  // bar (US-only). Slides in along the bottom — above the alert bar when
-  // one is showing — and opens the full-narrative overlay on tap.
-  renderDiscussionBar(discussion) {
-    const bar = document.getElementById('discussion-bar');
-    if (!bar) return;
-
-    this._currentDiscussion = discussion || null;
-
-    if (!this._discussionBarBound) {
-      this._discussionBarBound = true;
-      bar.addEventListener('click', () => {
-        this.renderDiscussionOverlay(this._currentDiscussion);
-        this.toggleScreen('discussion', true);
-      });
-      const backBtn = document.getElementById('discussion-back-btn');
-      if (backBtn) backBtn.addEventListener('click', () => this.toggleScreen('discussion', false));
-    }
-
-    if (!discussion || !discussion.text) {
-      bar.hidden = true;
-      bar.classList.remove('alert-bar-slide-in');
-      this._lastDiscussionCity = '';
-      return;
-    }
-
-    const textEl = document.getElementById('discussion-bar-text');
-    if (textEl) textEl.textContent = `Forecast discussion · NWS ${discussion.office || ''}`.trim();
-
-    const currentCity = this._renderedCityName || '';
-    const shouldAnimate = bar.hidden || this._lastDiscussionCity !== currentCity;
-    bar.hidden = false;
-    if (shouldAnimate) {
-      bar.classList.remove('alert-bar-slide-in');
-      void bar.offsetWidth; // force layout reflow
-      bar.classList.add('alert-bar-slide-in');
-      this._lastDiscussionCity = currentCity;
     }
   },
 
