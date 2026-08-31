@@ -977,7 +977,7 @@ const UI = {
     for (let i = 0; i < times.length; i++) {
       const v = temps[i];
       if (v == null) continue;
-      const t = App._marineTimeToSec(times[i]);
+      const t = WeatherAPI.marineTimeToSec(times[i]);
       if (t == null || !isFinite(t)) continue;
       const delta = Math.abs(t - dt);
       if (delta < bestDelta) { bestDelta = delta; best = v; }
@@ -4292,7 +4292,7 @@ const UI = {
       const tLevels = tideSeries.sea_level_height_msl;
       for (let i = 0; i < tTimes.length; i++) {
         if (tLevels[i] == null) continue;
-        const t = App._marineTimeToSec(tTimes[i]);
+        const t = WeatherAPI.marineTimeToSec(tTimes[i]);
         if (t == null || !isFinite(t)) continue;
         tideByHour.set(Math.floor(t / 3600), tLevels[i]);
       }

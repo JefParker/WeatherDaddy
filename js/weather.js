@@ -24,6 +24,17 @@ const WeatherAPI = {
     return Storage.getCustomApiKey() ? 'custom' : 'default';
   },
 
+  // What a failed / skipped enrichment or air-quality call degrades to.
+  // Fresh objects each call (the arrays get consumed by callers), shared
+  // between the parsers' own error paths and App's .catch() fallbacks so
+  // the "empty" shape is defined exactly once.
+  emptyEnrichment() {
+    return { uv: { current: null, daily: [] }, hourly: [], daily: [], minutely: [], tzName: null };
+  },
+  emptyAirQuality() {
+    return { aqi: null, aqiPollutant: null, pollen: null, treePollen: null, grassPollen: null, weedPollen: null };
+  },
+
   // Centralized OpenWeatherMap fetcher. All four OWM endpoints (geocode,
   // reverse-geocode, current, forecast) go through here so BYOK / proxy
   // routing lives in exactly one place.
@@ -211,7 +222,7 @@ const WeatherAPI = {
       `&minutely_15=precipitation&forecast_minutely_15=96` +
       `&windspeed_unit=ms&timezone=auto&timeformat=unixtime&forecast_days=8&past_days=1`;
     const res = await fetch(url);
-    if (!res.ok) return { uv: { current: null, daily: [] }, hourly: [], daily: [], minutely: [] };
+    if (!res.ok) return this.emptyEnrichment();
     const data = await res.json();
 
     const h = data.hourly || {};
@@ -383,7 +394,7 @@ const WeatherAPI = {
       us_aqi_sulphur_dioxide:  'SO₂',
       us_aqi_carbon_monoxide:  'CO'
     };
-    const empty = { aqi: null, aqiPollutant: null, pollen: null, treePollen: null, grassPollen: null, weedPollen: null };
+    const empty = this.emptyAirQuality();
 
     const url = `https://air-quality-api.open-meteo.com/v1/air-quality` +
       `?latitude=${enc(lat)}&longitude=${enc(lon)}` +
@@ -466,6 +477,131 @@ const WeatherAPI = {
     } catch (_) {
       return null;
     }
+  },
+
+  // ── Tide series helpers ──────────────────────────────────────────────
+  // Shared by the Open-Meteo marine path (App.state.tides) and the graph /
+  // water-temp readers in the UI, which is why they live here rather
+  // than on App.
+
+  // Marine timestamps are now requested as `timeformat=unixtime`, but a
+  // localStorage cache written by an older build still holds the previous
+  // naive-UTC ISO strings ("2026-08-16T00:00", no Z). Accept both so an
+  // upgrade doesn't blank the tide rows until the next refresh lands.
+  marineTimeToSec(t) {
+    if (typeof t === 'number') return t;
+    if (typeof t !== 'string') return null;
+    const ms = Date.parse(t.endsWith('Z') || /[+-]\d\d:?\d\d$/.test(t) ? t : t + 'Z');
+    return isFinite(ms) ? ms / 1000 : null;
+  },
+
+  findTideExtrema(hourlyData) {
+    if (!hourlyData || !hourlyData.time || !hourlyData.sea_level_height_msl) {
+      return [];
+    }
+    const times = hourlyData.time;
+    const heights = hourlyData.sea_level_height_msl;
+
+    // Split the series into contiguous non-null RUNS keyed by hourly
+    // spacing. Marine data can have null holes (offshore points, edge
+    // of bathymetry coverage); previously we compacted nulls out and
+    // treated the resulting neighbors as time-adjacent, producing
+    // phantom extrema across gaps and quadratic interpolation across
+    // multi-hour holes. Now each run is scanned independently, and
+    // extrema at run boundaries are skipped (an extremum only counts
+    // when we can see values on BOTH sides in the SAME run).
+    const runs = [];
+    let currentRun = null;
+    let lastDt = null;
+    const HOUR_SEC = 3600;
+    for (let i = 0; i < times.length; i++) {
+      const h = heights[i];
+      if (h === null || h === undefined) {
+        currentRun = null; // gap → end the current run
+        continue;
+      }
+      const dt = this.marineTimeToSec(times[i]);
+      // Guard against future API format changes that would produce
+      // NaN (e.g. an offset-suffixed time colliding with our 'Z').
+      if (dt == null || !isFinite(dt)) { currentRun = null; continue; }
+      // Non-hourly gap (e.g. missed sample) also ends the run.
+      if (currentRun && lastDt != null && (dt - lastDt) > HOUR_SEC * 1.5) {
+        currentRun = null;
+      }
+      if (!currentRun) {
+        currentRun = [];
+        runs.push(currentRun);
+      }
+      currentRun.push({ dt, h });
+      lastDt = dt;
+    }
+
+    const extrema = [];
+    for (const tides of runs) {
+      const n = tides.length;
+      if (n < 3) continue;
+
+      // Group contiguous equal values to handle flat peaks/troughs
+      const blocks = [];
+      let i = 0;
+      while (i < n) {
+        const startIdx = i;
+        const val = tides[i].h;
+        while (i < n && tides[i].h === val) {
+          i++;
+        }
+        const endIdx = i - 1;
+        blocks.push({
+          val,
+          start: startIdx,
+          end: endIdx,
+          mid: Math.floor((startIdx + endIdx) / 2)
+        });
+      }
+
+      const numBlocks = blocks.length;
+      for (let j = 1; j < numBlocks - 1; j++) {
+        const prevVal = blocks[j-1].val;
+        const currVal = blocks[j].val;
+        const nextVal = blocks[j+1].val;
+
+        const isHigh = currVal > prevVal && currVal > nextVal;
+        const isLow = currVal < prevVal && currVal < nextVal;
+
+        if (isHigh || isLow) {
+          const midIdx = blocks[j].mid;
+          let dt = tides[midIdx].dt;
+          let height = currVal;
+
+          // Quadratic interpolation if single point block. Bounded to
+          // this run's array so we can't reach past a data gap.
+          if (blocks[j].start === blocks[j].end && midIdx > 0 && midIdx < n - 1) {
+            const prevH = tides[midIdx-1].h;
+            const nextH = tides[midIdx+1].h;
+            const a = (prevH + nextH - 2 * currVal) / 2.0;
+            const b = (nextH - prevH) / 2.0;
+            if (Math.abs(a) > 1e-9) {
+              const x_m = -b / (2.0 * a);
+              if (x_m >= -1.0 && x_m <= 1.0) {
+                dt = tides[midIdx].dt + x_m * 3600;
+                height = a * (x_m * x_m) + b * x_m + currVal;
+              }
+            }
+          }
+
+          extrema.push({
+            type: isHigh ? 'High' : 'Low',
+            dt,
+            h: height
+          });
+        }
+      }
+    }
+    // Sort across runs so downstream `.find(e => e.dt > currentDt)`
+    // returns the earliest upcoming extremum regardless of which run
+    // it came from.
+    extrema.sort((a, b) => a.dt - b.dt);
+    return extrema;
   },
 
   // ── NOAA CO-OPS tide predictions ─────────────────────────────────────

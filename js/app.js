@@ -452,30 +452,10 @@ const App = {
 
     const promise = (async () => {
       try {
-        const [currentWeather, forecast, enrichment, airQuality, alerts, tides, noaaTides] = await Promise.all([
-          WeatherAPI.getCurrentWeather(lat, lon),
-          WeatherAPI.getForecast(lat, lon),
-          WeatherAPI.getEnrichment(lat, lon).catch(() => ({ uv: { current: null, daily: [] }, hourly: [], daily: [] })),
-          WeatherAPI.getAirQuality(lat, lon).catch(() => ({ aqi: null, pollen: null, treePollen: null, grassPollen: null, weedPollen: null })),
-          WeatherAPI.getAlerts(lat, lon).catch(() => []),
-          WeatherAPI.getMarine(lat, lon).catch(() => null),
-          WeatherAPI.getNoaaTides(lat, lon).catch(() => null)
-        ]);
-        Storage.setWeatherCache(lat, lon, {
-          currentWeather,
-          forecast,
-          uv: enrichment.uv,
-          omHourly: enrichment.hourly,
-          omDaily: enrichment.daily,
-          omMinutely: enrichment.minutely || [],
-          tzName: enrichment.tzName || null,
-          airQuality,
-          alerts,
-          tides: tides ? tides.hourly : null,
-          tideCoords: tides ? { lat: tides.latitude, lon: tides.longitude } : null,
-          tidePredictions: noaaTides || null,
-          cityName: name || currentWeather.name
-        });
+        // No discussion on the prefetch path (three extra NWS round trips
+        // per neighbour); setWeatherCache merges, so one _refreshCity
+        // cached earlier survives this write.
+        Storage.setWeatherCache(lat, lon, await this._fetchCityPayload(lat, lon, name));
       } catch (_) {
         // Best-effort; pre-warming a city is not user-visible.
       } finally {
@@ -851,6 +831,96 @@ const App = {
     await this._refreshCity(lat, lon, name, token, renderedFromCache, preserve);
   },
 
+  // ── One city, one payload ─────────────────────────────────────────
+  // _fetchCityPayload builds it from the network, Storage.setWeatherCache
+  // stores it, _applyPayload copies it into state — the same object shape
+  // whether it came from a fresh fetch or from the cache. Before this the
+  // three sites each spelled the ~14 fields out by hand, and a field added
+  // to one but not another (discussion, on the prefetch path) silently
+  // went missing.
+
+  // Every upstream in parallel. OWM current + forecast are required;
+  // everything else is best-effort and degrades to its empty value so one
+  // flaky upstream can't fail the whole city.
+  //   withDiscussion — the NWS Area Forecast Discussion costs three extra
+  //     requests; the prefetch path skips it. When skipped the key is
+  //     ABSENT (not null) so a cache merge keeps an earlier value.
+  async _fetchCityPayload(lat, lon, name, { withDiscussion = false } = {}) {
+    const [currentWeather, forecast, enrichment, airQuality, alerts, tides, noaaTides, discussion] = await Promise.all([
+      WeatherAPI.getCurrentWeather(lat, lon),
+      WeatherAPI.getForecast(lat, lon),
+      WeatherAPI.getEnrichment(lat, lon).catch(() => WeatherAPI.emptyEnrichment()),
+      WeatherAPI.getAirQuality(lat, lon).catch(() => WeatherAPI.emptyAirQuality()),
+      WeatherAPI.getAlerts(lat, lon).catch(() => []),
+      // Both, deliberately: NOAA gives accurate tide TIMES for US
+      // coasts, Open-Meteo's marine call is the only source of
+      // sea-surface temperature and the global tide fallback.
+      WeatherAPI.getMarine(lat, lon).catch(() => null),
+      WeatherAPI.getNoaaTides(lat, lon).catch(() => null),
+      withDiscussion
+        ? WeatherAPI.getForecastDiscussion(lat, lon).catch(() => null)
+        : Promise.resolve(undefined)
+    ]);
+    const payload = {
+      currentWeather,
+      forecast,
+      uv: enrichment.uv,
+      omHourly: enrichment.hourly,
+      omDaily: enrichment.daily,
+      omMinutely: enrichment.minutely || [],
+      tzName: enrichment.tzName || null,
+      airQuality,
+      alerts,
+      tides: tides ? tides.hourly : null,
+      tideCoords: tides ? { lat: tides.latitude, lon: tides.longitude } : null,
+      tidePredictions: noaaTides || null,
+      cityName: name || currentWeather.name
+    };
+    if (withDiscussion) payload.discussion = discussion || null;
+    return payload;
+  },
+
+  // Copy a payload into state — everything except the selection, which
+  // each caller resolves under its own rules (see _applyCachedCity and
+  // _refreshCity). Tolerates cache entries from older builds.
+  _applyPayload(payload) {
+    const s = this.state;
+    s.currentWeather   = payload.currentWeather;
+    s.forecast         = payload.forecast;
+    s.uv               = payload.uv;
+    s.omHourly         = payload.omHourly || payload.hourlyPrecip || []; // hourlyPrecip: pre-rename cache entries
+    s.omDaily          = payload.omDaily || [];
+    s.omMinutely       = payload.omMinutely || [];
+    s.tzName           = payload.tzName || null;
+    s.airQuality       = payload.airQuality || WeatherAPI.emptyAirQuality();
+    s.alerts           = payload.alerts || [];
+    s.tides            = payload.tides || null;
+    s.tideCoords       = payload.tideCoords || null;
+    s.tidePredictions  = payload.tidePredictions || null;
+    // NOAA hands us exact turning points, so skip the extrema search
+    // entirely on that path — no hourly-sampling error, no quadratic
+    // refinement, no phantom extrema across coverage gaps.
+    s.tideExtrema      = s.tidePredictions
+      ? s.tidePredictions.extrema
+      : (s.tides ? WeatherAPI.findTideExtrema(s.tides) : []);
+    s.discussion       = payload.discussion || null;
+    s.cityName         = payload.cityName;
+    s.timezone         = payload.currentWeather.timezone;
+  },
+
+  // Does a payload still contain the slot a pinned hour points at? The pin
+  // may live on an OWM 3h slot OR an Open-Meteo-synthesised slot (days
+  // 6-8, the top-up at the end of OWM's window, the near-term 2h tiles),
+  // so both series count — checking forecast.list alone silently unpinned
+  // OM hours on every refresh.
+  _payloadHasHour(payload, dt) {
+    if (dt == null) return false;
+    return !!(
+      (payload.forecast && payload.forecast.list && payload.forecast.list.some(h => h.dt === dt)) ||
+      (payload.omHourly || payload.hourlyPrecip || []).some(h => h.dt === dt)
+    );
+  },
+
   // How old a cached payload can be and still be worth rendering. Past
   // this, "Right now" data is a lie and the hourly scroller is mostly
   // empty (past slots are filtered out), so we show the loader and wait
@@ -874,7 +944,7 @@ const App = {
   _applyCachedCity(lat, lon, name, preserveSelection = false) {
     const cached = Storage.getWeatherCache(lat, lon);
     // A partial entry (older build, interrupted write, hand-edited
-    // storage) must read as a MISS: the assignments below dereference
+    // storage) must read as a MISS: _applyPayload dereferences
     // currentWeather.timezone, and a throw here aborts a city swipe
     // mid-animation with nothing rendered.
     if (!cached || !cached.currentWeather || !cached.forecast) return false;
@@ -882,36 +952,19 @@ const App = {
 
     const cityName = name || cached.cityName;
 
-    // Captured BEFORE the state assignments below, for the same reason
-    // _refreshCity captures its oldDayKey early: getDayKey derives the
-    // day list from current state, so asking after the swap would just
-    // describe the incoming payload and tell us nothing. Indices -1 and 0
-    // both mean "today" and should follow a rollover, so only a real
-    // forward selection is worth re-anchoring.
+    // Captured BEFORE the state swap, for the same reason _refreshCity
+    // captures its oldDayKey early: getDayKey derives the day list from
+    // current state, so asking after the swap would just describe the
+    // incoming payload and tell us nothing. Indices -1 and 0 both mean
+    // "today" and should follow a rollover, so only a real forward
+    // selection is worth re-anchoring.
     const prevDayKey = (preserveSelection && this.state.selectedDayIndex > 0)
       ? this.getDayKey(this.state.selectedDayIndex)
       : null;
 
     Storage.saveLocation(lat, lon, cityName);
+    this._applyPayload({ ...cached, cityName });
 
-    this.state.currentWeather   = cached.currentWeather;
-    this.state.forecast         = cached.forecast;
-    this.state.uv               = cached.uv;
-    this.state.omHourly         = cached.omHourly || cached.hourlyPrecip || [];
-    this.state.omDaily          = cached.omDaily || [];
-    this.state.omMinutely       = cached.omMinutely || [];
-    this.state.tzName           = cached.tzName || null;
-    this.state.airQuality       = cached.airQuality || { aqi: null, pollen: null, treePollen: null, grassPollen: null, weedPollen: null };
-    this.state.alerts           = cached.alerts || [];
-    this.state.tides            = cached.tides || null;
-    this.state.tideCoords       = cached.tideCoords || null;
-    this.state.tidePredictions  = cached.tidePredictions || null;
-    this.state.tideExtrema      = this.state.tidePredictions
-      ? this.state.tidePredictions.extrema
-      : (this.state.tides ? this.findTideExtrema(this.state.tides) : []);
-    this.state.discussion       = cached.discussion || null;
-    this.state.cityName         = cityName;
-    this.state.timezone         = cached.currentWeather.timezone;
     // Resetting unconditionally here made _refreshCity's whole
     // selection-preservation path dead code: this function runs first on
     // every cache-then-network pass, so by the time _refreshCity read
@@ -936,18 +989,13 @@ const App = {
       const idx = this._buildDailyData().findIndex(d => d.key === prevDayKey);
       this.state.selectedDayIndex = idx !== -1 ? idx : -1;
     }
-    if (preserveSelection && this.state.selectedHourDt != null) {
-      // Revalidate the pin against the payload we're about to render.
-      // _refreshCity does this for the network response, but if that
-      // request then fails (offline) nothing else would ever clear a pin
-      // whose slot has rolled out of the forecast — leaving the hero
-      // silently unpinned while Copy URL still emitted the dead dt.
-      const dt = this.state.selectedHourDt;
-      const stillExists =
-        (cached.forecast && cached.forecast.list &&
-          cached.forecast.list.some(h => h.dt === dt)) ||
-        (this.state.omHourly || []).some(h => h.dt === dt);
-      if (!stillExists) this.state.selectedHourDt = null;
+    // Revalidate the pin against the payload we're about to render.
+    // _refreshCity does this for the network response, but if that
+    // request then fails (offline) nothing else would ever clear a pin
+    // whose slot has rolled out of the forecast — leaving the hero
+    // silently unpinned while Copy URL still emitted the dead dt.
+    if (preserveSelection && !this._payloadHasHour(cached, this.state.selectedHourDt)) {
+      this.state.selectedHourDt = null;
     }
 
     if (this._sharedStateToRestore) {
@@ -974,19 +1022,7 @@ const App = {
     }
 
     try {
-      const [currentWeather, forecast, enrichment, airQuality, alerts, tides, noaaTides, discussion] = await Promise.all([
-        WeatherAPI.getCurrentWeather(lat, lon),
-        WeatherAPI.getForecast(lat, lon),
-        WeatherAPI.getEnrichment(lat, lon).catch(() => ({ uv: { current: null, daily: [] }, hourly: [], daily: [] })),
-        WeatherAPI.getAirQuality(lat, lon).catch(() => ({ aqi: null, pollen: null, treePollen: null, grassPollen: null, weedPollen: null })),
-        WeatherAPI.getAlerts(lat, lon).catch(() => []),
-        WeatherAPI.getMarine(lat, lon).catch(() => null),
-        // Both, deliberately: NOAA gives accurate tide TIMES for US
-        // coasts, Open-Meteo's marine call is the only source of
-        // sea-surface temperature and the global tide fallback.
-        WeatherAPI.getNoaaTides(lat, lon).catch(() => null),
-        WeatherAPI.getForecastDiscussion(lat, lon).catch(() => null)
-      ]);
+      const payload = await this._fetchCityPayload(lat, lon, name, { withDiscussion: true });
 
       // Superseded by a newer fetch (the user navigated mid-flight).
       // Drop any pending share-link restore on the way out: it targets
@@ -999,25 +1035,8 @@ const App = {
         return;
       }
 
-      const cityName = name || currentWeather.name;
-
-      Storage.setWeatherCache(lat, lon, {
-        currentWeather,
-        forecast,
-        uv: enrichment.uv,
-        omHourly: enrichment.hourly,
-        omDaily: enrichment.daily,
-        omMinutely: enrichment.minutely || [],
-        tzName: enrichment.tzName || null,
-        airQuality,
-        alerts,
-        tides: tides ? tides.hourly : null,
-        tideCoords: tides ? { lat: tides.latitude, lon: tides.longitude } : null,
-        tidePredictions: noaaTides || null,
-        discussion: discussion || null,
-        cityName
-      });
-      Storage.saveLocation(lat, lon, cityName);
+      Storage.setWeatherCache(lat, lon, payload);
+      Storage.saveLocation(lat, lon, payload.cityName);
 
       // Keep the user's place when we rendered from cache (the selection
       // is still on screen) OR when the caller explicitly asked to — the
@@ -1046,44 +1065,16 @@ const App = {
       // would emit a dt no receiver can resolve. So we keep the pin
       // only if the incoming forecast still contains it.
       const oldHourDt = keepPlace ? this.state.selectedHourDt : null;
-      // The pin may live on an OWM 3h slot OR an Open-Meteo-synthesised
-      // slot (days 6-8 and the top-up at the end of OWM's 5-day window),
-      // so check both incoming series — checking forecast.list alone
-      // silently unpinned OM hours on every refresh.
-      const hourStillExists = oldHourDt != null && (
-        (forecast && forecast.list && forecast.list.some(h => h.dt === oldHourDt)) ||
-        (enrichment.hourly || []).some(h => h.dt === oldHourDt)
-      );
-      const keepHour = hourStillExists ? oldHourDt : null;
+      const keepHour = this._payloadHasHour(payload, oldHourDt) ? oldHourDt : null;
 
-      this.state.currentWeather   = currentWeather;
-      this.state.forecast         = forecast;
-      this.state.uv               = enrichment.uv;
-      this.state.omHourly         = enrichment.hourly;
-      this.state.omDaily          = enrichment.daily;
-      this.state.omMinutely       = enrichment.minutely || [];
-      this.state.tzName           = enrichment.tzName || null;
-      this.state.airQuality       = airQuality;
-      this.state.alerts           = alerts;
-      this.state.tides            = tides ? tides.hourly : null;
-      this.state.tideCoords       = tides ? { lat: tides.latitude, lon: tides.longitude } : null;
-      this.state.tidePredictions  = noaaTides || null;
-      // NOAA hands us exact turning points, so skip the extrema search
-      // entirely on that path — no hourly-sampling error, no quadratic
-      // refinement, no phantom extrema across coverage gaps.
-      this.state.tideExtrema      = noaaTides
-        ? noaaTides.extrema
-        : (this.state.tides ? this.findTideExtrema(this.state.tides) : []);
-      this.state.discussion       = discussion || null;
-      this.state.cityName         = cityName;
-      this.state.timezone         = currentWeather.timezone;
+      this._applyPayload(payload);
       this.state.selectedDayIndex = keepDay;
       this.state.selectedHourDt   = keepHour;
 
       // Re-anchor the selection against the REBUILT day list. Must run
-      // after the state assignments above, because _buildDailyData reads
-      // from state — asking before the swap would just re-derive the old
-      // list and tell us nothing.
+      // after _applyPayload, because _buildDailyData reads from state —
+      // asking before the swap would just re-derive the old list and
+      // tell us nothing.
       if (oldDayKey != null || keepHour != null) {
         const dailyData = this._buildDailyData();
 
@@ -1540,126 +1531,6 @@ const App = {
 
     this.state.selectedDayIndex = resolvedDayIdx;
     this.state.selectedHourDt = resolvedHourDt;
-  },
-
-  // Marine timestamps are now requested as `timeformat=unixtime`, but a
-  // localStorage cache written by an older build still holds the previous
-  // naive-UTC ISO strings ("2026-08-16T00:00", no Z). Accept both so an
-  // upgrade doesn't blank the tide rows until the next refresh lands.
-  _marineTimeToSec(t) {
-    if (typeof t === 'number') return t;
-    if (typeof t !== 'string') return null;
-    const ms = Date.parse(t.endsWith('Z') || /[+-]\d\d:?\d\d$/.test(t) ? t : t + 'Z');
-    return isFinite(ms) ? ms / 1000 : null;
-  },
-
-  findTideExtrema(hourlyData) {
-    if (!hourlyData || !hourlyData.time || !hourlyData.sea_level_height_msl) {
-      return [];
-    }
-    const times = hourlyData.time;
-    const heights = hourlyData.sea_level_height_msl;
-
-    // Split the series into contiguous non-null RUNS keyed by hourly
-    // spacing. Marine data can have null holes (offshore points, edge
-    // of bathymetry coverage); previously we compacted nulls out and
-    // treated the resulting neighbors as time-adjacent, producing
-    // phantom extrema across gaps and quadratic interpolation across
-    // multi-hour holes. Now each run is scanned independently, and
-    // extrema at run boundaries are skipped (an extremum only counts
-    // when we can see values on BOTH sides in the SAME run).
-    const runs = [];
-    let currentRun = null;
-    let lastDt = null;
-    const HOUR_SEC = 3600;
-    for (let i = 0; i < times.length; i++) {
-      const h = heights[i];
-      if (h === null || h === undefined) {
-        currentRun = null; // gap → end the current run
-        continue;
-      }
-      const dt = this._marineTimeToSec(times[i]);
-      // Guard against future API format changes that would produce
-      // NaN (e.g. an offset-suffixed time colliding with our 'Z').
-      if (dt == null || !isFinite(dt)) { currentRun = null; continue; }
-      // Non-hourly gap (e.g. missed sample) also ends the run.
-      if (currentRun && lastDt != null && (dt - lastDt) > HOUR_SEC * 1.5) {
-        currentRun = null;
-      }
-      if (!currentRun) {
-        currentRun = [];
-        runs.push(currentRun);
-      }
-      currentRun.push({ dt, h });
-      lastDt = dt;
-    }
-
-    const extrema = [];
-    for (const tides of runs) {
-      const n = tides.length;
-      if (n < 3) continue;
-
-      // Group contiguous equal values to handle flat peaks/troughs
-      const blocks = [];
-      let i = 0;
-      while (i < n) {
-        const startIdx = i;
-        const val = tides[i].h;
-        while (i < n && tides[i].h === val) {
-          i++;
-        }
-        const endIdx = i - 1;
-        blocks.push({
-          val,
-          start: startIdx,
-          end: endIdx,
-          mid: Math.floor((startIdx + endIdx) / 2)
-        });
-      }
-
-      const numBlocks = blocks.length;
-      for (let j = 1; j < numBlocks - 1; j++) {
-        const prevVal = blocks[j-1].val;
-        const currVal = blocks[j].val;
-        const nextVal = blocks[j+1].val;
-
-        const isHigh = currVal > prevVal && currVal > nextVal;
-        const isLow = currVal < prevVal && currVal < nextVal;
-
-        if (isHigh || isLow) {
-          const midIdx = blocks[j].mid;
-          let dt = tides[midIdx].dt;
-          let height = currVal;
-
-          // Quadratic interpolation if single point block. Bounded to
-          // this run's array so we can't reach past a data gap.
-          if (blocks[j].start === blocks[j].end && midIdx > 0 && midIdx < n - 1) {
-            const prevH = tides[midIdx-1].h;
-            const nextH = tides[midIdx+1].h;
-            const a = (prevH + nextH - 2 * currVal) / 2.0;
-            const b = (nextH - prevH) / 2.0;
-            if (Math.abs(a) > 1e-9) {
-              const x_m = -b / (2.0 * a);
-              if (x_m >= -1.0 && x_m <= 1.0) {
-                dt = tides[midIdx].dt + x_m * 3600;
-                height = a * (x_m * x_m) + b * x_m + currVal;
-              }
-            }
-          }
-
-          extrema.push({
-            type: isHigh ? 'High' : 'Low',
-            dt,
-            h: height
-          });
-        }
-      }
-    }
-    // Sort across runs so downstream `.find(e => e.dt > currentDt)`
-    // returns the earliest upcoming extremum regardless of which run
-    // it came from.
-    extrema.sort((a, b) => a.dt - b.dt);
-    return extrema;
   },
 
   // Build stamp for the JAVASCRIPT bundle, deliberately separate from the
