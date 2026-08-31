@@ -1540,7 +1540,7 @@ const App = {
   // confidently described code that wasn't running. Bump this with the
   // chip in index.html on every release — a mismatch on screen IS the
   // diagnosis.
-  BUILD: '1.5.0',
+  BUILD: '1.6.0',
 
   // Writes "JS <build> · cache <bucket>" under the About version chip.
   // Note what happens when js/app.js is STALE: old code has no
