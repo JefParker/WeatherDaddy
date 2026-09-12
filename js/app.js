@@ -36,7 +36,10 @@ const App = {
     // Sweep abandoned versioned localStorage keys (cities_cache_v3 from
     // older releases, etc.) before anything else touches storage.
     Storage.cleanupStaleKeys();
-    UI.init((setting, value) => this.handleUnitChange(setting, value));
+    UI.init(
+      (setting, value) => this.handleUnitChange(setting, value),
+      (family) => this.handleUnitFamilyChange(family)
+    );
     this.initAutocomplete();
     this._bindByokChangeListener();
 
@@ -646,6 +649,30 @@ const App = {
     const units = Storage.getUnits();
     units[setting] = value;
     Storage.saveUnits(units);
+    this.renderAll();
+  },
+
+  // Double-tap on the hero temperature. Switches the whole measurement
+  // family at once — imperial (°F / mph / inHg / in / mi) or metric
+  // (°C / km/h / hPa / mm / km) — rather than just the temperature, so
+  // the quick stats change with the hero instead of staying in the old
+  // units. Only settings currently in the OTHER family are touched: a
+  // metric user who prefers m/s or mmHg keeps that choice across a
+  // round trip. Time format is a preference, not a measurement unit,
+  // so it is left alone.
+  handleUnitFamilyChange(family) {
+    const FAMILIES = {
+      imperial: { temp: ['F'],  wind: ['mph'],       pressure: ['inhg'],         precip: ['in'], dist: ['mi'] },
+      metric:   { temp: ['C'],  wind: ['kmh', 'ms'], pressure: ['hpa', 'mmhg'],  precip: ['mm'], dist: ['km'] }
+    };
+    const target = FAMILIES[family];
+    if (!target) return;
+    const units = Storage.getUnits();
+    for (const [setting, allowed] of Object.entries(target)) {
+      if (!allowed.includes(units[setting])) units[setting] = allowed[0];
+    }
+    Storage.saveUnits(units);
+    UI.updateUnitControls();
     this.renderAll();
   },
 

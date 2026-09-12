@@ -70,10 +70,12 @@ const UI = {
     }, 30000);
   },
 
-  init(onUnitChange) {
+  init(onUnitChange, onUnitFamilyChange) {
     // Stash for handlers that need to fire a unit change from outside
-    // the Units screen (e.g. double-tap on the hero temp toggles °F/°C).
+    // the Units screen (double-tap on the hero temp toggles the whole
+    // imperial/metric family).
     this._onUnitChange = onUnitChange;
+    this._onUnitFamilyChange = onUnitFamilyChange;
     this.menuBtn.addEventListener('click', () => this.toggleScreen('main-menu', true));
 
     this.mainMenuBackBtn.addEventListener('click', () => this.toggleScreen('main-menu', false));

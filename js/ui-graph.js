@@ -7,7 +7,9 @@
 // file, list it in index.html AND in sw.js ASSETS_TO_CACHE.
 
 // WHO UV Index band boundaries, shared by the graph's UV mode. The same
-// numbers uvLabel() names: 8+ is "Very High", 11+ is "Extreme".
+// numbers uvLabel() names: 3+ is "Moderate", 8+ is "Very High", 11+ is
+// "Extreme".
+const UV_MODERATE = 3;
 const UV_VERY_HIGH = 8;
 const UV_EXTREME = 11;
 
@@ -232,14 +234,17 @@ Object.assign(UI, {
     const tideBase = tideMin - (tideMax - tideMin) * 0.075;
 
     // UV is a health signal rather than a shape, so it only earns a slot
-    // in the switch on days that actually reach the WHO "Very High" band
-    // — the same threshold that puts the red pill on the UV stat. On a
-    // mild day the mode simply isn't offered, which is the point: its
-    // presence in the gutter is itself the warning.
+    // in the switch on days with notable UV — a peak in the WHO
+    // "Moderate" band or above, the same bar that makes the UV stat
+    // worth a page-1 slot. This used to demand Very High (8+), which
+    // hid the mode on an ordinary sunny summer day peaking at 7. The
+    // peak is judged over the whole plotted window, so before sunrise
+    // the mode is already offered when the afternoon will call for it.
+    // On a day that never leaves Low the mode simply isn't offered.
     const uvSamples = hourly.map(h => h.uvIndex).filter(v => v != null);
     const hasUvData = uvSamples.length > 0;
     const peakUv = hasUvData ? Math.max(...uvSamples) : 0;
-    const uvAvailable = Math.round(peakUv) >= UV_VERY_HIGH;
+    const uvAvailable = Math.round(peakUv) >= UV_MODERATE;
     // Zero-anchored and pinned to the Extreme boundary rather than to the
     // day's own peak: unlike rain or wind — where only the shape of that
     // day matters — a UV curve's HEIGHT should mean the same thing in
@@ -419,7 +424,7 @@ Object.assign(UI, {
           const isUv = mode === 'uv';
 
           // `cycle` is built above: T only where there's marine data, U
-          // only on a Very High UV day, so an inland city on a mild day
+          // only on a day with notable UV, so an inland city on a dull day
           // keeps the original two-state R/W switch.
           const nextMode = cycle[(cycle.indexOf(mode) + 1) % cycle.length];
           const nameOf = (m) => m === 'wind'

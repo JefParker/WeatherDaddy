@@ -376,17 +376,27 @@ Object.assign(UI, {
   // A missing dt (stale pin after refresh, city change, etc.) silently
   // falls back to the day view.
   _pinnedHourSlotFor(ctx) {
-    const { selectedHourDt, dailyData, state } = ctx;
+    const { selectedHourDt, dailyData, state, nearTermByKey } = ctx;
     if (selectedHourDt == null) return null;
+    // Near-term 2h tiles are rendered from Open-Meteo, so a pin inside
+    // that window must resolve from Open-Meteo too. The 2h grid (even
+    // UTC hours) and OWM's 3h spine coincide every 6h — 06:00 UTC is
+    // 11 PM in Los Angeles — and searching the spine first there made
+    // the hero show OWM's number while the tapped tile showed
+    // Open-Meteo's. Checking the tile set first keeps the hero matched
+    // to whatever the tile displayed.
+    for (const near of (nearTermByKey ? nearTermByKey.values() : [])) {
+      const found = near.find(h => h.dt === selectedHourDt);
+      if (found) return found;
+    }
     for (const d of dailyData) {
       if (!d || !d.hourly) continue;
       const found = d.hourly.find(h => h.dt === selectedHourDt);
       if (found) return found;
     }
-    // Not on the 3h spine? The pin is one of the near-term 2h tiles —
-    // display-layer slots that never live in day.hourly. Resolve it
-    // straight from the Open-Meteo hourly series (which also keeps an
-    // older 2h pin alive after it drifts out of the 24h tile window).
+    // Not on the 3h spine either? Resolve straight from the Open-Meteo
+    // hourly series (keeps an older 2h pin alive after it drifts out of
+    // the 24h tile window).
     const om = (state.omHourly || []).find(h => h.dt === selectedHourDt);
     return om ? this._omHourToOwmSlot(om) : null;
   },
@@ -1335,11 +1345,11 @@ Object.assign(UI, {
   _bindDashboard(ctx, onDayClick, onHourClick) {
     const { currentDayIdx, selectedHourDt, isToday, nowDayIdx } = ctx;
 
-    // Double-click / double-tap the big hero temperature to flip the
-    // temperature unit (°F ↔ °C). Mirrors the segmented control on the
-    // Units screen — same handleUnitChange path — so every temp in the
-    // app (hero, hourly tiles, daily hi/lo, dew point, graph badges)
-    // updates in one shot. Touch double-tap also reaches us via the
+    // Double-click / double-tap the big hero temperature to flip between
+    // imperial and metric. This used to toggle only °F ↔ °C, which left
+    // the quick stats (wind, pressure, precip, visibility) in their old
+    // units — it now goes through handleUnitFamilyChange so the whole
+    // dashboard switches together. Touch double-tap also reaches us via the
     // standard dblclick event because the element has
     // `touch-action: manipulation` in CSS, which suppresses the browser's
     // default double-tap-to-zoom and lets dblclick fire reliably.
@@ -1350,21 +1360,15 @@ Object.assign(UI, {
     // each would toggle F↔C twice on a rapid double-tap and net out
     // to no change.
     const heroSection = this.weatherView.querySelector('.hero-section');
-    if (heroSection && this._onUnitChange) {
+    if (heroSection && this._onUnitFamilyChange) {
       heroSection.addEventListener('dblclick', (e) => {
         if (!e.target.closest('.hero-temp-large')) return;
         e.preventDefault();
+        // The temperature unit names the family the user is currently
+        // in; flip to the other one. The Units screen's segmented
+        // controls are re-synced inside the handler.
         const current = Storage.getUnits().temp;
-        const next = current === 'F' ? 'C' : 'F';
-        // Keep the Units screen's segmented control visually in sync so
-        // when the user opens that screen it reflects the new choice.
-        const seg = document.querySelector('.segmented-control[data-setting="temp"]');
-        if (seg) {
-          seg.querySelectorAll('button').forEach(b => {
-            b.classList.toggle('active', b.getAttribute('data-value') === next);
-          });
-        }
-        this._onUnitChange('temp', next);
+        this._onUnitFamilyChange(current === 'F' ? 'metric' : 'imperial');
       });
     }
 
