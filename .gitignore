@@ -19,3 +19,6 @@ SPEC_wind_graph.md
 
 # Golden-master harness: dev-only, installed per checkout
 tools/golden-harness/node_modules/
+
+# Smoke-test screenshots written by tools/golden-harness/smoke.js
+tools/smoke-*.png
