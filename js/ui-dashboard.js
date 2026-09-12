@@ -1306,13 +1306,54 @@ Object.assign(UI, {
         </button>`;
   },
 
-  // One delegated listener, like the stats arrows: the button is rebuilt
-  // on every render, so a listener on the element itself would be
-  // orphaned immediately.
+  // "Radar" — opens the animated precipitation map (ui-radar.js) centred
+  // on the city being shown. Rendered for every city that has
+  // coordinates; CSS hides it while the browser reports offline, and the
+  // overlay itself handles the case where that flag is wrong.
+  _radarButtonHTML(ctx) {
+    const c = this._radarCoordsFor(ctx);
+    if (!c) return '';
+    return `
+        <button type="button" class="radar-btn" data-lat="${c.lat}" data-lon="${c.lon}" aria-label="Radar map">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49"/><path d="M7.76 16.24a6 6 0 0 1 0-8.49"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 19.07a10 10 0 0 1 0-14.14"/></svg>
+          <span>Radar</span>
+          <svg class="notes-btn-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>`;
+  },
+
+  // The coordinates the dashboard was fetched for (App.state.coords),
+  // falling back to the OWM-snapped city centre for a payload that
+  // predates that field.
+  _radarCoordsFor(ctx) {
+    const s = ctx.state || {};
+    const c = s.coords || (ctx.currentWeather && ctx.currentWeather.coord) || null;
+    if (!c) return null;
+    const lat = Number(c.lat), lon = Number(c.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    return { lat, lon };
+  },
+
+  // The row of pill buttons under the graph: Forecaster's Notes (US
+  // only) and Radar. Empty when neither applies so it takes no space.
+  _graphActionsHTML(ctx) {
+    const notes = this._notesButtonHTML(ctx);
+    const radar = this._radarButtonHTML(ctx);
+    if (!notes && !radar) return '';
+    return `<div class="graph-actions">${notes}${radar}</div>`;
+  },
+
+  // One delegated listener, like the stats arrows: the buttons are
+  // rebuilt on every render, so a listener on the element itself would
+  // be orphaned immediately.
   _bindNotesButton() {
     if (this._notesBtnBound) return;
     this._notesBtnBound = true;
     this.weatherView.addEventListener('click', (e) => {
+      const radar = e.target.closest('.radar-btn');
+      if (radar) {
+        this.openRadar(radar.dataset.lat, radar.dataset.lon);
+        return;
+      }
       if (!e.target.closest('.notes-btn')) return;
       this.renderDiscussionOverlay(this._currentDiscussion);
       this.toggleScreen('discussion', true);
@@ -1544,7 +1585,7 @@ Object.assign(UI, {
 
       <section class="day-detail-section">
         <div class="graph-container" id="graph-container"></div>
-        ${this._notesButtonHTML(ctx)}
+        ${this._graphActionsHTML(ctx)}
       </section>
       </div>
 

@@ -122,10 +122,14 @@ const UI = {
     const discussionBack = document.getElementById('discussion-back-btn');
     if (discussionBack) discussionBack.addEventListener('click', () => this.toggleScreen('discussion', false));
 
+    // Radar overlay: opened by the Radar button under the graph
+    // (ui-dashboard.js → ui-radar.js); its own controls are wired there.
+    if (typeof this._bindRadarControls === 'function') this._bindRadarControls();
+
     // Close any open overlay on Escape
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return;
-      ['alerts', 'discussion', 'about', 'units', 'locations', 'main-menu', 'import-export'].forEach(s => {
+      ['alerts', 'discussion', 'radar', 'about', 'units', 'locations', 'main-menu', 'import-export'].forEach(s => {
         const el = document.getElementById(s + '-screen') || document.getElementById(s);
         if (el && el.classList.contains('open')) {
           if (['about', 'units', 'locations', 'import-export'].includes(s)) {
@@ -433,12 +437,19 @@ const UI = {
       'units':     this.unitsScreen,
       'alerts':    document.getElementById('alerts-screen'),
       'discussion': document.getElementById('discussion-screen'),
+      'radar':     document.getElementById('radar-screen'),
       'about':     document.getElementById('about-screen'),
       'import-export': this.importExportScreen
     };
     const el = map[screen];
     if (!el) return;
     el.classList.toggle('open', !!show);
+
+    // Closing the radar is the one place its map is destroyed, so every
+    // close path (back button, Escape, programmatic) goes through here.
+    if (screen === 'radar' && !show && typeof this._teardownRadar === 'function') {
+      this._teardownRadar();
+    }
 
     if (screen === 'import-export' && show) {
       this.onShowImportExportScreen();

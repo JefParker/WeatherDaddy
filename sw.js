@@ -18,7 +18,7 @@
 // (index.html used to also carry ?v= query strings, but cacheKey()
 // strips the query before caching, so they never did anything and were
 // removed.)
-const CACHE_NAME = 'weatherdaddy-v213';
+const CACHE_NAME = 'weatherdaddy-v214';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -31,6 +31,12 @@ const ASSETS_TO_CACHE = [
   './js/ui-graph.js',
   './js/ui-dashboard.js',
   './js/ui-locations.js',
+  './js/ui-radar.js',
+  // MapLibre is injected by ui-radar.js on the first Radar tap, not
+  // loaded with the page — precached so later opens don't need to fetch
+  // ~1 MB of library over a phone connection.
+  './js/vendor/maplibre-gl.js',
+  './css/maplibre-gl.css',
   './js/storage.js',
   './js/tide-stations.js',
   './js/location.js',
@@ -227,9 +233,26 @@ const isWeatherURL = (urlOrRequest) => {
   } catch (_) { return false; }
 };
 
+// Radar map traffic: basemap tiles, style, fonts and sprites from
+// OpenFreeMap, and radar frames from IEM / RainViewer. Straight to the
+// network, never cached here — radar frames rotate every few minutes
+// and would go stale in the static bucket, and the basemap tiles carry
+// their own HTTP cache headers the browser honours on its own.
+const RADAR_HOSTS = new Set([
+  'tiles.openfreemap.org',
+  'mesonet.agron.iastate.edu',
+  'tilecache.rainviewer.com',
+  'api.rainviewer.com'
+]);
+const isRadarURL = (request) => {
+  try { return RADAR_HOSTS.has(new URL(request.url).hostname); }
+  catch (_) { return false; }
+};
+
 async function handleFetch(event) {
   const request = event.request;
   try {
+    if (isRadarURL(request)) return await fetch(request);
     if (isWeatherURL(request)) return await handleWeatherAPI(request, event);
     return await handleStaticAsset(request);
   } catch (e) {

@@ -29,13 +29,25 @@ const App = {
     // hero displays that exact 3-hour slot's data instead of the day's
     // headline. null = no hour pinned (hero shows current weather for today
     // or notable-slot for forecast days, as before).
-    selectedHourDt: null
+    selectedHourDt: null,
+    // The coordinates the current payload was fetched for — what the
+    // Radar map centres on. Set on the way into both render paths
+    // (cache hit and network refresh) so it is never a stale city.
+    coords: null
   },
 
   async init() {
     // Sweep abandoned versioned localStorage keys (cities_cache_v3 from
     // older releases, etc.) before anything else touches storage.
     Storage.cleanupStaleKeys();
+    // Radar needs the network and can't be cached, so its button is
+    // hidden (CSS, .is-offline) while the browser says we're offline.
+    // The flag is only trustworthy in that direction; the overlay copes
+    // with "online" being wrong.
+    const syncOnline = () => document.body.classList.toggle('is-offline', navigator.onLine === false);
+    syncOnline();
+    window.addEventListener('online', syncOnline);
+    window.addEventListener('offline', syncOnline);
     UI.init(
       (setting, value) => this.handleUnitChange(setting, value),
       (family) => this.handleUnitFamilyChange(family)
@@ -969,6 +981,7 @@ const App = {
   // centroid (see the note in UI.buildDailyData), so a coordinate
   // comparison would silently fail for exactly those cities.
   _applyCachedCity(lat, lon, name, preserveSelection = false) {
+    this.state.coords = { lat, lon };
     const cached = Storage.getWeatherCache(lat, lon);
     // A partial entry (older build, interrupted write, hand-edited
     // storage) must read as a MISS: _applyPayload dereferences
@@ -1043,6 +1056,7 @@ const App = {
   //   (see _applyCachedCity). Independent of hadCache, because a refresh
   //   whose cache has aged out still has the selection live in state.
   async _refreshCity(lat, lon, name, token = null, hadCache = false, preserveSelection = false) {
+    this.state.coords = { lat, lon };
     if (token == null) {
       this._fetchToken = (this._fetchToken || 0) + 1;
       token = this._fetchToken;
@@ -1566,7 +1580,7 @@ const App = {
   // confidently described code that wasn't running. Bump this with the
   // chip in index.html on every release — a mismatch on screen IS the
   // diagnosis.
-  BUILD: '1.6.0',
+  BUILD: '1.7.0',
 
   // Writes "JS <build> · cache <bucket>" under the About version chip.
   // Note what happens when js/app.js is STALE: old code has no

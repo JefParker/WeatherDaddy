@@ -2678,12 +2678,24 @@ body.has-alert .a2hs-prompt {
    secondary-text tone rather than an alert colour, and it stays put
    for every day and pinned hour because the discussion covers the whole
    forecast period. The bottom edge is reserved for weather alerts. */
-.notes-btn {
+/* The row both pills sit in. Centred, wraps on the narrowest phones,
+   and collapses to nothing when neither button renders (the row itself
+   carries no margin — the buttons do). */
+.graph-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+.is-offline .radar-btn { display: none; }
+
+.notes-btn,
+.radar-btn {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  margin: 12px auto 0;
+  margin: 12px 0 0;
   padding: 7px 14px 7px 12px;
   min-height: 32px;
   background: transparent;
@@ -2697,11 +2709,167 @@ body.has-alert .a2hs-prompt {
   touch-action: manipulation;
   transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
 }
-.notes-btn:hover { border-color: rgba(255, 255, 255, 0.24); color: #d4d4d4; }
-.notes-btn:active { background: rgba(255, 255, 255, 0.06); color: #eaeaea; }
-.notes-btn:focus-visible { outline: 2px solid #4db6ac; outline-offset: 2px; }
-.notes-btn svg { flex-shrink: 0; opacity: 0.85; }
+.notes-btn:hover, .radar-btn:hover { border-color: rgba(255, 255, 255, 0.24); color: #d4d4d4; }
+.notes-btn:active, .radar-btn:active { background: rgba(255, 255, 255, 0.06); color: #eaeaea; }
+.notes-btn:focus-visible, .radar-btn:focus-visible { outline: 2px solid #4db6ac; outline-offset: 2px; }
+.notes-btn svg, .radar-btn svg { flex-shrink: 0; opacity: 0.85; }
 .notes-btn-chevron { margin-left: -3px; }
+
+/* === Radar overlay ==================================================== */
+/* Header + map + footer, the map taking every pixel between. Opaque and
+   un-blurred, unlike the other overlays: a full-screen WebGL canvas over
+   a backdrop-filter is pure GPU cost on a phone, and nothing shows
+   through a map anyway. */
+#radar-screen {
+  background-color: var(--bg-color);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+/* The install prompt floats above every overlay (z-index 200) so it is
+   never lost behind a menu — but over the radar it hides the map's
+   attribution and the scrubber. Park it while the map is open. */
+body:has(#radar-screen.open) .a2hs-prompt { display: none; }
+.radar-provider {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+#radar-screen .radar-body {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.radar-map-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #0b0b0b;
+}
+#radar-map {
+  position: absolute;
+  inset: 0;
+}
+/* Loading / error text, centred over the (possibly empty) map. */
+.radar-status {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  pointer-events: none;
+}
+/* Sits under MapLibre's zoom buttons (top-right) and matches their size. */
+.radar-recenter {
+  position: absolute;
+  top: 78px;
+  right: 10px;
+  z-index: 3;
+  width: 29px;
+  height: 29px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: #fff;
+  color: #333;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.radar-recenter:disabled { opacity: 0; pointer-events: none; }
+.radar-recenter:hover { background: #f2f2f2; }
+.radar-recenter:focus-visible { outline: 2px solid #4db6ac; outline-offset: 2px; }
+/* The city marker: a teal dot with a white ring, fixed while frames
+   animate so it's obvious whether a cell is heading for the pin. */
+.radar-marker {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #4db6ac;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 4px rgba(77, 182, 172, 0.35), 0 1px 4px rgba(0, 0, 0, 0.6);
+}
+.radar-footer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-color);
+  padding: 8px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+}
+.radar-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+/* NEXRAD Level III reflectivity ramp, light to heavy. RainViewer's
+   colour scheme 6 uses the same palette so one legend fits both. */
+.radar-legend-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg,
+    #04e9e7, #019ff4, #0300f4, #02fd02, #01c501, #008e00,
+    #fdf802, #e5bc00, #fd9500, #fd0000, #d40000, #bc0000, #f800fd, #9854c6);
+}
+.radar-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.radar-play {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.radar-play:disabled { opacity: 0.35; cursor: default; }
+.radar-play:focus-visible { outline: 2px solid #4db6ac; outline-offset: 2px; }
+.radar-play .radar-play-icon { margin-left: 2px; }
+.radar-play .radar-pause-icon { display: none; }
+.radar-play.is-playing .radar-play-icon { display: none; }
+.radar-play.is-playing .radar-pause-icon { display: block; }
+.radar-scrubber {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  height: 40px;
+  accent-color: #4db6ac;
+  cursor: pointer;
+  touch-action: pan-x;
+}
+.radar-scrubber:disabled { opacity: 0.35; cursor: default; }
+.radar-time {
+  flex-shrink: 0;
+  min-width: 78px;
+  text-align: right;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+/* MapLibre's default attribution is a light box on the map; keep it but
+   trim it so the required OSM credit fits on one phone-width line. */
+#radar-map .maplibregl-ctrl-attrib { font-size: 10px; line-height: 1.3; }
 
 .discussion-meta {
   color: var(--text-secondary);

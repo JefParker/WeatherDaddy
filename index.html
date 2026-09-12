@@ -299,7 +299,7 @@
         <section class="about-section about-header-brand">
           <img class="about-logo" src="assets/icons/icon-192.png" alt="WeatherDaddy logo" width="64" height="64">
           <div class="about-brand-text">
-            <h3 class="about-title">WeatherDaddy <span class="about-version">v1.6.0</span></h3>
+            <h3 class="about-title">WeatherDaddy <span class="about-version">v1.7.0</span></h3>
             <!-- Populated by App.renderBuildInfo() each time this screen
                  opens. If it still reads "Checking build…" the JS bundle
                  is older than that function — i.e. a stale cache. -->
@@ -436,6 +436,7 @@
               <div class="accordion-content">
                 <p>When there are active U.S. National Weather Service alerts for your current location, a bar appears at the bottom of the dashboard — <strong>red</strong> for Severe or Extreme warnings, <strong>amber</strong> for lesser watches, advisories and statements. Tap the bar to open the alerts overlay and view the full text and severity of each one.</p>
                 <p>U.S. locations also get a <strong>Forecaster's Notes</strong> button under the day graph: the local NWS office's own narrative of what is driving the forecast, updated a few times a day. Tap it to read the full discussion, split into its sections. It sits with the forecast rather than on the bottom edge so that strip stays reserved for alerts.</p>
+                <p>Next to it, a <strong>Radar</strong> button opens an animated precipitation map centred on the city you are looking at, with a scrubber through the last hour or two. U.S. locations get NOAA's NEXRAD radar; everywhere else uses RainViewer's global mosaic. The button is hidden while you are offline, since radar can't be cached.</p>
               </div>
             </div>
 
@@ -471,6 +472,18 @@
             <li>
               <a class="about-source-name" href="https://www.weather.gov" target="_blank" rel="noopener noreferrer">U.S. National Weather Service ↗</a>
               <span class="about-source-desc">Weather alerts (all severities), area forecast discussions, and CO-OPS station tide predictions for U.S. locations.</span>
+            </li>
+            <li>
+              <a class="about-source-name" href="https://mesonet.agron.iastate.edu" target="_blank" rel="noopener noreferrer">Iowa Environmental Mesonet ↗</a>
+              <span class="about-source-desc">NOAA NEXRAD radar composites for the Radar map over the contiguous U.S., served from Iowa State University's tile cache.</span>
+            </li>
+            <li>
+              <a class="about-source-name" href="https://www.rainviewer.com" target="_blank" rel="noopener noreferrer">RainViewer ↗</a>
+              <span class="about-source-desc">Global radar mosaic for the Radar map outside NEXRAD coverage, and the fallback when the NEXRAD cache is unreachable.</span>
+            </li>
+            <li>
+              <a class="about-source-name" href="https://openfreemap.org" target="_blank" rel="noopener noreferrer">OpenFreeMap ↗</a>
+              <span class="about-source-desc">The basemap under the radar — <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener noreferrer">OpenMapTiles</a> data from <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>, drawn in the app by <a href="https://maplibre.org/" target="_blank" rel="noopener noreferrer">MapLibre GL JS</a>.</span>
             </li>
             <li>
               <a class="about-source-name" href="https://www.geonames.org" target="_blank" rel="noopener noreferrer">GeoNames ↗</a>
@@ -641,6 +654,44 @@
       </div>
     </div>
 
+    <!-- Radar overlay — animated precipitation map centred on the city
+         the dashboard is showing. The map itself is built by ui-radar.js
+         on open (MapLibre is injected on the first tap) and destroyed on
+         close; only this chrome is static. -->
+    <div class="overlay-screen" id="radar-screen">
+      <header class="overlay-header">
+        <button class="back-btn" id="radar-back-btn" aria-label="Back">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+        </button>
+        <h2>Radar</h2>
+        <span class="radar-provider" id="radar-provider" aria-live="polite"></span>
+      </header>
+      <div class="overlay-body radar-body">
+        <div class="radar-map-wrap">
+          <div id="radar-map" aria-label="Precipitation radar map"></div>
+          <p class="radar-status" id="radar-status" role="status" hidden></p>
+          <button type="button" class="radar-recenter" id="radar-recenter" aria-label="Recenter on this location" disabled>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>
+          </button>
+        </div>
+        <div class="radar-footer">
+          <div class="radar-legend" aria-hidden="true">
+            <span>Light</span>
+            <span class="radar-legend-bar"></span>
+            <span>Heavy</span>
+          </div>
+          <div class="radar-controls">
+            <button type="button" class="radar-play" id="radar-play" aria-label="Play" aria-pressed="false" disabled>
+              <svg class="radar-play-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 4 20 12 6 20"/></svg>
+              <svg class="radar-pause-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="4" width="5" height="16"/><rect x="14" y="4" width="5" height="16"/></svg>
+            </button>
+            <input type="range" class="radar-scrubber" id="radar-scrubber" min="0" max="0" value="0" step="1" aria-label="Radar frame" disabled>
+            <span class="radar-time" id="radar-time" aria-live="off"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Context menu — opened by right-click on desktop and long-press on
          touch. Mirrors the hamburger menu options. JS positions it next
          to the cursor / touch point and dismisses on outside click. -->
@@ -763,6 +814,7 @@
   <script src="js/ui-graph.js"></script>
   <script src="js/ui-dashboard.js"></script>
   <script src="js/ui-locations.js"></script>
+  <script src="js/ui-radar.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
