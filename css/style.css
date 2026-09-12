@@ -1194,7 +1194,8 @@ a.about-source-name:hover {
 
 /* When the alert bar is visible, lift the A2HS prompt above it so they
    don't overlap. Body class is toggled by JS. */
-body.has-alert .a2hs-prompt {
+body.has-alert .a2hs-prompt,
+body.has-alert .update-pill {
   bottom: calc(80px + env(safe-area-inset-bottom, 0px));
 }
 
@@ -1286,6 +1287,75 @@ body.has-alert .a2hs-prompt {
 .a2hs-install-btn:hover  { filter: brightness(1.1); }
 .a2hs-install-btn:active { transform: scale(0.97); }
 .a2hs-install-btn[hidden] { display: none; }
+/* === Update pill ======================================================
+   "A newer version is ready · Reload". Same bottom anchor and layer as
+   the install card so the two never fight the alert bar differently;
+   the install card yields to it (body.update-ready) since a pending
+   update is the more useful of the two to see. */
+.update-pill {
+  position: fixed;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%) translateY(120%);
+  width: max-content;
+  max-width: min(92vw, 440px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 14px;
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 999px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.55);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  z-index: 200;
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.35s ease;
+}
+.update-pill[hidden] { display: none; }
+.update-pill.visible {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+.update-pill > svg { flex-shrink: 0; color: #4db6ac; }
+.update-pill-text { white-space: nowrap; }
+.update-pill-btn {
+  appearance: none;
+  border: none;
+  border-radius: 999px;
+  padding: 7px 14px;
+  background: var(--accent-color);
+  color: #121212;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: filter 0.15s;
+}
+.update-pill-btn:hover  { filter: brightness(1.1); }
+.update-pill-btn:active { transform: scale(0.97); }
+.update-pill-btn:focus-visible { outline: 2px solid #4db6ac; outline-offset: 2px; }
+.update-pill-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.update-pill-close:hover { color: var(--text-primary); }
+body.update-ready .a2hs-prompt { display: none; }
+body:has(#radar-screen.open) .update-pill { display: none; }
+@media (max-width: 360px) {
+  .update-pill-text { white-space: normal; }
+}
+
 /* `hidden` must beat the flex display on menu buttons. */
 .menu-option-btn[hidden], .context-menu-item[hidden] { display: none; }
 

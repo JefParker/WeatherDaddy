@@ -299,7 +299,7 @@
         <section class="about-section about-header-brand">
           <img class="about-logo" src="assets/icons/icon-192.png" alt="WeatherDaddy logo" width="64" height="64">
           <div class="about-brand-text">
-            <h3 class="about-title">WeatherDaddy <span class="about-version">v1.7.0</span></h3>
+            <h3 class="about-title">WeatherDaddy <span class="about-version">v1.7.1</span></h3>
             <!-- Populated by App.renderBuildInfo() each time this screen
                  opens. If it still reads "Checking build…" the JS bundle
                  is older than that function — i.e. a stale cache. -->
@@ -436,6 +436,7 @@
               <div class="accordion-content">
                 <p>When there are active U.S. National Weather Service alerts for your current location, a bar appears at the bottom of the dashboard — <strong>red</strong> for Severe or Extreme warnings, <strong>amber</strong> for lesser watches, advisories and statements. Tap the bar to open the alerts overlay and view the full text and severity of each one.</p>
                 <p>U.S. locations also get a <strong>Forecaster's Notes</strong> button under the day graph: the local NWS office's own narrative of what is driving the forecast, updated a few times a day. Tap it to read the full discussion, split into its sections. It sits with the forecast rather than on the bottom edge so that strip stays reserved for alerts.</p>
+                <p>When a new version of the app has been installed in the background, a small <strong>Reload</strong> pill appears at the bottom of the dashboard. Tap it to switch straight away, or ignore it: the app swaps over on its own the next time it is in the background or idle.</p>
                 <p>Next to it, a <strong>Radar</strong> button opens an animated precipitation map centred on the city you are looking at, with a scrubber through the last hour or two. U.S. locations get NOAA's NEXRAD radar; everywhere else uses RainViewer's global mosaic. The button is hidden while you are offline, since radar can't be cached.</p>
               </div>
             </div>
@@ -741,6 +742,21 @@
       <button class="a2hs-install-btn" id="a2hs-install" type="button" hidden>Install</button>
       <button class="a2hs-close" id="a2hs-close" aria-label="Dismiss">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>
+
+    <!-- Update pill — "a newer version is ready". Shown by
+         App.registerServiceWorker() once a new worker has taken over
+         this page; Reload runs the same guarded reload the automatic
+         hidden/idle path uses, so this is a shortcut, not a second
+         mechanism. Dismissing only hides the pill: the automatic reload
+         still happens later. -->
+    <div class="update-pill" id="update-pill" role="status" aria-live="polite" hidden>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
+      <span class="update-pill-text">A newer version is ready.</span>
+      <button class="update-pill-btn" id="update-reload" type="button">Reload</button>
+      <button class="update-pill-close" id="update-dismiss" type="button" aria-label="Dismiss">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
       </button>
     </div>
 

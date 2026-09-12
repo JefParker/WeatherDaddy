@@ -1580,7 +1580,7 @@ const App = {
   // confidently described code that wasn't running. Bump this with the
   // chip in index.html on every release — a mismatch on screen IS the
   // diagnosis.
-  BUILD: '1.7.0',
+  BUILD: '1.7.1',
 
   // Writes "JS <build> · cache <bucket>" under the About version chip.
   // Note what happens when js/app.js is STALE: old code has no
@@ -1607,6 +1607,38 @@ const App = {
 
     const controlled = ('serviceWorker' in navigator) && !!navigator.serviceWorker.controller;
     el.textContent = `JS ${this.BUILD} · cache ${bucket}` + (controlled ? '' : ' · not cached');
+  },
+
+  // "A newer version is ready · Reload". Bound once; subsequent calls
+  // just re-show it (a second takeover during the same page life is
+  // filtered upstream by `deferred`, but be safe).
+  showUpdatePill(onReload) {
+    const pill = document.getElementById('update-pill');
+    if (!pill) return;
+    this._updatePillReload = onReload;
+    if (!this._updatePillBound) {
+      this._updatePillBound = true;
+      const reload  = document.getElementById('update-reload');
+      const dismiss = document.getElementById('update-dismiss');
+      if (reload)  reload.addEventListener('click', () => {
+        this.hideUpdatePill();
+        if (typeof this._updatePillReload === 'function') this._updatePillReload();
+      });
+      if (dismiss) dismiss.addEventListener('click', () => this.hideUpdatePill());
+    }
+    pill.hidden = false;
+    document.body.classList.add('update-ready');
+    // Two frames so the transition runs from the off-screen position
+    // rather than snapping: `hidden` → display:none has to clear first.
+    requestAnimationFrame(() => requestAnimationFrame(() => pill.classList.add('visible')));
+  },
+
+  hideUpdatePill() {
+    const pill = document.getElementById('update-pill');
+    if (!pill) return;
+    pill.classList.remove('visible');
+    document.body.classList.remove('update-ready');
+    setTimeout(() => { if (!pill.classList.contains('visible')) pill.hidden = true; }, 400);
   },
 
   registerServiceWorker() {
@@ -1667,6 +1699,13 @@ const App = {
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (!hadController || deferred || recentlyReloaded()) return;
       deferred = true;
+
+      // Tell the person, too. The hidden/idle reload below stays the
+      // guarantee that nobody sits on old code; the pill is the shortcut
+      // for someone actively using the app right after a deploy, who
+      // would otherwise not learn about the update until they looked
+      // away. Same doReload, so the loop brake covers this path as well.
+      this.showUpdatePill(doReload);
 
       // Never yank the page out from under someone mid-look. The selected
       // day, pinned hour, open overlay, scroll position and a typed-but-
