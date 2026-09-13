@@ -497,7 +497,12 @@ Object.assign(UI, {
           // Sits at y=12, above everything: the ±2° headroom baked into
           // the temperature scale keeps the topmost badge below y=25, and
           // the position marker's label is lower still at paddingY - 16.
-          const title = nameOf(mode);
+          // On a dry day the precip view is just the temperature line,
+          // so that is what the title says — "Precipitation" over a
+          // plot with no bars in it read as a mistake. The switch's
+          // aria-label keeps the series name: it describes what the
+          // toggle does, not what is visible.
+          const title = (mode === 'precip' && !hasRain) ? 'temperature' : nameOf(mode);
           return toggle + `
             <text class="graph-series-label" x="${width / 2}" y="12">${this.esc(title.charAt(0).toUpperCase() + title.slice(1))}</text>
             ${peakDisplay ? `<text class="${cls}" x="5" y="${paddingY + 5}">${peakDisplay}</text>` : ''}
