@@ -1,0 +1,24 @@
+{
+  // WeatherDaddy on Cloudflare Workers with static assets.
+  //
+  // The site used to be a Pages project in "advanced mode" (a root
+  // _worker.js in front of the asset bundle). Pages has no Cron
+  // Triggers, and the push-notification work needs a scheduled handler,
+  // so the same code now deploys as a Worker. The site itself lives in
+  // public/ (everything Pages used to serve from the repo root); the
+  // Worker source, tooling and config stay outside the asset bundle.
+  "name": "weatherdaddy",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    // Only these paths hit the Worker before the asset router: the OWM
+    // proxy (not an asset at all) and the three files whose Cache-Control
+    // the Worker rewrites so a deploy actually reaches installed PWAs
+    // (see serveAsset in worker/index.js). Everything else is served
+    // straight from the edge without a Worker invocation.
+    "run_worker_first": ["/api/*", "/sw.js", "/", "/index.html"]
+  },
+  "observability": { "enabled": true }
+}

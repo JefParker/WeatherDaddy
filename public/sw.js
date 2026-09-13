@@ -8,7 +8,7 @@
 // it, so the precache is refreshed in place; the bump additionally drives
 // the activate-time cleanup of old cache buckets. The chain that makes
 // any of this reach an installed device is:
-//   _worker.js sends `Cache-Control: no-cache` for /sw.js
+//   worker/index.js sends `Cache-Control: no-cache` for /sw.js
 //     → the browser actually re-fetches this file
 //     → CACHE_NAME differs → install → skipWaiting → clients.claim
 //     → app.js's controllerchange handler reloads the page

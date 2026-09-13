@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Regenerate js/tide-stations.js from NOAA CO-OPS.
+# Regenerate public/js/tide-stations.js from NOAA CO-OPS.
 #
 # NOAA publishes no radius-search endpoint, so WeatherDaddy bundles the
 # station catalogue and finds the nearest one locally. Run this from the
@@ -14,7 +14,7 @@
 #
 set -euo pipefail
 
-OUT="js/tide-stations.js"
+OUT="public/js/tide-stations.js"
 SRC="https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json?type=tidepredictions"
 
 if [ ! -d js ]; then

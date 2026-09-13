@@ -1,4 +1,4 @@
-// Headless-Chrome smoke test against `wrangler pages dev` on :8788.
+// Headless-Chrome smoke test against `wrangler dev` on :8788.
 const puppeteer = require('puppeteer');
 const path = require('path');
 const OUT = path.resolve(__dirname, '..');

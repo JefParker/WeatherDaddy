@@ -1,4 +1,4 @@
-# Cloudflare Pages / Wrangler local dev — secrets file. NEVER commit this.
+# Wrangler local dev — secrets file. NEVER commit this.
 .dev.vars
 .dev.vars.*
 

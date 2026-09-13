@@ -1,10 +1,10 @@
-// Cloudflare Worker — secure reverse proxy for OpenWeatherMap.
+// Cloudflare Worker — secure reverse proxy for OpenWeatherMap, plus the
+// static-asset front door for the PWA.
 //
-// Deployed via Cloudflare Pages "advanced mode": this file sits at the
-// project root and intercepts every request before the static asset
-// router. We route /api/owm/* into the proxy logic below, and let every
-// other path (HTML, CSS, JS, icons, manifest, etc.) fall through to the
-// Pages asset bundle via `env.ASSETS.fetch(request)`.
+// Deployed as a Cloudflare Worker with static assets (see wrangler.jsonc).
+// `assets.run_worker_first` routes /api/* and the three update-bootstrap
+// files through here; we handle /api/owm/* with the proxy logic below and
+// hand anything else back to the asset router via `env.ASSETS.fetch()`.
 //
 // Contract enforced in fetch():
 //   1. PATH REWRITING        — strip the /api/owm/ prefix + any leading slash
@@ -13,7 +13,8 @@
 //   4. CORS                  — permissive headers on every response (including
 //                              the missing-key error and OPTIONS preflight)
 //
-// Required Pages env binding: OPENWEATHER_API_KEY (encrypted secret).
+// Required secret: OPENWEATHER_API_KEY (`wrangler secret put`; .dev.vars
+// locally).
 
 const PROXY_PREFIX = '/api/owm';
 const UPSTREAM     = 'https://api.openweathermap.org';
@@ -139,9 +140,8 @@ export default {
 // the ETag still yields a cheap 304 when nothing has changed.
 //
 // This lives in the Worker rather than a `_headers` file on purpose —
-// Pages ignores `_headers` when a project runs in advanced mode with a
-// root `_worker.js`, so a `_headers` file would look correct and do
-// nothing.
+// `_headers` only decorates responses the asset router produces on its
+// own, and these three paths are routed through the Worker first.
 const ALWAYS_REVALIDATE = new Set(['/sw.js', '/', '/index.html']);
 
 async function serveAsset(request, url, env) {

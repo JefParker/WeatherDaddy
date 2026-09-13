@@ -1,9 +1,8 @@
 // Path-B proxy base. Same-origin so it resolves against whatever host the
-// app is served from — Cloudflare Pages preview, production, or local
-// `wrangler pages dev`. The advanced-mode Pages worker (_worker.js at the
-// repo root) reads OPENWEATHER_API_KEY from env (from .dev.vars locally,
-// dashboard in prod) and forwards the call to OpenWeatherMap. No key ever
-// ships with the client bundle.
+// app is served from — production, a preview deploy, or local
+// `wrangler dev`. The Worker (worker/index.js) reads OPENWEATHER_API_KEY
+// from env (from .dev.vars locally, a Worker secret in prod) and forwards
+// the call to OpenWeatherMap. No key ever ships with the client bundle.
 const PROXY_BASE = '/api/owm';
 
 const enc = encodeURIComponent;
@@ -73,16 +72,15 @@ const WeatherAPI = {
     return this._fetchViaProxy(path, params);
   },
 
-  // Same-origin call to the Cloudflare Pages worker (_worker.js) under
+  // Same-origin call to the Cloudflare Worker (worker/index.js) under
   // /api/owm/<owm-path>. The worker appends OPENWEATHER_API_KEY from
-  // env (sourced from .dev.vars for local dev, the Pages dashboard for
-  // deployed environments) and forwards the call to OpenWeatherMap. The
-  // browser never sees the key.
+  // env (sourced from .dev.vars for local dev, a Worker secret when
+  // deployed) and forwards the call to OpenWeatherMap. The browser never
+  // sees the key.
   //
-  // For local development, run `wrangler pages dev .` (or your project's
-  // build command) so Functions are mounted. Opening index.html directly
-  // off the filesystem will fail this fetch because there's no Function
-  // host backing /api/owm — surface a clear error in that case.
+  // For local development, run `wrangler dev` so the Worker is mounted.
+  // Opening index.html directly off the filesystem will fail this fetch
+  // because nothing backs /api/owm — surface a clear error in that case.
   async _fetchViaProxy(path, params) {
     const qs = Object.entries(params)
       .filter(([, v]) => v != null && v !== '')
@@ -96,7 +94,7 @@ const WeatherAPI = {
     } catch (e) {
       throw new Error(
         `Proxy unreachable. If running locally, start the app with ` +
-        `\`wrangler pages dev .\` so Cloudflare Pages Functions are served. ` +
+        `\`wrangler dev\` so the Cloudflare Worker is served. ` +
         `(${e && e.message ? e.message : 'fetch failed'})`
       );
     }

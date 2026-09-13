@@ -9,7 +9,7 @@ const path = require('path');
 const { JSDOM } = require('jsdom');
 const { buildFixture, SAMPLE_ALERT, SAMPLE_AFD, rawResponsesFor } = require('./fixtures');
 
-const ROOT = process.env.WD_ROOT || require('path').resolve(__dirname, '..', '..');
+const ROOT = process.env.WD_ROOT || require('path').resolve(__dirname, '..', '..', 'public');
 const GOLDEN = path.join(__dirname, 'golden');
 const args = process.argv.slice(2);
 const MODE = args.includes('--record') ? 'record' : 'check';
