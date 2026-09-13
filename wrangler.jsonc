@@ -39,9 +39,8 @@
   // timezone; running twice an hour gives a retry within the hour and
   // lands half-hour zones (Newfoundland, India) at :30 rather than :60.
   "triggers": { "crons": ["*/30 * * * *"] },
-  "observability": { "enabled": true }
-  // Cutover: once the weatherdaddy.app custom domain has been removed
-  // from the Pages project, uncomment this and deploy to attach it here.
-  // (Both can't hold the hostname at once.)
-  // ,"routes": [{ "pattern": "weatherdaddy.app", "custom_domain": true }]
+  "observability": { "enabled": true },
+  // Production hostname. This moved from the Pages project on cutover;
+  // a hostname can belong to only one of the two at a time.
+  "routes": [{ "pattern": "weatherdaddy.app", "custom_domain": true }]
 }
