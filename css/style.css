@@ -236,6 +236,13 @@ body {
   letter-spacing: 0.02em;
 }
 
+/* With the strip showing, the hero's 40px bottom padding plus the
+   stats grid's own 16px left the bars floating a long way above the
+   numbers they relate to. Pull the stats up under it. */
+.hero-section:has(.precip-strip) {
+  padding-bottom: 10px;
+}
+
 /* Quick Stats Grid */
 /* Wrapper around the stats grid — the cube-flip pager binds here so the
    cube perspective isn't placed as a single grid cell. */
