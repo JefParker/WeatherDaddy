@@ -2814,7 +2814,9 @@ body:has(#radar-screen.open) .a2hs-prompt { display: none; }
   position: relative;
   flex: 1;
   min-height: 0;
-  background: #0b0b0b;
+  /* Roughly the basemap's land colour after BASEMAP_LIFT (ui-radar.js),
+     so the map doesn't flash from one grey to another as it loads. */
+  background: #2e2e2e;
 }
 #radar-map {
   position: absolute;

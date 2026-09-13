@@ -15,8 +15,9 @@
 //     is unreachable. Global composite, 10-minute steps, two hours of
 //     history, one manifest fetch first. Free for personal use with
 //     attribution — in About and in the map's attribution corner.
-// The basemap is OpenFreeMap's dark style: keyless, no stated limits,
-// vector tiles (hence MapLibre rather than Leaflet). It renders
+// The basemap is OpenFreeMap's dark style, lightened a little after it
+// loads (BASEMAP_LIFT): keyless, no stated limits, vector tiles (hence
+// MapLibre rather than Leaflet). It renders
 // OpenStreetMap data, whose licence wants the "© OpenStreetMap
 // contributors" credit ON the map, not just in About — MapLibre's
 // attribution control carries it.
@@ -40,6 +41,13 @@ Object.assign(UI, {
     MIN_ZOOM: 3,
     MAX_ZOOM: 11,
     OPACITY: 0.72,
+    // OpenFreeMap's dark style is near-black: land rgb(12,12,12), water
+    // rgb(27,27,29), mid-grey labels on black. Under the radar colours
+    // it reads as a void — coastlines and roads vanish. Every colour in
+    // the style is lifted this fraction of the way toward white once it
+    // loads (see _radarLiftBasemap), which keeps its own contrast
+    // relationships intact. 0 leaves the style as served.
+    BASEMAP_LIFT: 0.14,
     FRAME_MS: 450,
     // Linger on the newest frame so the loop reads as "…and here is now".
     LAST_FRAME_HOLD_MS: 1600,
@@ -269,6 +277,7 @@ Object.assign(UI, {
 
     map.on('load', () => {
       if (r !== this._radar) return;
+      this._radarLiftBasemap(map);
       this._addRadarLayers(r);
       this._radarStatus(null);
       this._radarSetControlsEnabled(true);
@@ -278,6 +287,52 @@ Object.assign(UI, {
       map.once('idle', () => {
         if (r !== this._radar) return;
         this._radarPlay(r);
+      });
+    });
+  },
+
+  // Lighten the basemap by BASEMAP_LIFT: every plain colour string in
+  // every layer's paint (fills, lines, text, halos) moves the same
+  // fraction toward white, so the style's dark-on-darker hierarchy
+  // survives, just brighter. Colours given as zoom expressions (one
+  // motorway fill in the current style) are left alone. A 2D canvas
+  // does the colour parsing — it normalises any CSS colour the style
+  // can contain (hex, rgb, hsl, with or without alpha) to one of two
+  // shapes, which is far less code than parsing them by hand.
+  _radarLiftBasemap(map) {
+    const k = this.RADAR.BASEMAP_LIFT;
+    if (!(k > 0)) return;
+    let ctx;
+    try { ctx = document.createElement('canvas').getContext('2d'); } catch (_) { return; }
+    if (!ctx) return;
+    const SENTINEL = '#010203';
+    const lift = (color) => {
+      if (typeof color !== 'string') return null;
+      ctx.fillStyle = SENTINEL;
+      ctx.fillStyle = color;
+      const norm = ctx.fillStyle;
+      if (norm === SENTINEL) return null;
+      let r, g, b, a = 1;
+      let m = /^#([0-9a-f]{6})$/i.exec(norm);
+      if (m) {
+        const n = parseInt(m[1], 16);
+        r = n >> 16; g = (n >> 8) & 255; b = n & 255;
+      } else if ((m = /^rgba\((\d+), (\d+), (\d+), ([\d.]+)\)$/.exec(norm))) {
+        r = +m[1]; g = +m[2]; b = +m[3]; a = +m[4];
+      } else {
+        return null;
+      }
+      const up = c => Math.round(c + (255 - c) * k);
+      return `rgba(${up(r)},${up(g)},${up(b)},${a})`;
+    };
+    let layers;
+    try { layers = (map.getStyle() || {}).layers || []; } catch (_) { return; }
+    layers.forEach(l => {
+      const paint = l.paint || {};
+      Object.keys(paint).forEach(key => {
+        if (!/-color$/.test(key)) return;
+        const c = lift(paint[key]);
+        if (c) { try { map.setPaintProperty(l.id, key, c); } catch (_) {} }
       });
     });
   },
