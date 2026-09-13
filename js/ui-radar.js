@@ -48,6 +48,11 @@ Object.assign(UI, {
     // loads (see _radarLiftBasemap), which keeps its own contrast
     // relationships intact. 0 leaves the style as served.
     BASEMAP_LIFT: 0.14,
+    // Even lifted, the style's water is a grey a few levels off the
+    // land. A cool tint on the water layers (see _radarLiftBasemap)
+    // makes the coastline readable at a glance without touching
+    // anything else. Empty string: leave the water as the style has it.
+    WATER_COLOR: 'rgb(46,60,80)',
     FRAME_MS: 450,
     // Linger on the newest frame so the loop reads as "…and here is now".
     LAST_FRAME_HOLD_MS: 1600,
@@ -335,6 +340,16 @@ Object.assign(UI, {
         if (c) { try { map.setPaintProperty(l.id, key, c); } catch (_) {} }
       });
     });
+    // Water after the lift, so the tint is exactly WATER_COLOR. The
+    // style's water fill and its waterway lines share one colour.
+    const water = this.RADAR.WATER_COLOR;
+    if (water) {
+      layers.forEach(l => {
+        if (l.id !== 'water' && l.id !== 'waterway') return;
+        const key = l.type === 'line' ? 'line-color' : 'fill-color';
+        try { map.setPaintProperty(l.id, key, water); } catch (_) {}
+      });
+    }
   },
 
   // One raster source + layer per frame, all added up front with opacity
