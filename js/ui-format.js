@@ -900,6 +900,44 @@ Object.assign(UI, {
     return null;
   },
 
+  // The next-2-hours precipitation strip under the hero: the same
+  // 15-minute series the nowcast sentence reads, shaped for a row of
+  // bars. Returns { steps: [{ dt, mm, band, h }], ... } or null when
+  // the window is dry (the strip only appears when it has something to
+  // say — on most days it costs no space at all).
+  //
+  // `h` is the bar height as a fraction of the strip, on a banded
+  // scale rather than a linear one: the light band fills the bottom
+  // third, moderate the middle third, heavy the top. Linear-in-mm
+  // would draw drizzle as a hairline next to a downpour; what people
+  // want to read off the strip is "how hard", and that is a band.
+  // Thresholds are the usual meteorological ones (light < 2.5 mm/h,
+  // heavy > 7.6 mm/h) scaled to a 15-minute step.
+  PRECIP_STRIP_STEPS: 8,
+  PRECIP_STRIP_LIGHT_MM: 2.5 / 4,
+  PRECIP_STRIP_HEAVY_MM: 7.6 / 4,
+  _precipStrip(minutely, nowSec) {
+    if (!minutely || !minutely.length) return null;
+    const WET = 0.05; // same floor as _precipNowcast
+    const steps = minutely
+      .filter(m => m.dt + 900 > nowSec)
+      .sort((a, b) => a.dt - b.dt)
+      .slice(0, this.PRECIP_STRIP_STEPS);
+    if (steps.length < this.PRECIP_STRIP_STEPS) return null;
+    if (!steps.some(m => (m.precipMM || 0) >= WET)) return null;
+    const L = this.PRECIP_STRIP_LIGHT_MM, H = this.PRECIP_STRIP_HEAVY_MM;
+    const shaped = steps.map(m => {
+      const mm = m.precipMM || 0;
+      if (mm < WET) return { dt: m.dt, mm, band: 'dry', h: 0 };
+      let band, h;
+      if (mm < L)      { band = 'light';    h = (mm / L) / 3; }
+      else if (mm < H) { band = 'moderate'; h = 1 / 3 + ((mm - L) / (H - L)) / 3; }
+      else             { band = 'heavy';    h = 2 / 3 + Math.min(1, (mm - H) / H) / 3; }
+      return { dt: m.dt, mm, band, h: Math.max(h, 0.08) };
+    });
+    return { steps: shaped, wetThroughout: shaped.every(m => m.band !== 'dry') };
+  },
+
   // Moon phase name at a given moment. Defaults to "now" so existing
   // callers don't change, but takes a ms timestamp so forecast days /
   // hourly tiles can show the correct phase for THEIR date rather than

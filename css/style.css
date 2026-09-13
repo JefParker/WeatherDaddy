@@ -200,6 +200,42 @@ body {
   margin-top: 20px;
 }
 
+/* Next-2-hours precipitation strip under the hero (ui-dashboard.js
+   _heroPrecipStripHTML). Eight 15-minute bars on a banded height scale
+   (light / moderate / heavy = bottom / middle / top third) and three
+   axis labels. Kept narrow and short: it is on the hero, where every
+   pixel is dear, and it only renders when the next two hours are wet. */
+.precip-strip {
+  width: 100%;
+  max-width: 240px;
+  margin: 10px auto 0;
+}
+.precip-strip-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 22px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+}
+.precip-strip-bar {
+  flex: 1 1 0;
+  min-width: 0;
+  border-radius: 2px 2px 0 0;
+}
+.precip-strip-dry      { background: transparent; }
+.precip-strip-light    { background: rgba(77, 182, 172, 0.45); }
+.precip-strip-moderate { background: rgba(77, 182, 172, 0.85); }
+.precip-strip-heavy    { background: #b2f5ea; }
+.precip-strip-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 3px;
+  font-size: 0.65rem;
+  line-height: 1;
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
+}
+
 /* Quick Stats Grid */
 /* Wrapper around the stats grid — the cube-flip pager binds here so the
    cube perspective isn't placed as a single grid cell. */
@@ -1809,6 +1845,8 @@ body:has(#radar-screen.open) .update-pill { display: none; }
    drop hero padding further so the graph stays visible. */
 @media (orientation: landscape) and (max-height: 380px) {
   .hero-section { padding: 8px 6px 4px; }
+  /* No room: the sentence above it carries the news. */
+  .precip-strip { display: none; }
   .hero-temp-large { font-size: 2.5rem; }
   .hero-icon-large svg,
   .hero-icon-large img { width: 36px; height: 36px; }

@@ -679,11 +679,41 @@ Object.assign(UI, {
       : (noWindow ? '' : 'No precipitation expected');
     if (isToday && !pinnedHourSlot) {
       const cast = this._precipNowcast(state.omMinutely, nowSec);
+      // The 15-minute series is liquid-equivalent for rain and snow
+      // alike; Open-Meteo's hourly snowfall says which one is falling.
+      const snowing = (state.omHourly || []).some(h =>
+        h.dt + 3600 > nowSec && h.dt <= nowSec + 2 * 3600 && h.snowCM > 0);
+      const what = snowing ? 'Snow' : 'Rain';
       if (cast) {
-        precipMsg = `Rain ${cast.type === 'starts' ? 'starting' : 'ending'} around ${this.formatTime(cast.dt, true, tz)}`;
+        precipMsg = `${what} ${cast.type === 'starts' ? 'starting' : 'ending'} around ${this.formatTime(cast.dt, true, tz)}`;
+      } else if (ctx.precipStrip && ctx.precipStrip.wetThroughout) {
+        // The strip below is about to show two hours of bars; "No
+        // precipitation expected" (OWM's pop for the rest of the day)
+        // above it would be a contradiction on screen.
+        precipMsg = `${what} through the next 2 hours`;
       }
     }
     return precipMsg;
+  },
+
+  // The next-2-hours strip: eight 15-minute bars, coloured by intensity
+  // band, under the precip sentence. Today only, unpinned only, and
+  // only when the window has precipitation in it (see _precipStrip).
+  // Plain divs rather than an SVG: the bars are percent heights in a
+  // flex row, so the strip follows the hero's width with no
+  // measurement, and there is no text inside it to distort.
+  _heroPrecipStripHTML(ctx) {
+    const strip = ctx.precipStrip;
+    if (!strip) return '';
+    const { tz } = ctx;
+    const bars = strip.steps.map(m => {
+      const title = `${this.formatTime(m.dt, true, tz)} · ${m.mm.toFixed(1)} mm`;
+      return `<div class="precip-strip-bar precip-strip-${m.band}" style="height:${Math.round(m.h * 100)}%" title="${this.esc(title)}"></div>`;
+    }).join('');
+    return `<div class="precip-strip" role="img" aria-label="15-minute precipitation for the next 2 hours">
+          <div class="precip-strip-bars">${bars}</div>
+          <div class="precip-strip-axis"><span>Now</span><span>1h</span><span>2h</span></div>
+        </div>`;
   },
 
   // "Warmer/cooler than this time yesterday" — the past_days=1 slice
@@ -714,7 +744,12 @@ Object.assign(UI, {
     // stays consistent with the rest of the hero card.
     const breeze = this.windDescription(heroData.wind.speed);
     const yesterdayMsg = this._heroYesterdayMsg(ctx);
+    // Resolved before the sentence, which words itself around the strip.
+    ctx.precipStrip = (ctx.isToday && !ctx.pinnedHourSlot)
+      ? this._precipStrip(ctx.state.omMinutely, ctx.nowSec)
+      : null;
     const precipMsg = this._heroPrecipMsg(ctx);
+    const precipStrip = this._heroPrecipStripHTML(ctx);
     const html = `<section class="hero-section">
         <div class="hero-when">${this.esc(this._heroWhen(ctx))}</div>
         <div class="hero-condition">
@@ -733,7 +768,7 @@ Object.assign(UI, {
         ${temp.html}
         <div class="hero-feels-like">Feels like ${this.formatTemp(heroData.main.feels_like)}° - ${this.esc(breeze)}</div>
         ${yesterdayMsg ? `<div class="hero-yesterday">${this.esc(yesterdayMsg)}</div>` : ''}
-        ${precipMsg ? `<div class="precip-message">${precipMsg}</div>` : ''}
+        ${precipMsg ? `<div class="precip-message">${precipMsg}</div>` : ''}${precipStrip}
       </section>`;
     return { html, shouldFlip: temp.shouldFlip };
   },
