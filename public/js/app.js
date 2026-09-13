@@ -661,6 +661,9 @@ const App = {
     const units = Storage.getUnits();
     units[setting] = value;
     Storage.saveUnits(units);
+    // The morning briefing is composed server-side in the subscriber's
+    // units, so a change here has to reach the subscription row.
+    if (typeof UI.syncPushPrefs === 'function') UI.syncPushPrefs();
     this.renderAll();
   },
 
@@ -685,6 +688,7 @@ const App = {
     }
     Storage.saveUnits(units);
     UI.updateUnitControls();
+    if (typeof UI.syncPushPrefs === 'function') UI.syncPushPrefs();
     this.renderAll();
   },
 
@@ -1580,7 +1584,7 @@ const App = {
   // confidently described code that wasn't running. Bump this with the
   // chip in index.html on every release — a mismatch on screen IS the
   // diagnosis.
-  BUILD: '1.7.1',
+  BUILD: '1.8.0',
 
   // Writes "JS <build> · cache <bucket>" under the About version chip.
   // Note what happens when js/app.js is STALE: old code has no
@@ -1695,6 +1699,23 @@ const App = {
       clearTimeout(idleTimer);
       idleTimer = setTimeout(doReload, IDLE_MS);
     };
+
+    // A tapped notification: sw.js focuses an already-open window and
+    // posts the city here, so the app switches in place instead of
+    // reloading. (With no window open it opens ?lat&lon&name instead,
+    // which loadInitialWeather already understands.)
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      const d = e.data;
+      if (!d || d.type !== 'open-location') return;
+      const lat = Number(d.lat), lon = Number(d.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+      ['push', 'about', 'units', 'locations', 'main-menu', 'import-export', 'alerts', 'discussion', 'radar'].forEach(s => {
+        const el = document.getElementById(s + '-screen');
+        if (el && el.classList.contains('open')) UI.toggleScreen(s, false);
+      });
+      this.fetchAndDisplay(lat, lon, typeof d.name === 'string' && d.name ? d.name : 'Shared location')
+        .catch(err => console.warn('open-location failed', err));
+    });
 
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (!hadController || deferred || recentlyReloaded()) return;

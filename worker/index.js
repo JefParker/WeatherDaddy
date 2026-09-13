@@ -6,7 +6,10 @@
 // files through here; we handle /api/owm/* with the proxy logic below and
 // hand anything else back to the asset router via `env.ASSETS.fetch()`.
 //
-// Contract enforced in fetch():
+// /api/push/* is delegated to worker/push.js; the scheduled() export
+// runs the morning-briefing cron from the same module.
+//
+// Contract enforced in fetch() for the proxy:
 //   1. PATH REWRITING        — strip the /api/owm/ prefix + any leading slash
 //   2. API KEY RESOLUTION    — BYOK (?appid= or X-Custom-Api-Key) then env secret
 //   3. UPSTREAM FETCHING     — appid is appended (or overwritten) on the way out
@@ -16,7 +19,10 @@
 // Required secret: OPENWEATHER_API_KEY (`wrangler secret put`; .dev.vars
 // locally).
 
+import { handlePushRoute, handleScheduled } from './push.js';
+
 const PROXY_PREFIX = '/api/owm';
+const PUSH_PREFIX  = '/api/push/';
 const UPSTREAM     = 'https://api.openweathermap.org';
 
 // Only the endpoints the app actually calls. Without this allowlist the
@@ -31,11 +37,23 @@ const ALLOWED_PATHS = new Set([
 ]);
 
 export default {
-  async fetch(request, env /* , ctx */) {
+  // Cron Triggers (wrangler.jsonc → triggers.crons): morning briefings.
+  async scheduled(event, env, ctx) {
+    await handleScheduled(event, env, ctx);
+  },
+
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
+    // Push-notification API (subscriptions, test sends). Same-origin
+    // only, so no CORS preset — see worker/push.js.
+    if (url.pathname.startsWith(PUSH_PREFIX)) {
+      return handlePushRoute(request, env, ctx, url.pathname.slice(PUSH_PREFIX.length));
+    }
+
     // Anything outside the proxy namespace is a static asset — hand it
-    // back to Pages so the PWA, its JS bundles, icons, etc. still load.
+    // back to the asset router so the PWA, its JS bundles, icons, etc.
+    // still load.
     if (
       url.pathname !== PROXY_PREFIX &&
       !url.pathname.startsWith(PROXY_PREFIX + '/')

@@ -198,6 +198,29 @@ const Storage = {
     return Array.isArray(list) ? list : [];
   },
 
+  // Push-notification preferences (menu → Push Notifications). The
+  // server row (worker/push.js) is the source of truth; this copy lets
+  // the screen render instantly and re-sync after unit changes. Shape
+  // is validated on read so junk can't break the screen.
+  PUSH_PREFS_KEY: 'push_prefs_v1',
+  getPushPrefs() {
+    const raw = this._read(this.PUSH_PREFS_KEY, null) || {};
+    const b = (raw && typeof raw.briefing === 'object' && raw.briefing) || {};
+    return {
+      briefing: {
+        enabled:     b.enabled === true,
+        lat:         typeof b.lat === 'number' ? b.lat : null,
+        lon:         typeof b.lon === 'number' ? b.lon : null,
+        name:        typeof b.name === 'string' ? b.name : '',
+        hour:        Number.isInteger(b.hour) && b.hour >= 0 && b.hour <= 23 ? b.hour : 6,
+        lastSentDay: typeof b.lastSentDay === 'string' ? b.lastSentDay : null,
+      },
+    };
+  },
+  savePushPrefs(prefs) {
+    return this._write(this.PUSH_PREFS_KEY, prefs);
+  },
+
   // How close two locations must be to be considered the same place.
   // ~0.005° ≈ 500 m — loose enough to absorb the coordinate drift you
   // see when OWM's /weather rounds a geocoder point to its own nearest

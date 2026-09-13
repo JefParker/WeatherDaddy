@@ -8,6 +8,8 @@
 //   ui-graph.js        the day graph
 //   ui-dashboard.js    buildDailyData + renderDashboard and its pieces
 //   ui-locations.js    the saved-locations list
+//   ui-radar.js        the radar overlay
+//   ui-push.js         the Push Notifications screen
 // Everything is a method on one object, so `this` works the same in
 // every file. Add new files to index.html AND sw.js ASSETS_TO_CACHE.
 
@@ -126,13 +128,18 @@ const UI = {
     // (ui-dashboard.js → ui-radar.js); its own controls are wired there.
     if (typeof this._bindRadarControls === 'function') this._bindRadarControls();
 
+    // Push Notifications screen (ui-push.js): menu entry, back button,
+    // toggles. Guarded like the radar so a stale-cache mix of files
+    // can't throw here and kill the rest of init.
+    if (typeof this._bindPushScreen === 'function') this._bindPushScreen();
+
     // Close any open overlay on Escape
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return;
-      ['alerts', 'discussion', 'radar', 'about', 'units', 'locations', 'main-menu', 'import-export'].forEach(s => {
+      ['alerts', 'discussion', 'radar', 'about', 'units', 'locations', 'main-menu', 'import-export', 'push'].forEach(s => {
         const el = document.getElementById(s + '-screen') || document.getElementById(s);
         if (el && el.classList.contains('open')) {
-          if (['about', 'units', 'locations', 'import-export'].includes(s)) {
+          if (['about', 'units', 'locations', 'import-export', 'push'].includes(s)) {
              this.closeOverlayWithCube(el.id);
           } else {
              this.toggleScreen(s, false);
@@ -413,6 +420,7 @@ const UI = {
       else if (action === 'units') this.toggleScreen('units', true);
       else if (action === 'import-export') this.toggleScreen('import-export', true);
       else if (action === 'about') this.toggleScreen('about', true);
+      else if (action === 'push') this.toggleScreen('push', true);
       else if (action === 'copy-url') this.handleCopyURL();
       else if (action === 'install') App.promptInstall();
     });
@@ -439,7 +447,8 @@ const UI = {
       'discussion': document.getElementById('discussion-screen'),
       'radar':     document.getElementById('radar-screen'),
       'about':     document.getElementById('about-screen'),
-      'import-export': this.importExportScreen
+      'import-export': this.importExportScreen,
+      'push':      document.getElementById('push-screen')
     };
     const el = map[screen];
     if (!el) return;
@@ -453,6 +462,9 @@ const UI = {
 
     if (screen === 'import-export' && show) {
       this.onShowImportExportScreen();
+    }
+    if (screen === 'push' && show && typeof this.onShowPushScreen === 'function') {
+      this.onShowPushScreen();
     }
     // Refreshed on every open rather than once at boot: the cache bucket
     // can change underneath a long-running session when a new worker

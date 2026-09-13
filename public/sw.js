@@ -18,7 +18,7 @@
 // (index.html used to also carry ?v= query strings, but cacheKey()
 // strips the query before caching, so they never did anything and were
 // removed.)
-const CACHE_NAME = 'weatherdaddy-v220';
+const CACHE_NAME = 'weatherdaddy-v221';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -32,6 +32,7 @@ const ASSETS_TO_CACHE = [
   './js/ui-dashboard.js',
   './js/ui-locations.js',
   './js/ui-radar.js',
+  './js/ui-push.js',
   // MapLibre is injected by ui-radar.js on the first Radar tap, not
   // loaded with the page — precached so later opens don't need to fetch
   // ~1 MB of library over a phone connection.
@@ -412,3 +413,73 @@ async function offlineFallback(request) {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' }
   });
 }
+
+// ── Push notifications ───────────────────────────────────────────────
+// Payloads come from worker/push.js (composeBriefing): { title, body,
+// url, tag, timestamp }. Everything is defaulted so a payload from a
+// newer server than this worker still shows something sensible.
+
+self.addEventListener('push', event => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; }
+  catch (_) { data = { body: event.data ? event.data.text() : '' }; }
+  const title = data.title || 'WeatherDaddy';
+  const options = {
+    body: data.body || '',
+    icon: data.icon || './assets/icons/icon-192.png',
+    badge: data.badge || './assets/icons/monochrome-192.png',
+    // Same tag → a new briefing replaces yesterday's in the tray.
+    tag: data.tag || 'weatherdaddy',
+    renotify: false,
+    data: { url: data.url || './' },
+  };
+  if (typeof data.timestamp === 'number') options.timestamp = data.timestamp;
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const target = new URL((event.notification.data && event.notification.data.url) || './', self.location.href);
+  event.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const win = wins.find(w => 'focus' in w);
+    if (win) {
+      // Hand the city to the running app (app.js listens for this)
+      // rather than navigating, which would drop its state.
+      try { await win.focus(); } catch (_) {}
+      const q = target.searchParams;
+      if (q.get('lat') && q.get('lon')) {
+        win.postMessage({ type: 'open-location', lat: q.get('lat'), lon: q.get('lon'), name: q.get('name') || '' });
+      }
+      return;
+    }
+    await self.clients.openWindow(target.href);
+  })());
+});
+
+// The push service rotated this browser's subscription. Re-subscribe
+// with the same server key and tell the server which row to move, so
+// the person's preferences survive without them noticing.
+self.addEventListener('pushsubscriptionchange', event => {
+  event.waitUntil((async () => {
+    const old = event.oldSubscription;
+    let sub = event.newSubscription || null;
+    if (!sub) {
+      let key = old && old.options ? old.options.applicationServerKey : null;
+      if (!key) {
+        const cfg = await (await fetch('./api/push/config', { cache: 'no-store' })).json();
+        if (!cfg || !cfg.publicKey) return;
+        const b64 = cfg.publicKey.replace(/-/g, '+').replace(/_/g, '/');
+        const bin = atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4));
+        key = Uint8Array.from(bin, c => c.charCodeAt(0));
+      }
+      sub = await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    }
+    if (!old || !old.endpoint) return;
+    await fetch('./api/push/resubscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ oldEndpoint: old.endpoint, subscription: sub.toJSON() }),
+    });
+  })().catch(err => console.warn('[WeatherDaddy SW] resubscribe failed:', err)));
+});

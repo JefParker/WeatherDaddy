@@ -20,5 +20,28 @@
     // straight from the edge without a Worker invocation.
     "run_worker_first": ["/api/*", "/sw.js", "/", "/index.html"]
   },
+  // Public half of the VAPID keypair; the private half is the secret
+  // VAPID_PRIVATE_KEY (`wrangler secret put`; .dev.vars locally). The
+  // subject is what push services see as the sender's contact.
+  "vars": {
+    "VAPID_PUBLIC_KEY": "BLC01tz2OD37G9QKzqqpv9cVpHoswWSYkc8kGUNbSjgLZb-uwx9i0FrCj3BJD_t6aDWudnk6YO8CsEcRRJ44ZM4",
+    "VAPID_SUBJECT": "https://weatherdaddy.app"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "weatherdaddy-db",
+      "database_id": "5353df81-4ea1-40ec-a047-cd1a4e642941",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // Morning briefings are due on the hour in each subscriber's own
+  // timezone; running twice an hour gives a retry within the hour and
+  // lands half-hour zones (Newfoundland, India) at :30 rather than :60.
+  "triggers": { "crons": ["*/30 * * * *"] },
   "observability": { "enabled": true }
+  // Cutover: once the weatherdaddy.app custom domain has been removed
+  // from the Pages project, uncomment this and deploy to attach it here.
+  // (Both can't hold the hostname at once.)
+  // ,"routes": [{ "pattern": "weatherdaddy.app", "custom_domain": true }]
 }
