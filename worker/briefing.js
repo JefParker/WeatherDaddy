@@ -8,9 +8,10 @@
 // and it needs no API key. The app's own 8-day view is built on the
 // same daily fields (see WeatherAPI.getOpenMeteoEnrichment), so the
 // briefing agrees with what they see when they tap it. The same call
-// carries two days of hourly data and sunrise/sunset for the threshold
-// and full-moon features (worker/thresholds.js, worker/moon.js), so a
-// location costs one subrequest per tick however many features fire.
+// carries two days of hourly data and sunrise/sunset for the threshold,
+// full-moon, sky-event and forecast-change features (worker/thresholds.js,
+// moon.js, sky.js, changes.js), so a location costs one subrequest per
+// tick however many features fire.
 
 // Wall-clock in an IANA zone. An unknown zone falls back to UTC rather
 // than throwing — a stale row must never take the whole cron down.
@@ -57,7 +58,7 @@ export async function fetchForecast(lat, lon, units) {
   url.searchParams.set('latitude', String(lat));
   url.searchParams.set('longitude', String(lon));
   url.searchParams.set('daily', 'temperature_2m_max,temperature_2m_min,weathercode,precipitation_probability_max,precipitation_sum,snowfall_sum,windgusts_10m_max,sunrise,sunset');
-  url.searchParams.set('hourly', 'temperature_2m,apparent_temperature,wind_gusts_10m,rain,snowfall,cloud_cover,weather_code');
+  url.searchParams.set('hourly', 'temperature_2m,apparent_temperature,wind_gusts_10m,rain,snowfall,precipitation_probability,cloud_cover,weather_code');
   url.searchParams.set('current', 'temperature_2m,weather_code');
   // The CITY's timezone: "today" is the city's today, which is what a
   // briefing about that city means even for someone reading it elsewhere.

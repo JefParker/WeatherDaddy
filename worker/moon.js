@@ -28,6 +28,14 @@ export function fullMoonAt(k) {
   return { name: prevMonth === month ? 'Blue Moon' : FULL_MOON_NAMES[month], dt: Math.round(dtMs / 1000) };
 }
 
+// Fraction of the Moon's disc lit at `sec`, 0 (new) to 1 (full), from
+// the phase angle alone — plenty for "how much will it wash out the sky".
+export function moonIllumination(sec) {
+  const cycles = (sec * 1000 - REF_MS) / (SYNODIC_DAYS * 86400000);
+  const phase = cycles - Math.floor(cycles); // 0 = full, 0.5 = new
+  return (1 + Math.cos(2 * Math.PI * phase)) / 2;
+}
+
 // The three full moons nearest `nowSec` (previous / nearest / next).
 export function nearbyFullMoons(nowSec) {
   const k = Math.round((nowSec * 1000 - REF_MS) / (SYNODIC_DAYS * 86400000));
@@ -109,12 +117,12 @@ export function moonDue(row, nowSec) {
   return null;
 }
 
-function nextDay(y, m, d) {
+export function nextDay(y, m, d) {
   const t = new Date(Date.UTC(y, m - 1, d) + 86400000);
   return [t.getUTCFullYear(), t.getUTCMonth() + 1, t.getUTCDate()];
 }
 
-function clockTime(sec, tz, timeFmt) {
+export function clockTime(sec, tz, timeFmt) {
   const opts = { hour: 'numeric', minute: '2-digit', hour12: timeFmt !== '24h' };
   try { return new Intl.DateTimeFormat('en-US', { timeZone: tz, ...opts }).format(new Date(sec * 1000)); }
   catch (_) { return new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', ...opts }).format(new Date(sec * 1000)); }

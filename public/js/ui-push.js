@@ -3,8 +3,9 @@
 // Extends the UI object from ui.js. Loaded after ui-radar.js and before
 // app.js in index.html, and listed in sw.js ASSETS_TO_CACHE. The screen
 // is one city picker followed by a section per feature: morning
-// briefing, severe weather alerts, threshold alerts, full moon. Every
-// feature shares the one city and the one browser subscription.
+// briefing, severe weather alerts, threshold alerts, full moon, sky
+// events, forecast changes. Every feature shares the one city and the
+// one browser subscription.
 //
 // The flow: the first switch turned on asks for notification
 // permission, subscribes this browser to Web Push with the server's
@@ -18,7 +19,7 @@
 
 Object.assign(UI, {
   PUSH_API: '/api/push',
-  PUSH_FEATURES: ['briefing', 'alerts', 'thresholds', 'moon'],
+  PUSH_FEATURES: ['briefing', 'alerts', 'thresholds', 'moon', 'sky', 'changes'],
   // Bit per threshold item; must match worker/thresholds.js.
   PUSH_THRESHOLDS: [
     { bit: 1,  id: 'freeze', label: 'Freeze',           sub: 'Low at or below 32°F / 0°C' },
@@ -26,7 +27,8 @@ Object.assign(UI, {
     { bit: 4,  id: 'wind',   label: 'High wind',        sub: 'Gusts of 45 mph / 72 km/h or more' },
     { bit: 8,  id: 'rain',   label: 'Heavy rain',       sub: '1 in / 25 mm or more in 24 hours' },
     { bit: 16, id: 'snow',   label: 'Heavy snow',       sub: '3 in / 7 cm or more in 24 hours' },
-    { bit: 32, id: 'aqi',    label: 'Poor air quality', sub: 'US AQI above 100' },
+    { bit: 32, id: 'aqi',      label: 'Poor air quality', sub: 'US AQI above 100' },
+    { bit: 64, id: 'umbrella', label: 'Umbrella',         sub: '50% or better chance of rain at some point' },
   ],
   _push: null,          // element handles, set by _bindPushScreen
   _pushBusy: false,
@@ -260,6 +262,10 @@ Object.assign(UI, {
           text = `Every day at ${hourText(els.thresholdHour)}, for the next 24 hours`.trim();
         } else if (f === 'moon') {
           text = 'Shortly before sunset on the night of each full moon';
+        } else if (f === 'sky') {
+          text = 'Before sunset on the night of a meteor-shower peak or lunar eclipse; a couple of hours before a solar eclipse';
+        } else if (f === 'changes') {
+          text = `Checked at ${hourText(els.hour)} and ${hourText(els.thresholdHour)}, only sent when something moved a lot`.trim();
         }
       }
     }
@@ -279,6 +285,7 @@ Object.assign(UI, {
       features: {
         briefing: p.briefing.enabled, alerts: p.alerts.enabled,
         thresholds: p.thresholds.enabled, moon: p.moon.enabled,
+        sky: p.sky.enabled, changes: p.changes.enabled,
       },
       thresholdHour: p.thresholds.hour,
       thresholdMask: p.thresholds.mask,
@@ -312,6 +319,8 @@ Object.assign(UI, {
         mask: Number.isInteger(sp.thresholdMask) ? sp.thresholdMask : base.thresholds.mask,
       },
       moon:       { enabled: !!f.moon },
+      sky:        { enabled: !!f.sky },
+      changes:    { enabled: !!f.changes },
     };
     Storage.savePushPrefs(p);
     return p;
@@ -375,7 +384,10 @@ Object.assign(UI, {
   },
 
   _pushFeatureLabel(f) {
-    return { briefing: 'Morning briefing', alerts: 'Severe weather alerts', thresholds: 'Threshold alerts', moon: 'Full moon alerts' }[f] || f;
+    return {
+      briefing: 'Morning briefing', alerts: 'Severe weather alerts', thresholds: 'Threshold alerts',
+      moon: 'Full moon alerts', sky: 'Sky event alerts', changes: 'Forecast change alerts',
+    }[f] || f;
   },
 
   // Turn one feature on or off. Turning the first one on does the

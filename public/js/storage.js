@@ -205,11 +205,11 @@ const Storage = {
   // device, shared by every feature; v1 (1.8) kept the city inside
   // `briefing`, and that is lifted out on read.
   PUSH_PREFS_KEY: 'push_prefs_v1',
-  PUSH_THRESHOLD_ALL: 63,
+  PUSH_THRESHOLD_ALL: 127,
   getPushPrefs() {
     const raw = this._read(this.PUSH_PREFS_KEY, null) || {};
     const obj = (k) => (raw && typeof raw[k] === 'object' && raw[k]) || {};
-    const b = obj('briefing'), a = obj('alerts'), t = obj('thresholds'), m = obj('moon');
+    const b = obj('briefing'), a = obj('alerts'), t = obj('thresholds'), m = obj('moon'), s = obj('sky'), c = obj('changes');
     const hour = (v, dflt) => (Number.isInteger(v) && v >= 0 && v <= 23) ? v : dflt;
     const cityOf = (c) => (c && typeof c.lat === 'number' && typeof c.lon === 'number')
       ? { lat: c.lat, lon: c.lon, name: typeof c.name === 'string' ? c.name : '' }
@@ -227,7 +227,9 @@ const Storage = {
         hour:    hour(t.hour, 17),
         mask:    (Number.isInteger(t.mask) && t.mask >= 0 && t.mask <= this.PUSH_THRESHOLD_ALL) ? t.mask : this.PUSH_THRESHOLD_ALL,
       },
-      moon: { enabled: m.enabled === true },
+      moon:    { enabled: m.enabled === true },
+      sky:     { enabled: s.enabled === true },
+      changes: { enabled: c.enabled === true },
     };
   },
   savePushPrefs(prefs) {

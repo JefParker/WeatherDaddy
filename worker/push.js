@@ -6,10 +6,11 @@
 // reading, changing or deleting that one row. Rows live in D1 (binding
 // DB; schema in migrations/). One row per device carries one city and
 // a flag per feature: morning briefing, severe weather alerts, threshold
-// alerts, full moon.
+// alerts, full moon, sky events, forecast changes.
 //
 // Two crons (wrangler.jsonc): */30 runs the clock-driven features
-// (briefing, thresholds, moon) and */5 runs the severe-weather check.
+// (briefing, thresholds, moon, sky, changes) and */5 runs the
+// severe-weather check.
 // Each invocation gets its own budget below.
 //
 // Free-plan budgets that shape a cron run (numbers from
@@ -29,8 +30,10 @@ import {
 import {
   inNwsBox, alertKey, fetchActiveAlerts, isPushWorthy, referencedIds, composeAlert, alertTtl,
 } from './alerts.js';
-import { T, fetchAirQuality, evaluateThresholds, composeThresholds } from './thresholds.js';
+import { T, T_ALL, fetchAirQuality, evaluateThresholds, composeThresholds } from './thresholds.js';
 import { moonDue, composeMoon } from './moon.js';
+import { skyDue, composeSky } from './sky.js';
+import { changesSlot, evaluateChanges, composeChanges } from './changes.js';
 
 const MAX_SUBREQUESTS  = 45;
 const MAX_SENDS        = 25;       // CPU budget; anything past it waits for the next tick
@@ -47,7 +50,6 @@ const TEMP_UNITS   = new Set(['C', 'F']);
 const WIND_UNITS   = new Set(['ms', 'kmh', 'mph']);
 const PRECIP_UNITS = new Set(['mm', 'in']);
 const TIME_FMTS    = new Set(['12h', '24h']);
-const THRESHOLD_MASK_ALL = 63;
 
 function json(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -119,10 +121,12 @@ function parsePrefs(p) {
     alerts:     f.alerts === true,
     thresholds: f.thresholds === true,
     moon:       f.moon === true,
+    sky:        f.sky === true,
+    changes:    f.changes === true,
   };
   const thresholdHour = hourOf(Number(p.thresholdHour), 17);
   const m = Number(p.thresholdMask);
-  const thresholdMask = (Number.isInteger(m) && m >= 0 && m <= THRESHOLD_MASK_ALL) ? m : THRESHOLD_MASK_ALL;
+  const thresholdMask = (Number.isInteger(m) && m >= 0 && m <= T_ALL) ? m : T_ALL;
   return { lat, lon, name, tz: p.tz, hour, units, features, thresholdHour, thresholdMask };
 }
 
@@ -143,6 +147,8 @@ function publicPrefs(row) {
       alerts:     !!row.alerts,
       thresholds: !!row.thresholds,
       moon:       !!row.moon,
+      sky:        !!row.sky,
+      changes:    !!row.changes,
     },
     thresholdHour: row.threshold_hour,
     thresholdMask: row.threshold_mask,
@@ -190,9 +196,9 @@ async function subscribe(env, body) {
     INSERT INTO push_subscriptions
       (endpoint, p256dh, auth, lat, lon, city_name, tz, hour,
        temp_unit, wind_unit, precip_unit, time_fmt,
-       briefing, alerts, thresholds, threshold_hour, threshold_mask, moon,
+       briefing, alerts, thresholds, threshold_hour, threshold_mask, moon, sky, changes,
        created_at, updated_at)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?19)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?21)
     ON CONFLICT(endpoint) DO UPDATE SET
       p256dh = excluded.p256dh, auth = excluded.auth,
       lat = excluded.lat, lon = excluded.lon, city_name = excluded.city_name,
@@ -202,11 +208,13 @@ async function subscribe(env, body) {
       briefing = excluded.briefing, alerts = excluded.alerts,
       thresholds = excluded.thresholds, threshold_hour = excluded.threshold_hour,
       threshold_mask = excluded.threshold_mask, moon = excluded.moon,
+      sky = excluded.sky, changes = excluded.changes,
       fail_count = 0, updated_at = excluded.updated_at
   `).bind(
     sub.endpoint, sub.p256dh, sub.auth, prefs.lat, prefs.lon, prefs.name, prefs.tz, prefs.hour,
     prefs.units.temp, prefs.units.wind, prefs.units.precip, prefs.units.time,
     f.briefing ? 1 : 0, f.alerts ? 1 : 0, f.thresholds ? 1 : 0, prefs.thresholdHour, prefs.thresholdMask, f.moon ? 1 : 0,
+    f.sky ? 1 : 0, f.changes ? 1 : 0,
     now
   ).run();
   const row = await env.DB.prepare('SELECT * FROM push_subscriptions WHERE endpoint = ?1').bind(sub.endpoint).first();
@@ -325,7 +333,8 @@ function makeLedger(env) {
 
 // One */30 tick, for the features driven by the subscriber's clock:
 // the morning briefing at `hour`, the threshold check at
-// `threshold_hour`, the full-moon note before sunset. Each row yields
+// `threshold_hour`, the forecast-change look at both, the full-moon
+// and sky-event notes before sunset (or before a solar eclipse). Each row yields
 // zero or more jobs for this tick; jobs are grouped by rounded location
 // and units so one forecast call serves every job at that place, and
 // the whole tick stays under the subrequest and send budgets. Whatever
@@ -335,13 +344,13 @@ export async function runClockFeatures(env, { now = new Date() } = {}) {
   const vapid = vapidFrom(env);
   const stats = {
     total: 0, due: 0, sent: 0, gone: 0, failed: 0, deferred: 0, forecasts: 0, forecastErrors: 0,
-    briefings: 0, thresholds: 0, quiet: 0, moons: 0,
+    briefings: 0, thresholds: 0, quiet: 0, moons: 0, skies: 0, changes: 0,
   };
   if (!vapid || !env.DB) return { ...stats, skipped: 'not configured' };
   const nowSec = Math.floor(now.getTime() / 1000);
 
   const { results: rows } = await env.DB
-    .prepare('SELECT * FROM push_subscriptions WHERE briefing = 1 OR thresholds = 1 OR moon = 1').all();
+    .prepare('SELECT * FROM push_subscriptions WHERE briefing = 1 OR thresholds = 1 OR moon = 1 OR sky = 1 OR changes = 1').all();
   stats.total = rows.length;
 
   const groups = new Map();
@@ -362,6 +371,14 @@ export async function runClockFeatures(env, { now = new Date() } = {}) {
     if (row.moon) {
       const m = moonDue(row, nowSec);
       if (m) add(row, { kind: 'moon', ...m });
+    }
+    if (row.sky) {
+      const s = skyDue(row, nowSec);
+      if (s) add(row, { kind: 'sky', ...s });
+    }
+    if (row.changes) {
+      const slot = changesSlot(row, clock);
+      if (slot && row.changes_last_slot !== slot.key) add(row, { kind: 'changes', ...slot });
     }
   }
   if (!stats.due) return stats;
@@ -415,6 +432,18 @@ export async function runClockFeatures(env, { now = new Date() } = {}) {
         stats.moons++;
         await ledger.deliver(row, composeMoon(row, job, forecast, now.getTime()), vapid, { ttl: 3 * 3600, urgency: 'normal', topic: 'moon' }, stats,
           () => ledger.update(row.endpoint, 'UPDATE push_subscriptions SET moon_last_key = ?1 WHERE endpoint = ?2', job.key));
+      } else if (job.kind === 'sky') {
+        stats.skies++;
+        await ledger.deliver(row, composeSky(row, job, forecast, now.getTime()), vapid, { ttl: 3 * 3600, urgency: 'normal', topic: 'sky' }, stats,
+          () => ledger.update(row.endpoint, 'UPDATE push_subscriptions SET sky_last_key = ?1 WHERE endpoint = ?2', job.key));
+      } else if (job.kind === 'changes') {
+        stats.changes++;
+        const result = evaluateChanges(row, forecast, job, nowSec);
+        // The snapshot is stored either way: a quiet look is still the
+        // baseline for the next one.
+        const done = () => ledger.update(row.endpoint, 'UPDATE push_subscriptions SET changes_snapshot = ?1, changes_last_slot = ?2 WHERE endpoint = ?3', result.snapshot, job.key);
+        if (!result.items.length) { stats.quiet++; done(); return; }
+        await ledger.deliver(row, composeChanges(row, result, now.getTime()), vapid, { ttl: 6 * 3600, urgency: 'normal', topic: 'changes' }, stats, done);
       }
     });
   }

@@ -6,9 +6,11 @@
 
 import { runClockFeatures as runBriefings, runAlerts } from '../worker/push.js';
 import { isPushWorthy, referencedIds, formatAlertTime, alertGist, composeAlert, alertTtl, inNwsBox } from '../worker/alerts.js';
-import { T, evaluateThresholds, composeThresholds, hourLabel } from '../worker/thresholds.js';
+import { T, T_ALL, evaluateThresholds, composeThresholds, hourLabel } from '../worker/thresholds.js';
 import { localIsoToEpoch } from '../worker/briefing.js';
-import { nearbyFullMoons, solarTimes, moonDue, composeMoon, skyAt } from '../worker/moon.js';
+import { nearbyFullMoons, solarTimes, moonDue, composeMoon, skyAt, moonIllumination } from '../worker/moon.js';
+import { skyDue, composeSky, METEOR_SHOWERS, ECLIPSES } from '../worker/sky.js';
+import { changesSlot, evaluateChanges, composeChanges, sinceWord } from '../worker/changes.js';
 
 let failures = 0;
 const check = (name, ok, detail = '') => {
@@ -31,8 +33,9 @@ const NOW = new Date('2026-09-15T20:07:00Z');
 const row = (i, extra = {}) => ({
   endpoint: `https://push.example/${i}`, p256dh, auth, lat: 39.74, lon: -104.99, city_name: 'Denver', tz: 'UTC',
   hour: 20, temp_unit: 'F', wind_unit: 'mph', precip_unit: 'in', time_fmt: '12h',
-  briefing: 1, alerts: 0, thresholds: 0, threshold_hour: 17, threshold_mask: 63, moon: 0,
-  last_sent_day: null, threshold_last_day: null, moon_last_key: null, fail_count: 0, ...extra,
+  briefing: 1, alerts: 0, thresholds: 0, threshold_hour: 17, threshold_mask: 63, moon: 0, sky: 0, changes: 0,
+  last_sent_day: null, threshold_last_day: null, moon_last_key: null, sky_last_key: null,
+  changes_snapshot: null, changes_last_slot: null, fail_count: 0, ...extra,
 });
 
 // A fake D1: `tables` answers SELECTs by a substring of the SQL; every
@@ -55,11 +58,12 @@ const pushed = [];
 const hourly = (over = {}) => {
   const time = Array.from({ length: 48 }, (_, i) => new Date(Date.UTC(2026, 8, 15) + i * 3600000).toISOString().slice(0, 16));
   const fill = (v) => Array(48).fill(v);
-  const h = { time, temperature_2m: fill(60), apparent_temperature: fill(60), wind_gusts_10m: fill(10), rain: fill(0), snowfall: fill(0), cloud_cover: fill(20), weather_code: fill(1) };
+  const h = { time, temperature_2m: fill(60), apparent_temperature: fill(60), wind_gusts_10m: fill(10), rain: fill(0), snowfall: fill(0), precipitation_probability: fill(0), cloud_cover: fill(20), weather_code: fill(1) };
   for (const [k, edits] of Object.entries(over)) for (const [i, v] of Object.entries(edits)) h[k][i] = v;
   return h;
 };
-let forecastJson = { daily: { temperature_2m_max: [70], temperature_2m_min: [50], weathercode: [1], precipitation_probability_max: [10] }, current: { temperature_2m: 60, weather_code: 1 }, hourly: hourly(), utc_offset_seconds: 0 };
+const daily = (over = {}) => ({ time: ['2026-09-15', '2026-09-16'], temperature_2m_max: [70, 72], temperature_2m_min: [50, 51], weathercode: [1, 1], precipitation_probability_max: [10, 10], snowfall_sum: [0, 0], ...over });
+let forecastJson = { daily: daily(), current: { temperature_2m: 60, weather_code: 1 }, hourly: hourly(), utc_offset_seconds: 0 };
 let aqiJson = { hourly: { time: hourly().time, us_aqi: Array(48).fill(30) }, utc_offset_seconds: 0 };
 let nwsJson = { features: [] };
 globalThis.fetch = async (url, init) => {
@@ -113,6 +117,13 @@ eq('snow: inches', evaluateThresholds(trow(), fc({ snowfall: { 30: 2, 31: 1.5 } 
 eq('aqi: needs the air-quality series', evaluateThresholds(trow(), fc(), null, nowSecT), []);
 eq('aqi: worst hour', evaluateThresholds(trow(), fc(), { hourly: { time: hourly().time, us_aqi: Object.assign(Array(48).fill(30), { 35: 132, 36: 120 }) }, utcOffset: 0 }, nowSecT).map(i => i.text), ['AQI 132 around Wed 11 AM.']);
 eq('mask: unticked items stay silent', evaluateThresholds(trow({ threshold_mask: T.HEAT }), fc({ temperature_2m: { 30: 20 }, apparent_temperature: { 39: 104 } }), null, nowSecT).map(i => i.bit), [T.HEAT]);
+eq('umbrella: bit 64, T_ALL 127', [T.UMBRELLA, T_ALL], [64, 127]);
+eq('umbrella: likeliest hour', evaluateThresholds(trow({ threshold_mask: T.UMBRELLA }), fc({ precipitation_probability: { 30: 40, 38: 70, 39: 65 } }), null, nowSecT).map(i => i.text), ['70% chance of rain around Wed 2 PM.']);
+eq('umbrella: 49% is not worth carrying one', evaluateThresholds(trow({ threshold_mask: T.UMBRELLA }), fc({ precipitation_probability: { 38: 49 } }), null, nowSecT), []);
+eq('umbrella: outside the window is ignored', evaluateThresholds(trow({ threshold_mask: T.UMBRELLA }), fc({ precipitation_probability: { 5: 90, 47: 90 } }), null, nowSecT), []);
+eq('umbrella: says snow when snow falls that hour', evaluateThresholds(trow({ threshold_mask: T.UMBRELLA }), fc({ precipitation_probability: { 30: 80 }, snowfall: { 30: 0.4 } }), null, nowSecT).map(i => i.text), ['80% chance of snow around Wed 6 AM.']);
+eq('umbrella: not ticked in the old default mask', evaluateThresholds(trow({ threshold_mask: 63 }), fc({ precipitation_probability: { 30: 80 } }), null, nowSecT), []);
+eq('umbrella: title', composeThresholds(trow(), evaluateThresholds(trow({ threshold_mask: T.UMBRELLA }), fc({ precipitation_probability: { 30: 80 } }), null, nowSecT), NOW.getTime()).title, 'Umbrella · Denver');
 {
   const items = evaluateThresholds(trow(), fc({ temperature_2m: { 30: 28 }, wind_gusts_10m: { 22: 52 } }), null, nowSecT);
   const one = composeThresholds(trow(), items.slice(0, 1), NOW.getTime());
@@ -203,6 +214,140 @@ eq('mask: unticked items stay silent', evaluateThresholds(trow({ threshold_mask:
   check('clock: moon_last_key written', env.DB.writes.some(w => w.sql.includes('moon_last_key') && w.binds[0] === String(harvest.dt)));
   check('clock: moon push has its topic', pushed.some(p => p.headers.Topic === 'moon'));
   forecastJson = { ...forecastJson, hourly: hourly(), utc_offset_seconds: 0, timezone: null };
+}
+
+// ── Sky events ───────────────────────────────────────────────────────
+{
+  const iso = (sec) => new Date(sec * 1000).toISOString().slice(0, 16);
+  const srow = (extra = {}) => row('s', { briefing: 0, sky: 1, tz: 'America/Denver', ...extra });
+  const tokyo = (extra = {}) => srow({ lat: 35.68, lon: 139.69, tz: 'Asia/Tokyo', city_name: 'Tokyo', ...extra });
+  check('every shower and eclipse has a unique key', new Set([...METEOR_SHOWERS, ...ECLIPSES].map(e => e.key)).size === METEOR_SHOWERS.length + ECLIPSES.length);
+  check('eclipse times parse', ECLIPSES.every(e => Number.isFinite(Date.parse(e.max))));
+  check('solar eclipses carry a box and a partial region', ECLIPSES.filter(e => e.kind === 'solar').every(e => e.box && e.box.length === 4 && e.partial));
+  eq('moon illumination: full', Math.round(moonIllumination(Date.parse('2026-09-26T16:49Z') / 1000) * 100), 100);
+  eq('moon illumination: new (Perseids 2026 peak)', Math.round(moonIllumination(Date.parse('2026-08-12T17:37Z') / 1000) * 100), 0);
+
+  // Perseids: peak night Aug 12. Denver sunset that day ≈ 02:03Z on the 13th.
+  const sunset = solarTimes(2026, 8, 12, 39.74, -104.99, 'America/Denver').sunset;
+  eq('Denver sunset 2026-08-12 ≈ 02:00Z (8:00 PM MDT)', iso(sunset), '2026-08-13T02:00');
+  check('perseids: due 45 min before sunset', !!skyDue(srow(), sunset - 45 * 60));
+  check('perseids: not due 2 h before', !skyDue(srow(), sunset - 120 * 60));
+  check('perseids: not due after the window', !skyDue(srow(), sunset - 10 * 60));
+  check('perseids: not due the night before', !skyDue(srow(), sunset - 86400 - 45 * 60));
+  check('perseids: once per year', !skyDue(srow({ sky_last_key: 'perseids-2026' }), sunset - 45 * 60));
+  check('perseids: a different key does not block', !!skyDue(srow({ sky_last_key: 'perseids-2025' }), sunset - 45 * 60));
+  const pj = skyDue(srow(), sunset - 45 * 60);
+  eq('perseids: job', [pj.key, pj.what, pj.event.name], ['perseids-2026', 'meteor', 'Perseids']);
+  check('perseids: best viewing two hours before dawn', pj.best === pj.sunrise - 7200 && pj.best > pj.sunset);
+  const t0 = Date.UTC(2026, 7, 12, 6);
+  const times = Array.from({ length: 48 }, (_, i) => new Date(t0 + i * 3600000 - 6 * 3600000).toISOString().slice(0, 16));
+  const fcs = (cc) => ({ hourly: { time: times, cloud_cover: Array(48).fill(cc), weather_code: Array(48).fill(1) }, utcOffset: -21600, timezone: 'America/Denver' });
+  const note = composeSky(srow(), pj, fcs(10), NOW.getTime());
+  eq('perseids: title', note.title, 'Perseids peak tonight');
+  eq('perseids: body', note.body, 'Denver · up to 100 meteors an hour under a dark sky\nBest after midnight, away from city lights. Clear skies expected. Moon 0% lit.');
+  eq('perseids: tag', note.tag, 'sky');
+
+  // Partial lunar eclipse 2026-08-28 04:13Z: 10:13 PM MDT on the 27th in
+  // Denver (night of the 27th), 1:13 PM JST in Tokyo (daytime, unseen).
+  const lmax = Date.parse('2026-08-28T04:13Z') / 1000;
+  const dsunset = solarTimes(2026, 8, 27, 39.74, -104.99, 'America/Denver').sunset;
+  check('lunar: due before sunset on the night of the 27th in Denver', !!skyDue(srow(), dsunset - 45 * 60));
+  check('lunar: not due the evening before', !skyDue(srow(), dsunset - 86400 - 45 * 60));
+  check('lunar: not due the evening after', !skyDue(srow(), dsunset + 86400 - 45 * 60));
+  const tsunset = solarTimes(2026, 8, 28, 35.68, 139.69, 'Asia/Tokyo').sunset;
+  check('lunar: not visible from Tokyo (Moon down at greatest eclipse)', !skyDue(tokyo(), tsunset - 45 * 60) && !skyDue(tokyo(), tsunset - 86400 - 45 * 60));
+  const lj = skyDue(srow(), dsunset - 45 * 60);
+  eq('lunar: job', [lj.key, lj.what, lj.max], ['lunar-2026-08-28', 'lunar', lmax]);
+  const lt0 = Date.UTC(2026, 7, 27, 6);
+  const ltimes = Array.from({ length: 48 }, (_, i) => new Date(lt0 + i * 3600000 - 6 * 3600000).toISOString().slice(0, 16));
+  const lnote = composeSky(srow(), lj, { hourly: { time: ltimes, cloud_cover: Array(48).fill(50), weather_code: Array(48).fill(2) }, utcOffset: -21600, timezone: 'America/Denver' }, NOW.getTime());
+  eq('lunar: title', lnote.title, 'Partial lunar eclipse tonight');
+  eq('lunar: body', lnote.body, "Denver · greatest at 10:13 PM\nEarth's shadow takes a bite out of the Moon around then. Partly cloudy.");
+
+  // Total solar eclipse 2026-08-12 17:46Z: Denver is inside the coarse
+  // box with the Sun up (11:46 AM MDT); Tokyo is outside the box.
+  const smax = Date.parse('2026-08-12T17:46Z') / 1000;
+  check('solar: due 2 h before the peak in Denver', !!skyDue(srow(), smax - 120 * 60));
+  check('solar: not due 3 h before', !skyDue(srow(), smax - 180 * 60));
+  check('solar: not due an hour before', !skyDue(srow(), smax - 60 * 60));
+  check('solar: not due in Tokyo', !skyDue(tokyo(), smax - 120 * 60));
+  check('solar: sent once', !skyDue(srow({ sky_last_key: 'solar-2026-08-12' }), smax - 120 * 60));
+  const sj = skyDue(srow(), smax - 120 * 60);
+  eq('solar: job', [sj.key, sj.what], ['solar-2026-08-12', 'solar']);
+  const snote = composeSky(srow(), sj, fcs(10), NOW.getTime());
+  eq('solar: title', snote.title, 'Total solar eclipse today');
+  eq('solar: body', snote.body, 'Denver · peak around 11:46 AM\nTotal over Greenland, Iceland and northern Spain, partial across northern North America, Europe and North Africa. Eclipse glasses only. Clear skies expected.');
+  eq('solar: 24h clock', composeSky(srow({ time_fmt: '24h' }), sj, fcs(10), NOW.getTime()).body.split('\n')[0], 'Denver · peak around 11:46');
+  // The same evening has both the Perseids and (2 h earlier) the solar
+  // eclipse; after the eclipse is sent the shower is still due.
+  check('perseids still due after the eclipse was sent', skyDue(srow({ sky_last_key: 'solar-2026-08-12' }), sunset - 45 * 60).key === 'perseids-2026');
+
+  // Through the planner: a sky job shares the forecast with a briefing.
+  const when = new Date((sunset - 45 * 60) * 1000);
+  const hourThen = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Denver', hour: 'numeric', hourCycle: 'h23' }).format(when));
+  const rows = [srow({ briefing: 1, hour: hourThen })];
+  forecastJson = { ...forecastJson, hourly: fcs(10).hourly, utc_offset_seconds: -21600, timezone: 'America/Denver' };
+  const env = { ...baseEnv, DB: fakeDB({ 'OR thresholds = 1': () => rows }) };
+  pushed.length = 0;
+  const st = await runBriefings(env, { now: when });
+  eq('clock: sky + briefing → 2 jobs, 1 forecast, 2 sent', [st.due, st.skies, st.briefings, st.forecasts, st.sent], [2, 1, 1, 1, 2]);
+  check('clock: sky_last_key written', env.DB.writes.some(w => w.sql.includes('sky_last_key') && w.binds[0] === 'perseids-2026'));
+  check('clock: sky push has its topic', pushed.some(p => p.headers.Topic === 'sky'));
+  forecastJson = { ...forecastJson, hourly: hourly(), utc_offset_seconds: 0, timezone: null };
+}
+
+// ── Forecast changes ─────────────────────────────────────────────────
+{
+  const crow = (extra = {}) => row('c', { briefing: 0, changes: 1, hour: 6, threshold_hour: 17, ...extra });
+  const clock = (hour, dateKey = '2026-09-15') => ({ hour, dateKey });
+  eq('slot: briefing hour looks at today', changesSlot(crow(), clock(6)), { key: '2026-09-15T06', target: 'today' });
+  eq('slot: threshold hour looks at tomorrow', changesSlot(crow(), clock(17)), { key: '2026-09-15T17', target: 'tomorrow' });
+  eq('slot: other hours are nothing', changesSlot(crow(), clock(12)), null);
+  eq('slot: same hour → tomorrow', changesSlot(crow({ hour: 17 }), clock(17)).target, 'tomorrow');
+  const tsec = Date.parse('2026-09-15T17:05Z') / 1000;
+  eq('since: this morning', sinceWord(Date.parse('2026-09-15T06:05Z') / 1000, 'UTC', tsec), 'this morning');
+  eq('since: last night', sinceWord(Date.parse('2026-09-14T17:05Z') / 1000, 'UTC', tsec), 'last night');
+  eq('since: yesterday morning', sinceWord(Date.parse('2026-09-14T06:05Z') / 1000, 'UTC', tsec), 'yesterday morning');
+
+  const fcd = (over) => ({ daily: daily(over), hourly: hourly(), utcOffset: 0 });
+  const evening = { key: '2026-09-15T17', target: 'tomorrow' };
+  const morning = { key: '2026-09-15T06', target: 'today' };
+  const first = evaluateChanges(crow(), fcd(), evening, tsec);
+  eq('first look: nothing to compare, snapshot stored', [first.items, first.since], [[], '']);
+  const snap = JSON.parse(first.snapshot);
+  eq('snapshot: keyed by date with the four fields', [Object.keys(snap.days), snap.days['2026-09-16']], [['2026-09-15', '2026-09-16'], { hi: 72, lo: 51, pop: 10, snow: 0 }]);
+  const withSnap = (at = Date.parse('2026-09-15T06:05Z') / 1000) => crow({ changes_snapshot: JSON.stringify({ ...snap, at }) });
+  eq('quiet: small moves are nothing', evaluateChanges(withSnap(), fcd({ temperature_2m_max: [70, 78], precipitation_probability_max: [10, 40] }), evening, tsec).items, []);
+  eq('high dropped', evaluateChanges(withSnap(), fcd({ temperature_2m_max: [70, 62] }), evening, tsec).items, ["Tomorrow's high 62°, was 72°"]);
+  eq('°C cutoff is 4', evaluateChanges(withSnap({ }), { ...fcd({ temperature_2m_max: [70, 68] }) }, evening, tsec).items, []);
+  eq('°C: 4° moves', evaluateChanges(crow({ temp_unit: 'C', changes_snapshot: JSON.stringify({ ...snap, at: Date.parse('2026-09-15T06:05Z') / 1000 }) }), fcd({ temperature_2m_max: [70, 68] }), evening, tsec).items, ["Tomorrow's high 68°, was 72°"]);
+  eq('rain chance up', evaluateChanges(withSnap(), fcd({ precipitation_probability_max: [10, 70] }), evening, tsec).items, ['Rain chance 70%, was 10%']);
+  eq('snow now expected', evaluateChanges(withSnap(), fcd({ snowfall_sum: [0, 4.5] }), evening, tsec).items, ['Snow now expected: 4.5 in']);
+  eq('several at once, in order', evaluateChanges(withSnap(), fcd({ temperature_2m_max: [70, 60], temperature_2m_min: [50, 40], precipitation_probability_max: [10, 80] }), evening, tsec).items.length, 3);
+  eq('morning look compares today', evaluateChanges(withSnap(Date.parse('2026-09-14T17:05Z') / 1000), fcd({ temperature_2m_max: [58, 72] }), morning, Date.parse('2026-09-15T06:05Z') / 1000).items, ["Today's high 58°, was 70°"]);
+  eq('stale snapshot is replaced, not compared', evaluateChanges(withSnap(Date.parse('2026-09-13T06:05Z') / 1000), fcd({ temperature_2m_max: [70, 40] }), evening, tsec).items, []);
+  const res = evaluateChanges(withSnap(), fcd({ temperature_2m_max: [70, 62], precipitation_probability_max: [10, 70] }), evening, tsec);
+  const cnote = composeChanges(crow(), res, NOW.getTime());
+  eq('compose: title', cnote.title, 'Forecast changed · Denver');
+  eq('compose: body', cnote.body, "Tomorrow's high 62°, was 72° this morning.\nRain chance 70%, was 10%.");
+  eq('compose: tag', cnote.tag, 'changes');
+
+  // Through the planner at 20:07 UTC: a row whose briefing hour is 20
+  // takes the "today" look; one already looked this slot is skipped.
+  forecastJson = { ...forecastJson, daily: daily({ temperature_2m_max: [58, 72] }) };
+  const morningSnap = JSON.stringify({ at: Date.parse('2026-09-15T06:05Z') / 1000, days: { '2026-09-15': { hi: 70, lo: 50, pop: 10, snow: 0 }, '2026-09-16': { hi: 72, lo: 51, pop: 10, snow: 0 } } });
+  const rows = [
+    crow({ hour: 20, changes_snapshot: morningSnap }),
+    row('c2', { briefing: 0, changes: 1, hour: 20, changes_snapshot: null }),
+    row('c3', { briefing: 0, changes: 1, hour: 20, changes_last_slot: '2026-09-15T20' }),
+  ];
+  const env = { ...baseEnv, DB: fakeDB({ 'OR thresholds = 1': () => rows }) };
+  pushed.length = 0;
+  const st = await runBriefings(env, { now: NOW });
+  eq('clock: two looks due, one changed, one quiet, one forecast', [st.due, st.changes, st.quiet, st.sent, st.forecasts], [2, 2, 1, 1, 1]);
+  check('clock: both looks stored a snapshot and the slot', ['https://push.example/c', 'https://push.example/c2'].every(ep => env.DB.writes.some(w => w.sql.includes('changes_snapshot') && w.binds[1] === '2026-09-15T20' && w.binds[2] === ep && w.binds[0].includes('"2026-09-16"'))));
+  check('clock: changes push has its topic', pushed.some(p => p.headers.Topic === 'changes'));
+  forecastJson = { ...forecastJson, daily: daily() };
 }
 
 // ── Alert helpers ────────────────────────────────────────────────────

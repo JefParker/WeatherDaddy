@@ -11,8 +11,8 @@
 
 import { localIsoToEpoch } from './briefing.js';
 
-export const T = { FREEZE: 1, HEAT: 2, WIND: 4, RAIN: 8, SNOW: 16, AQI: 32 };
-export const T_ALL = 63;
+export const T = { FREEZE: 1, HEAT: 2, WIND: 4, RAIN: 8, SNOW: 16, AQI: 32, UMBRELLA: 64 };
+export const T_ALL = 127;
 
 const AQI_API = 'https://air-quality-api.open-meteo.com/v1/air-quality';
 
@@ -28,6 +28,9 @@ function cutoffs(row) {
     // otherwise in centimetres.
     snow:   row.precip_unit === 'in' ? 3 : 7,
     aqi:    101,
+    // Umbrella: any hour at or past this chance of precipitation.
+    // Unit-free, so it doesn't matter which unit system the row uses.
+    umbrella: 50,
   };
 }
 
@@ -92,7 +95,7 @@ export function evaluateThresholds(row, forecast, aqi, nowSec = Date.now() / 100
       if (v == null) continue;
       if (best == null || pick(v, best)) { best = v; at = i; }
     }
-    return best == null ? null : { value: best, when: hourLabel(times[at], row.time_fmt) };
+    return best == null ? null : { value: best, at, when: hourLabel(times[at], row.time_fmt) };
   };
   const total = (arr) => {
     let sum = 0, any = false, last = -1;
@@ -123,6 +126,14 @@ export function evaluateThresholds(row, forecast, aqi, nowSec = Date.now() / 100
   if (mask & T.SNOW) {
     const t = total(h.snowfall);
     if (t && t.value >= c.snow) out.push({ bit: T.SNOW, label: 'Heavy snow', text: `${fmt1(t.value)} ${unitWord.snow(row)} of snow by ${t.when}.` });
+  }
+  if (mask & T.UMBRELLA) {
+    // The likeliest hour; "rain" unless the model puts snow down then.
+    const e = extreme(h.precipitation_probability, (v, b) => v > b);
+    if (e && e.value >= c.umbrella) {
+      const what = (num(h.snowfall && h.snowfall[e.at]) || 0) > 0 ? 'snow' : 'rain';
+      out.push({ bit: T.UMBRELLA, label: 'Umbrella', text: `${Math.round(e.value)}% chance of ${what} around ${e.when}.` });
+    }
   }
   if ((mask & T.AQI) && aqi) {
     const aw = window24(aqi.hourly || {}, aqi.utcOffset, nowSec);
