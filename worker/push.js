@@ -24,11 +24,12 @@
 
 import { sendPush, b64uToBytes } from './webpush.js';
 import {
-  localClock, isValidTimeZone, forecastKey, fetchDailyForecast, composeBriefing,
+  localClock, isValidTimeZone, forecastKey, fetchForecast, composeBriefing,
 } from './briefing.js';
 import {
   inNwsBox, alertKey, fetchActiveAlerts, isPushWorthy, referencedIds, composeAlert, alertTtl,
 } from './alerts.js';
+import { T, fetchAirQuality, evaluateThresholds, composeThresholds } from './thresholds.js';
 
 const MAX_SUBREQUESTS  = 45;
 const MAX_SENDS        = 25;       // CPU budget; anything past it waits for the next tick
@@ -257,7 +258,7 @@ async function sendTest(env, body) {
   await env.DB.prepare('UPDATE push_subscriptions SET last_test_at = ?1 WHERE endpoint = ?2').bind(now, endpoint).run();
 
   let forecast;
-  try { forecast = await fetchDailyForecast(row.lat, row.lon, unitsOf(row)); }
+  try { forecast = await fetchForecast(row.lat, row.lon, unitsOf(row)); }
   catch (err) { return json({ error: `Forecast unavailable (${err.message})` }, 502); }
 
   const payload = composeBriefing(row, forecast);
@@ -321,59 +322,92 @@ function makeLedger(env) {
   return ledger;
 }
 
-// One */30 tick. Every subscriber whose local clock is inside their
-// chosen hour and who hasn't had today's briefing gets one. Rows are
-// grouped by rounded location so nearby subscribers share a forecast
-// call, and the whole tick stays under the subrequest and send
-// budgets; anything that doesn't fit is picked up by the next tick.
-export async function runBriefings(env, { now = new Date() } = {}) {
+// One */30 tick, for the features driven by the subscriber's clock:
+// the morning briefing at `hour`, the threshold check at
+// `threshold_hour`, the full-moon note before sunset. Each row yields
+// zero or more jobs for this tick; jobs are grouped by rounded location
+// and units so one forecast call serves every job at that place, and
+// the whole tick stays under the subrequest and send budgets. Whatever
+// doesn't fit is picked up by the next tick, because a job only marks
+// itself done once its push is accepted.
+export async function runClockFeatures(env, { now = new Date() } = {}) {
   const vapid = vapidFrom(env);
-  const stats = { total: 0, due: 0, sent: 0, gone: 0, failed: 0, deferred: 0, forecasts: 0, forecastErrors: 0 };
+  const stats = {
+    total: 0, due: 0, sent: 0, gone: 0, failed: 0, deferred: 0, forecasts: 0, forecastErrors: 0,
+    briefings: 0, thresholds: 0, quiet: 0,
+  };
   if (!vapid || !env.DB) return { ...stats, skipped: 'not configured' };
+  const nowSec = Math.floor(now.getTime() / 1000);
 
-  const { results: rows } = await env.DB.prepare('SELECT * FROM push_subscriptions WHERE briefing = 1').all();
+  const { results: rows } = await env.DB
+    .prepare('SELECT * FROM push_subscriptions WHERE briefing = 1 OR thresholds = 1 OR moon = 1').all();
   stats.total = rows.length;
 
   const groups = new Map();
-  for (const row of rows) {
-    const clock = localClock(row.tz, now);
-    if (clock.hour !== row.hour || row.last_sent_day === clock.dateKey) continue;
+  const add = (row, job) => {
     stats.due++;
     const key = forecastKey(row.lat, row.lon, unitsOf(row));
     if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push({ row, day: clock.dateKey });
+    groups.get(key).push({ row, ...job });
+  };
+  for (const row of rows) {
+    const clock = localClock(row.tz, now);
+    if (row.briefing && clock.hour === row.hour && row.last_sent_day !== clock.dateKey) {
+      add(row, { kind: 'briefing', day: clock.dateKey });
+    }
+    if (row.thresholds && (row.threshold_mask | 0) && clock.hour === row.threshold_hour && row.threshold_last_day !== clock.dateKey) {
+      add(row, { kind: 'thresholds', day: clock.dateKey });
+    }
   }
   if (!stats.due) return stats;
 
-  // Budget: one forecast fetch per group plus one send per row, and no
-  // more than MAX_SENDS sends in total however the groups fall.
+  // Budget: one forecast fetch per group (two when a threshold job there
+  // wants air quality) plus one send per job, and no more than MAX_SENDS
+  // sends in total however the groups fall.
   let budget = MAX_SUBREQUESTS;
   let sends = MAX_SENDS;
   const plan = [];
   for (const [key, items] of groups) {
-    if (budget < 2 || sends < 1) { stats.deferred += items.length; continue; }
-    const take = Math.min(items.length, budget - 1, sends);
+    const wantAqi = items.some((j) => j.kind === 'thresholds' && (j.row.threshold_mask & T.AQI));
+    const fetches = wantAqi ? 2 : 1;
+    if (budget < fetches + 1 || sends < 1) { stats.deferred += items.length; continue; }
+    const take = Math.min(items.length, budget - fetches, sends);
     stats.deferred += items.length - take;
-    budget -= 1 + take;
+    budget -= fetches + take;
     sends -= take;
-    plan.push({ key, items: items.slice(0, take) });
+    plan.push({ key, items: items.slice(0, take), wantAqi });
   }
 
   const ledger = makeLedger(env);
-  for (const { items } of plan) {
+  for (const { items, wantAqi } of plan) {
     const sample = items[0].row;
-    let forecast;
+    let forecast, aqi = null;
     stats.forecasts++;
-    try { forecast = await fetchDailyForecast(sample.lat, sample.lon, unitsOf(sample)); }
+    try { forecast = await fetchForecast(sample.lat, sample.lon, unitsOf(sample)); }
     catch (err) {
-      // Leave last_sent_day alone so the next tick retries this group.
+      // Nothing is marked done, so the next tick retries this group.
       stats.forecastErrors++;
-      console.warn('[briefing] forecast failed', sample.lat, sample.lon, err && err.message);
+      console.warn('[push] forecast failed', sample.lat, sample.lon, err && err.message);
       continue;
     }
-    await pool(items, SEND_CONCURRENCY, ({ row, day }) =>
-      ledger.deliver(row, composeBriefing(row, forecast), vapid, { ttl: 6 * 3600, urgency: 'normal', topic: 'briefing' }, stats,
-        () => ledger.update(row.endpoint, 'UPDATE push_subscriptions SET last_sent_day = ?1 WHERE endpoint = ?2', day)));
+    if (wantAqi) {
+      try { aqi = await fetchAirQuality(sample.lat, sample.lon); }
+      catch (err) { console.warn('[push] air quality failed', sample.lat, sample.lon, err && err.message); }
+    }
+    await pool(items, SEND_CONCURRENCY, async (job) => {
+      const { row } = job;
+      if (job.kind === 'briefing') {
+        stats.briefings++;
+        await ledger.deliver(row, composeBriefing(row, forecast), vapid, { ttl: 6 * 3600, urgency: 'normal', topic: 'briefing' }, stats,
+          () => ledger.update(row.endpoint, 'UPDATE push_subscriptions SET last_sent_day = ?1 WHERE endpoint = ?2', job.day));
+      } else if (job.kind === 'thresholds') {
+        stats.thresholds++;
+        const items = evaluateThresholds(row, forecast, aqi, nowSec);
+        const done = () => ledger.update(row.endpoint, 'UPDATE push_subscriptions SET threshold_last_day = ?1 WHERE endpoint = ?2', job.day);
+        if (!items.length) { stats.quiet++; done(); return; }
+        await ledger.deliver(row, composeThresholds(row, items, now.getTime()), vapid, { ttl: 6 * 3600, urgency: 'normal', topic: 'thresholds' }, stats, done);
+      }
+    });
   }
   await ledger.flush();
   return stats;
@@ -461,6 +495,6 @@ export async function runAlerts(env, { now = new Date() } = {}) {
 }
 
 export async function handleScheduled(event, env) {
-  const stats = event.cron === CRON_ALERTS ? await runAlerts(env) : await runBriefings(env);
+  const stats = event.cron === CRON_ALERTS ? await runAlerts(env) : await runClockFeatures(env);
   console.log(JSON.stringify({ cron: event.cron, ...stats }));
 }

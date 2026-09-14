@@ -1,12 +1,16 @@
 // Morning briefing: what a subscriber's local clock says, the one
-// forecast call the briefing needs, and the text of the notification.
+// forecast call every clock-driven feature shares, and the text of the
+// briefing notification.
 //
 // Weather comes from Open-Meteo rather than the OpenWeatherMap proxy:
-// one call returns the day's high/low, condition, precipitation chance
+// one call returns today's high/low, condition, precipitation chance
 // and current temperature, already converted to the subscriber's units,
 // and it needs no API key. The app's own 8-day view is built on the
 // same daily fields (see WeatherAPI.getOpenMeteoEnrichment), so the
-// briefing agrees with what they see when they tap it.
+// briefing agrees with what they see when they tap it. The same call
+// carries two days of hourly data and sunrise/sunset for the threshold
+// and full-moon features (worker/thresholds.js, worker/moon.js), so a
+// location costs one subrequest per tick however many features fire.
 
 // Wall-clock in an IANA zone. An unknown zone falls back to UTC rather
 // than throwing — a stale row must never take the whole cron down.
@@ -41,16 +45,24 @@ export function forecastKey(lat, lon, units) {
 
 const OM = 'https://api.open-meteo.com/v1/forecast';
 
-export async function fetchDailyForecast(lat, lon, units) {
+// Local ISO time from Open-Meteo ("2026-09-15T05:00", in the city's
+// zone) → epoch seconds, given the response's utc_offset_seconds.
+export function localIsoToEpoch(iso, utcOffset) {
+  const t = Date.parse(iso + 'Z');
+  return Number.isFinite(t) ? Math.round(t / 1000) - (utcOffset || 0) : NaN;
+}
+
+export async function fetchForecast(lat, lon, units) {
   const url = new URL(OM);
   url.searchParams.set('latitude', String(lat));
   url.searchParams.set('longitude', String(lon));
-  url.searchParams.set('daily', 'temperature_2m_max,temperature_2m_min,weathercode,precipitation_probability_max,precipitation_sum,snowfall_sum,windgusts_10m_max');
+  url.searchParams.set('daily', 'temperature_2m_max,temperature_2m_min,weathercode,precipitation_probability_max,precipitation_sum,snowfall_sum,windgusts_10m_max,sunrise,sunset');
+  url.searchParams.set('hourly', 'temperature_2m,apparent_temperature,wind_gusts_10m,rain,snowfall,cloud_cover,weather_code');
   url.searchParams.set('current', 'temperature_2m,weather_code');
   // The CITY's timezone: "today" is the city's today, which is what a
   // briefing about that city means even for someone reading it elsewhere.
   url.searchParams.set('timezone', 'auto');
-  url.searchParams.set('forecast_days', '1');
+  url.searchParams.set('forecast_days', '2');
   url.searchParams.set('temperature_unit', units.temp === 'C' ? 'celsius' : 'fahrenheit');
   url.searchParams.set('wind_speed_unit', units.wind === 'mph' ? 'mph' : units.wind === 'ms' ? 'ms' : 'kmh');
   url.searchParams.set('precipitation_unit', units.precip === 'in' ? 'inch' : 'mm');
@@ -62,6 +74,7 @@ export async function fetchDailyForecast(lat, lon, units) {
   const c = data.current || {};
   const first = (arr) => (Array.isArray(arr) && arr.length ? arr[0] : null);
   return {
+    // Today, flattened: what composeBriefing reads.
     tempMax:   first(d.temperature_2m_max),
     tempMin:   first(d.temperature_2m_min),
     code:      first(d.weathercode),
@@ -71,8 +84,16 @@ export async function fetchDailyForecast(lat, lon, units) {
     gustMax:   first(d.windgusts_10m_max),
     nowTemp:   typeof c.temperature_2m === 'number' ? c.temperature_2m : null,
     nowCode:   typeof c.weather_code === 'number' ? c.weather_code : null,
+    // The raw two-day series for the other features.
+    daily:     d,
+    hourly:    data.hourly || {},
+    utcOffset: typeof data.utc_offset_seconds === 'number' ? data.utc_offset_seconds : 0,
+    timezone:  typeof data.timezone === 'string' ? data.timezone : null,
   };
 }
+
+// Kept for callers that only want today's numbers.
+export const fetchDailyForecast = fetchForecast;
 
 // Same table the app uses for Open-Meteo days (UI.wmoDescription).
 const WMO = {

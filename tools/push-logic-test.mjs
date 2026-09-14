@@ -4,8 +4,10 @@
 //
 //     node tools/push-logic-test.mjs
 
-import { runBriefings, runAlerts } from '../worker/push.js';
+import { runClockFeatures as runBriefings, runAlerts } from '../worker/push.js';
 import { isPushWorthy, referencedIds, formatAlertTime, alertGist, composeAlert, alertTtl, inNwsBox } from '../worker/alerts.js';
+import { T, evaluateThresholds, composeThresholds, hourLabel } from '../worker/thresholds.js';
+import { localIsoToEpoch } from '../worker/briefing.js';
 
 let failures = 0;
 const check = (name, ok, detail = '') => {
@@ -47,10 +49,21 @@ function fakeDB(tables) {
 }
 
 const pushed = [];
-const forecastJson = { daily: { temperature_2m_max: [70], temperature_2m_min: [50], weathercode: [1], precipitation_probability_max: [10] }, current: { temperature_2m: 60, weather_code: 1 } };
+// Two days of hourly data starting at local midnight of NOW's day (UTC
+// city). Calm by default; tests override single hours.
+const hourly = (over = {}) => {
+  const time = Array.from({ length: 48 }, (_, i) => new Date(Date.UTC(2026, 8, 15) + i * 3600000).toISOString().slice(0, 16));
+  const fill = (v) => Array(48).fill(v);
+  const h = { time, temperature_2m: fill(60), apparent_temperature: fill(60), wind_gusts_10m: fill(10), rain: fill(0), snowfall: fill(0), cloud_cover: fill(20), weather_code: fill(1) };
+  for (const [k, edits] of Object.entries(over)) for (const [i, v] of Object.entries(edits)) h[k][i] = v;
+  return h;
+};
+let forecastJson = { daily: { temperature_2m_max: [70], temperature_2m_min: [50], weathercode: [1], precipitation_probability_max: [10] }, current: { temperature_2m: 60, weather_code: 1 }, hourly: hourly(), utc_offset_seconds: 0 };
+let aqiJson = { hourly: { time: hourly().time, us_aqi: Array(48).fill(30) }, utc_offset_seconds: 0 };
 let nwsJson = { features: [] };
 globalThis.fetch = async (url, init) => {
   const u = String(url);
+  if (u.includes('air-quality')) return new Response(JSON.stringify(aqiJson));
   if (u.includes('open-meteo')) return new Response(JSON.stringify(forecastJson));
   if (u.includes('api.weather.gov')) return new Response(JSON.stringify(nwsJson));
   pushed.push({ url: u, headers: init.headers });
@@ -74,6 +87,64 @@ globalThis.fetch = async (url, init) => {
   eq('briefing: dead endpoint dropped, already-sent skipped', [s.due, s.sent, s.gone], [2, 1, 1]);
   check('briefing: last_sent_day written for the sent row', env.DB.writes.some(w => w.sql.includes('last_sent_day') && w.binds[0] === '2026-09-15' && w.binds[1] === 'https://push.example/0'));
   check('briefing: dead row deleted', env.DB.writes.some(w => w.sql.startsWith('DELETE FROM push_subscriptions') && w.binds[0] === 'https://push.example/dead'));
+}
+
+// ── Threshold evaluation ─────────────────────────────────────────────
+// NOW is 20:07 UTC on the 15th → window is hours 21..44 (21:00 on the
+// 15th through 20:00 on the 16th).
+const nowSecT = NOW.getTime() / 1000;
+const fc = (over) => ({ hourly: hourly(over), utcOffset: 0 });
+const trow = (extra = {}) => row(0, { thresholds: 1, threshold_mask: 63, ...extra });
+eq('iso→epoch honours the offset', localIsoToEpoch('2026-09-15T05:00', -21600), Date.UTC(2026, 8, 15, 11) / 1000);
+eq('hour label 12h', hourLabel('2026-09-16T05:00', '12h'), 'Wed 5 AM');
+eq('hour label 24h', hourLabel('2026-09-16T17:00', '24h'), 'Wed 17:00');
+eq('calm forecast → nothing', evaluateThresholds(trow(), fc(), null, nowSecT), []);
+eq('freeze: coldest hour named', evaluateThresholds(trow(), fc({ temperature_2m: { 29: 30, 30: 28, 31: 31 } }), null, nowSecT).map(i => i.text), ['Low of 28° around Wed 6 AM.']);
+eq('freeze: outside the window is ignored', evaluateThresholds(trow(), fc({ temperature_2m: { 10: 20, 46: 20 } }), null, nowSecT), []);
+eq('freeze: °C cutoff', evaluateThresholds(trow({ temp_unit: 'C', threshold_mask: T.FREEZE }), fc({ temperature_2m: { 30: 0 } }), null, nowSecT).map(i => i.bit), [T.FREEZE]);
+eq('freeze: °C, 1° is not a freeze', evaluateThresholds(trow({ temp_unit: 'C', threshold_mask: T.FREEZE }), fc({ temperature_2m: { 30: 1 } }), null, nowSecT), []);
+eq('heat: apparent temperature', evaluateThresholds(trow(), fc({ apparent_temperature: { 39: 104 } }), null, nowSecT).map(i => i.text), ['Feels like 104° around Wed 3 PM.']);
+eq('wind: mph', evaluateThresholds(trow(), fc({ wind_gusts_10m: { 22: 52 } }), null, nowSecT).map(i => i.text), ['Gusts to 52 mph around Tue 10 PM.']);
+eq('wind: km/h cutoff not reached at 52', evaluateThresholds(trow({ wind_unit: 'kmh' }), fc({ wind_gusts_10m: { 22: 52 } }), null, nowSecT), []);
+eq('rain: totals over the window', evaluateThresholds(trow(), fc({ rain: { 25: 0.4, 26: 0.5, 27: 0.3 } }), null, nowSecT).map(i => i.text), ['1.2 in of rain by Wed 3 AM.']);
+eq('rain: mm cutoff', evaluateThresholds(trow({ precip_unit: 'mm' }), fc({ rain: { 25: 20, 26: 6 } }), null, nowSecT).map(i => i.text), ['26 mm of rain by Wed 2 AM.']);
+eq('snow: inches', evaluateThresholds(trow(), fc({ snowfall: { 30: 2, 31: 1.5 } }), null, nowSecT).map(i => i.text), ['3.5 in of snow by Wed 7 AM.']);
+eq('aqi: needs the air-quality series', evaluateThresholds(trow(), fc(), null, nowSecT), []);
+eq('aqi: worst hour', evaluateThresholds(trow(), fc(), { hourly: { time: hourly().time, us_aqi: Object.assign(Array(48).fill(30), { 35: 132, 36: 120 }) }, utcOffset: 0 }, nowSecT).map(i => i.text), ['AQI 132 around Wed 11 AM.']);
+eq('mask: unticked items stay silent', evaluateThresholds(trow({ threshold_mask: T.HEAT }), fc({ temperature_2m: { 30: 20 }, apparent_temperature: { 39: 104 } }), null, nowSecT).map(i => i.bit), [T.HEAT]);
+{
+  const items = evaluateThresholds(trow(), fc({ temperature_2m: { 30: 28 }, wind_gusts_10m: { 22: 52 } }), null, nowSecT);
+  const one = composeThresholds(trow(), items.slice(0, 1), NOW.getTime());
+  const two = composeThresholds(trow(), items, NOW.getTime());
+  eq('compose: single item title', one.title, 'Freeze · Denver');
+  eq('compose: two items', [two.title, two.body], ['Denver · 2 heads-ups', 'Low of 28° around Wed 6 AM.\nGusts to 52 mph around Tue 10 PM.']);
+  eq('compose: tag', two.tag, 'thresholds');
+}
+
+// ── Clock planner with mixed jobs ────────────────────────────────────
+{
+  // Three rows in one place, all due at 20:00: a briefing, a quiet
+  // threshold check, and a threshold check that trips (AQI ticked →
+  // the group spends a second subrequest on air quality).
+  forecastJson = { ...forecastJson, hourly: hourly({ temperature_2m: { 30: 28 } }) };
+  aqiJson = { hourly: { time: hourly().time, us_aqi: Object.assign(Array(48).fill(30), { 35: 150 }) }, utc_offset_seconds: 0 };
+  const rows = [
+    row('b'),
+    row('q', { briefing: 0, thresholds: 1, threshold_hour: 20, threshold_mask: T.HEAT }),
+    row('t', { briefing: 0, thresholds: 1, threshold_hour: 20, threshold_mask: 63 }),
+    row('later', { briefing: 0, thresholds: 1, threshold_hour: 21, threshold_mask: 63 }),
+    row('done', { briefing: 0, thresholds: 1, threshold_hour: 20, threshold_mask: 63, threshold_last_day: '2026-09-15' }),
+  ];
+  const env = { ...baseEnv, DB: fakeDB({ 'OR thresholds = 1': () => rows, 'WHERE briefing = 1': () => rows }) };
+  pushed.length = 0;
+  const s = await runBriefings(env, { now: NOW });
+  eq('clock: 3 jobs due (briefing, quiet check, tripping check)', [s.due, s.briefings, s.thresholds, s.quiet], [3, 1, 2, 1]);
+  eq('clock: 2 pushes, one forecast group', [s.sent, s.forecasts], [2, 1]);
+  check('clock: quiet check still marked done', env.DB.writes.some(w => w.sql.includes('threshold_last_day') && w.binds[1] === 'https://push.example/q'));
+  check('clock: tripping check marked done', env.DB.writes.some(w => w.sql.includes('threshold_last_day') && w.binds[1] === 'https://push.example/t'));
+  check('clock: briefing marked done', env.DB.writes.some(w => w.sql.includes('last_sent_day') && w.binds[1] === 'https://push.example/b'));
+  check('clock: threshold push has its topic', pushed.some(p => p.headers.Topic === 'thresholds'));
+  forecastJson = { ...forecastJson, hourly: hourly() };
 }
 
 // ── Alert helpers ────────────────────────────────────────────────────
@@ -119,7 +190,7 @@ check('nws box: Denver in, London out, Honolulu in', inNwsBox(39.74, -104.99) &&
   eq('alerts: 2 worthy of 3 active', s.active, 2);
   eq('alerts: row0 gets both, row1 already had the warning → 3 sent', s.sent, 3);
   check('alerts: prune ran', env.DB.writes.some(w => w.sql.startsWith('DELETE FROM push_alerts_sent WHERE sent_at')));
-  eq('alerts: 3 ids remembered', env.DB.writes.filter(w => w.sql.includes('INSERT OR IGNORE INTO push_alerts_sent')).map(w => w.binds.slice(0, 2)),
+  eq('alerts: 3 ids remembered', env.DB.writes.filter(w => w.sql.includes('INSERT OR IGNORE INTO push_alerts_sent')).map(w => w.binds.slice(0, 2)).sort((a, b) => a.join().localeCompare(b.join())),
     [['https://push.example/0', 'urn:oid:1'], ['https://push.example/0', 'urn:oid:3'], ['https://push.example/1', 'urn:oid:3']]);
   check('alerts: urgency high', pushed.every(p => p.headers.Urgency === 'high'));
 }
