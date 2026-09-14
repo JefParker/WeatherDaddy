@@ -7,7 +7,7 @@
 // hand anything else back to the asset router via `env.ASSETS.fetch()`.
 //
 // /api/push/* is delegated to worker/push.js; the scheduled() export
-// runs the morning-briefing cron from the same module.
+// runs the notification crons from the same module.
 //
 // Contract enforced in fetch() for the proxy:
 //   1. PATH REWRITING        — strip the /api/owm/ prefix + any leading slash
@@ -37,7 +37,7 @@ const ALLOWED_PATHS = new Set([
 ]);
 
 export default {
-  // Cron Triggers (wrangler.jsonc → triggers.crons): morning briefings.
+  // Cron Triggers (wrangler.jsonc → triggers.crons): notifications.
   async scheduled(event, env, ctx) {
     await handleScheduled(event, env, ctx);
   },

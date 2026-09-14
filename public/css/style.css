@@ -3079,6 +3079,17 @@ body:has(#radar-screen.open) .a2hs-prompt { display: none; }
 }
 .push-status:empty { padding: 0; min-height: 0; }
 .push-status.is-error { color: #ff453a; }
+/* Threshold checklist rows: a native checkbox on the right, sized to
+   the switch's visual weight. */
+.push-check { cursor: pointer; }
+.push-checkbox {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  accent-color: var(--accent-color);
+  cursor: pointer;
+}
 
 /* iOS-style switch, reused by future toggles on the same screen. */
 .wd-switch {

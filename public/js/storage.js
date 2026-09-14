@@ -201,20 +201,33 @@ const Storage = {
   // Push-notification preferences (menu → Push Notifications). The
   // server row (worker/push.js) is the source of truth; this copy lets
   // the screen render instantly and re-sync after unit changes. Shape
-  // is validated on read so junk can't break the screen.
+  // is validated on read so junk can't break the screen. One city per
+  // device, shared by every feature; v1 (1.8) kept the city inside
+  // `briefing`, and that is lifted out on read.
   PUSH_PREFS_KEY: 'push_prefs_v1',
+  PUSH_THRESHOLD_ALL: 63,
   getPushPrefs() {
     const raw = this._read(this.PUSH_PREFS_KEY, null) || {};
-    const b = (raw && typeof raw.briefing === 'object' && raw.briefing) || {};
+    const obj = (k) => (raw && typeof raw[k] === 'object' && raw[k]) || {};
+    const b = obj('briefing'), a = obj('alerts'), t = obj('thresholds'), m = obj('moon');
+    const hour = (v, dflt) => (Number.isInteger(v) && v >= 0 && v <= 23) ? v : dflt;
+    const cityOf = (c) => (c && typeof c.lat === 'number' && typeof c.lon === 'number')
+      ? { lat: c.lat, lon: c.lon, name: typeof c.name === 'string' ? c.name : '' }
+      : null;
     return {
+      city: cityOf(raw.city) || cityOf(b),
       briefing: {
         enabled:     b.enabled === true,
-        lat:         typeof b.lat === 'number' ? b.lat : null,
-        lon:         typeof b.lon === 'number' ? b.lon : null,
-        name:        typeof b.name === 'string' ? b.name : '',
-        hour:        Number.isInteger(b.hour) && b.hour >= 0 && b.hour <= 23 ? b.hour : 6,
+        hour:        hour(b.hour, 6),
         lastSentDay: typeof b.lastSentDay === 'string' ? b.lastSentDay : null,
       },
+      alerts: { enabled: a.enabled === true },
+      thresholds: {
+        enabled: t.enabled === true,
+        hour:    hour(t.hour, 17),
+        mask:    (Number.isInteger(t.mask) && t.mask >= 0 && t.mask <= this.PUSH_THRESHOLD_ALL) ? t.mask : this.PUSH_THRESHOLD_ALL,
+      },
+      moon: { enabled: m.enabled === true },
     };
   },
   savePushPrefs(prefs) {

@@ -18,7 +18,7 @@
 // (index.html used to also carry ?v= query strings, but cacheKey()
 // strips the query before caching, so they never did anything and were
 // removed.)
-const CACHE_NAME = 'weatherdaddy-v221';
+const CACHE_NAME = 'weatherdaddy-v222';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -415,8 +415,8 @@ async function offlineFallback(request) {
 }
 
 // ── Push notifications ───────────────────────────────────────────────
-// Payloads come from worker/push.js (composeBriefing): { title, body,
-// url, tag, timestamp }. Everything is defaulted so a payload from a
+// Payloads come from worker/push.js (composeBriefing, composeAlert, …):
+// { title, body, url, tag, timestamp }. Everything is defaulted so a payload from a
 // newer server than this worker still shows something sensible.
 
 self.addEventListener('push', event => {

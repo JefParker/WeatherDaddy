@@ -291,9 +291,9 @@
       </div>
     </div>
 
-    <!-- Push Notifications Overlay. One section per feature; the morning
-         briefing is the first. Wired in ui-push.js; the service worker
-         (sw.js) renders what the server (worker/push.js) sends. -->
+    <!-- Push Notifications Overlay. One city picker, then one section per
+         feature. Wired in ui-push.js; the service worker (sw.js) renders
+         what the server (worker/push.js) sends. -->
     <div class="overlay-screen" id="push-screen">
       <header class="overlay-header">
         <button class="back-btn" id="push-back-btn" aria-label="Back">
@@ -314,21 +314,27 @@
           <strong>Notifications are blocked.</strong> Allow notifications for WeatherDaddy in your browser or system settings, then reopen this screen.
         </div>
 
+        <section class="push-section" id="push-city-section">
+          <label class="push-row">
+            <span class="push-row-text">
+              <span class="push-row-title">City</span>
+              <span class="push-row-sub">Every notification below is about this city.</span>
+            </span>
+            <select class="push-select" id="push-city" aria-label="Notification city"></select>
+          </label>
+        </section>
+
         <section class="push-section" id="push-briefing-section">
           <div class="push-row">
             <div class="push-row-text">
               <span class="push-row-title">Morning briefing</span>
-              <span class="push-row-sub">Today's high, low, and conditions for one city, once a day.</span>
+              <span class="push-row-sub">Today's high, low, and conditions, once a day.</span>
             </div>
             <button type="button" class="wd-switch" id="push-briefing-toggle" role="switch" aria-checked="false" aria-label="Morning briefing">
               <span class="wd-switch-knob"></span>
             </button>
           </div>
           <div class="push-prefs" id="push-briefing-prefs" hidden>
-            <label class="push-row">
-              <span class="push-row-title">City</span>
-              <select class="push-select" id="push-briefing-city" aria-label="Briefing city"></select>
-            </label>
             <label class="push-row">
               <span class="push-row-title">Time</span>
               <select class="push-select" id="push-briefing-hour" aria-label="Briefing time"></select>
@@ -338,6 +344,19 @@
             </div>
           </div>
           <p class="push-status" id="push-briefing-status" aria-live="polite"></p>
+        </section>
+
+        <section class="push-section" id="push-alerts-section">
+          <div class="push-row">
+            <div class="push-row-text">
+              <span class="push-row-title">Severe weather alerts</span>
+              <span class="push-row-sub">Warnings and watches from the National Weather Service, within minutes of issue. US locations only.</span>
+            </div>
+            <button type="button" class="wd-switch" id="push-alerts-toggle" role="switch" aria-checked="false" aria-label="Severe weather alerts">
+              <span class="wd-switch-knob"></span>
+            </button>
+          </div>
+          <p class="push-status" id="push-alerts-status" aria-live="polite"></p>
         </section>
       </div>
     </div>
@@ -354,7 +373,7 @@
         <section class="about-section about-header-brand">
           <img class="about-logo" src="assets/icons/icon-192.png" alt="WeatherDaddy logo" width="64" height="64">
           <div class="about-brand-text">
-            <h3 class="about-title">WeatherDaddy <span class="about-version">v1.8.0</span></h3>
+            <h3 class="about-title">WeatherDaddy <span class="about-version">v1.9.0</span></h3>
             <!-- Populated by App.renderBuildInfo() each time this screen
                  opens. If it still reads "Checking build…" the JS bundle
                  is older than that function — i.e. a stale cache. -->
@@ -514,7 +533,7 @@
                 <svg class="accordion-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
               <div class="accordion-content">
-                <p>Open <strong>Push Notifications</strong> from the menu to get a <strong>morning briefing</strong>: today's high, low, and conditions for a city you choose, at a time you choose (6 AM by default), even when the app is closed. Notifications are per device, use your unit settings, and can be switched off from the same screen. On iPhone and iPad they require the installed app (Share → Add to Home Screen).</p>
+                <p>Open <strong>Push Notifications</strong> from the menu, pick a city, and switch on what you want, even when the app is closed: a <strong>morning briefing</strong> (today's high, low, and conditions at a time you choose, 6 AM by default) and <strong>severe weather alerts</strong> (National Weather Service warnings and watches, checked every five minutes; US locations only). Notifications are per device, use your unit settings, and can be switched off from the same screen. On iPhone and iPad they require the installed app (Share → Add to Home Screen).</p>
               </div>
             </div>
           </div>
