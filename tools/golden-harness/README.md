@@ -3,8 +3,8 @@
 Renders the real app (index.html + the real scripts, loaded in the order
 index.html lists them) inside jsdom against deterministic synthetic
 weather payloads, and snapshots the resulting DOM, stats pages, graph
-options, share URLs, cache writes and interaction outcomes. 315 captures
-across 7 cities/times × units × graph modes × selections, plus simulated
+options, share URLs, cache writes and interaction outcomes. 352 captures
+across 8 cities/times × units × graph modes × selections, plus simulated
 swipes, the element-cube fallback path and a fake-network run through
 fetchAndDisplay / refreshCurrentWeather / _prefetchCity.
 

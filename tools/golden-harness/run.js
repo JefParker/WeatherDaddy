@@ -38,6 +38,11 @@ const SCENARIOS = [
     fixture: { name: 'London, GB', lat: 51.5074, lon: -0.1278, tz: 'Europe/London', offsetSec: 3600, nowSec: T(2026, 9, 8, 10, 0), seed: 6, kind: 'mixed', coastal: false, enrichment: false, aqi: null } },
   { id: 'reykjavik-bad-tzname', units: METRIC24, saved: true, graphModes: ['precip'],
     fixture: { name: 'Reykjavik, Iceland', lat: 64.1466, lon: -21.9426, tz: 'Atlantic/Reykjavik', offsetSec: 0, nowSec: T(2026, 6, 20, 23, 30), seed: 7, kind: 'clear', baseTemp: 11, amp: 3, coastal: true, noaa: false, peakUv: 3, aqi: 15, tzNameOverride: 'Not/AZone' } },
+  // Dry now, wet from +30 to +75 min, dry again: exercises the hero
+  // nowcast's "starting in ~N min, lasting ~M min" sentence and the
+  // precip strip with a mid-window edge.
+  { id: 'seattle-shower', units: IMPERIAL12, saved: true, graphModes: ['precip'],
+    fixture: { name: 'Seattle, Washington', lat: 47.6062, lon: -122.3321, tz: 'America/Los_Angeles', offsetSec: -25200, nowSec: T(2026, 9, 15, 21, 10), seed: 8, kind: 'mixed', baseTemp: 16, amp: 5, coastal: true, noaa: false, peakUv: 4, aqi: 25, rainBurst: { startMin: 30, endMin: 75, mm: 0.4 } } },
 ];
 
 const SCRIPTS = () => {

@@ -883,21 +883,49 @@ Object.assign(UI, {
   },
 
   // Scan the 15-minute precipitation series for the next wet↔dry
-  // transition inside `windowSec`. Returns { type: 'starts'|'ends',
-  // dt } or null when there's no transition (or no data).
+  // transition inside `windowSec`, then keep going for the one after
+  // it so the sentence can say how long the rain lasts (Dark Sky's
+  // "starting in 12 min, lasting 40 min"). Returns
+  // { type: 'starts'|'ends', dt, untilDt } — untilDt is the following
+  // transition, or null if the series ends before the state flips
+  // back — or null when there's no transition inside the window (or
+  // no data).
   _precipNowcast(minutely, nowSec, windowSec = 2 * 3600) {
     if (!minutely || !minutely.length) return null;
     const RAINING = 0.05; // mm per 15min that counts as precipitating
     const upcoming = minutely
-      .filter(m => m.dt + 900 > nowSec && m.dt <= nowSec + windowSec)
+      .filter(m => m.dt + 900 > nowSec)
       .sort((a, b) => a.dt - b.dt);
     if (upcoming.length < 2) return null;
-    const rainingNow = (upcoming[0].precipMM || 0) >= RAINING;
+    let wetNow = (upcoming[0].precipMM || 0) >= RAINING;
+    let cast = null;
     for (const m of upcoming.slice(1)) {
       const wet = (m.precipMM || 0) >= RAINING;
-      if (wet !== rainingNow) return { type: wet ? 'starts' : 'ends', dt: m.dt };
+      if (wet === wetNow) continue;
+      if (cast) { cast.untilDt = m.dt; break; }
+      if (m.dt > nowSec + windowSec) break;
+      cast = { type: wet ? 'starts' : 'ends', dt: m.dt, untilDt: null };
+      wetNow = wet;
     }
-    return null;
+    return cast;
+  },
+
+  // "in ~12 min" inside the hour, "around 3:15 PM" beyond it. Relative
+  // reads better at short range — nobody checks the clock to learn
+  // that 3:15 is twelve minutes away — and the tilde is honest about
+  // the series being 15-minute slots, not radar minutes.
+  _nowcastWhen(dt, nowSec, tz) {
+    const mins = Math.round((dt - nowSec) / 60);
+    if (mins < 60) return `in ~${Math.max(mins, 1)} min`;
+    return `around ${this.formatTime(dt, true, tz)}`;
+  },
+
+  // "~40 min" / "~1.5 h" — a span between two 15-minute slot edges.
+  _nowcastSpan(sec) {
+    const mins = Math.round(sec / 60);
+    if (mins < 60) return `~${mins} min`;
+    const h = Math.round(mins / 30) / 2;
+    return `~${h} h`;
   },
 
   // The next-2-hours precipitation strip under the hero: the same

@@ -662,9 +662,9 @@ Object.assign(UI, {
   },
 
   // Precip line under the hero. A 15-minute nowcast transition inside
-  // the next 2h beats the day-level percentage — "Rain starting around
-  // 3:15 PM" is strictly more useful than "60% chance". Nowcast only
-  // applies to the live "today" view.
+  // the next 2h beats the day-level percentage — "Rain starting in
+  // ~12 min, lasting ~40 min" is strictly more useful than "60%
+  // chance". Nowcast only applies to the live "today" view.
   // Late in the evening the last 3h slot of today has passed, so the
   // rest-of-day window is empty and pop is 0 — which is the absence of
   // a forecast, not a forecast of nothing. Asserting "No precipitation
@@ -685,7 +685,19 @@ Object.assign(UI, {
         h.dt + 3600 > nowSec && h.dt <= nowSec + 2 * 3600 && h.snowCM > 0);
       const what = snowing ? 'Snow' : 'Rain';
       if (cast) {
-        precipMsg = `${what} ${cast.type === 'starts' ? 'starting' : 'ending'} around ${this.formatTime(cast.dt, true, tz)}`;
+        const when = this._nowcastWhen(cast.dt, nowSec, tz);
+        if (cast.type === 'starts') {
+          // How long it lasts is the real question; the end can be
+          // hours out, so it's a span rather than a clock time.
+          const span = cast.untilDt ? `, lasting ${this._nowcastSpan(cast.untilDt - cast.dt)}` : '';
+          precipMsg = `${what} starting ${when}${span}`;
+        } else {
+          // A return only matters if it's inside the same 2h window;
+          // rain that comes back this evening is the graph's story.
+          const back = cast.untilDt && cast.untilDt <= nowSec + 2 * 3600
+            ? `, back ${this._nowcastWhen(cast.untilDt, nowSec, tz)}` : '';
+          precipMsg = `${what} ending ${when}${back}`;
+        }
       } else if (ctx.precipStrip && ctx.precipStrip.wetThroughout) {
         // The strip below is about to show two hours of bars; "No
         // precipitation expected" (OWM's pop for the rest of the day)

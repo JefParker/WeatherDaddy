@@ -60,7 +60,13 @@ function buildFixture(opts) {
     name, lat, lon, tz, offsetSec, nowSec, seed = 1, kind = 'mixed',
     baseTemp = 18, amp = 7, coastal = false, noaa = false,
     peakUv = 6, aqi = 42, pollen = null, enrichment = true, alerts = [],
-    discussion = null, tzNameOverride
+    discussion = null, tzNameOverride,
+    // Optional 15-minute rain burst laid over the minutely series:
+    // { startMin, endMin, mm } relative to nowSec, mm per 15-min slot.
+    // The seeded profiles rarely put a wet↔dry edge inside the next
+    // 2h, and the hero's "Rain starting in ~30 min, lasting ~45 min"
+    // sentence only renders when one exists.
+    rainBurst = null
   } = opts;
   const rnd = mulberry32(seed);
   const todayMidnight = localMidnight(nowSec, tz);
@@ -132,7 +138,12 @@ function buildFixture(opts) {
   for (let i = 0; i < 96; i++) {
     const dt = m0 + i * 900;
     const h = omHourly.find(x => x.dt <= dt && dt < x.dt + 3600);
-    omMinutely.push({ dt, precipMM: h ? +(h.precipMM / 4).toFixed(3) : 0 });
+    let precipMM = h ? +(h.precipMM / 4).toFixed(3) : 0;
+    if (rainBurst) {
+      const inBurst = dt >= nowSec + rainBurst.startMin * 60 && dt < nowSec + rainBurst.endMin * 60;
+      precipMM = inBurst ? rainBurst.mm : 0;
+    }
+    omMinutely.push({ dt, precipMM });
   }
 
   // ── OWM current ──────────────────────────────────────────────────
