@@ -8,6 +8,7 @@ import { runClockFeatures as runBriefings, runAlerts } from '../worker/push.js';
 import { isPushWorthy, referencedIds, formatAlertTime, alertGist, composeAlert, alertTtl, inNwsBox } from '../worker/alerts.js';
 import { T, evaluateThresholds, composeThresholds, hourLabel } from '../worker/thresholds.js';
 import { localIsoToEpoch } from '../worker/briefing.js';
+import { nearbyFullMoons, solarTimes, moonDue, composeMoon, skyAt } from '../worker/moon.js';
 
 let failures = 0;
 const check = (name, ok, detail = '') => {
@@ -145,6 +146,63 @@ eq('mask: unticked items stay silent', evaluateThresholds(trow({ threshold_mask:
   check('clock: briefing marked done', env.DB.writes.some(w => w.sql.includes('last_sent_day') && w.binds[1] === 'https://push.example/b'));
   check('clock: threshold push has its topic', pushed.some(p => p.headers.Topic === 'thresholds'));
   forecastJson = { ...forecastJson, hourly: hourly() };
+}
+
+// ── Full moon ────────────────────────────────────────────────────────
+{
+  const iso = (sec) => new Date(sec * 1000).toISOString().slice(0, 16);
+  eq('moons near mid-September 2026', nearbyFullMoons(Date.parse('2026-09-14T00:00Z') / 1000).map(m => m.name), ['Sturgeon Moon', 'Harvest Moon', "Hunter's Moon"]);
+  eq('second full moon in May 2026 is a Blue Moon', nearbyFullMoons(Date.parse('2026-05-20T00:00Z') / 1000).map(m => m.name), ['Flower Moon', 'Blue Moon', 'Strawberry Moon']);
+  const den = solarTimes(2026, 9, 26, 39.74, -104.99, 'America/Denver');
+  eq('Denver sunset 2026-09-26 ≈ 00:50Z (6:50 PM MDT)', iso(den.sunset), '2026-09-27T00:50');
+  eq('Tokyo sunrise 2026-09-26 ≈ 20:31Z (5:31 JST)', iso(solarTimes(2026, 9, 26, 35.68, 139.69, 'Asia/Tokyo').sunrise), '2026-09-25T20:31');
+  check('polar night → null', solarTimes(2026, 12, 21, 78.2, 15.6, 'Arctic/Longyearbyen').sunset === null);
+
+  const mrow = (extra = {}) => row('m', { briefing: 0, moon: 1, tz: 'America/Denver', ...extra });
+  const harvest = nearbyFullMoons(Date.parse('2026-09-26T12:00Z') / 1000)[1];
+  eq('the Harvest Moon peak', iso(harvest.dt), '2026-09-26T06:56');
+  // Its local day in Denver is the 26th; sunset that day is 00:50Z on the 27th.
+  const sunset = den.sunset;
+  check('due 45 min before sunset', !!moonDue(mrow(), sunset - 45 * 60));
+  check('due at 75 min before (window start)', !!moonDue(mrow(), sunset - 75 * 60));
+  check('not due 2 h before sunset', !moonDue(mrow(), sunset - 120 * 60));
+  check('not due 10 min before sunset (window closed)', !moonDue(mrow(), sunset - 10 * 60));
+  check('not due the evening before', !moonDue(mrow(), sunset - 86400 - 45 * 60));
+  check('not due the evening after', !moonDue(mrow(), sunset + 86400 - 45 * 60));
+  check('not due once sent for this moon', !moonDue(mrow({ moon_last_key: String(harvest.dt) }), sunset - 45 * 60));
+  check('due again for the next moon despite last key', !!moonDue(mrow({ moon_last_key: 'old' }), sunset - 45 * 60));
+  const job = moonDue(mrow(), sunset - 45 * 60);
+  eq('job key is the peak', job.key, String(harvest.dt));
+  check('peak (06:56Z on the 26th) is not in the night → best viewing is mid-night', job.best !== harvest.dt && job.best > job.sunset && job.best < job.sunrise);
+
+  // A forecast whose hourly series covers that night, in Denver time.
+  const t0 = Date.UTC(2026, 8, 26, 6); // local midnight MDT = 06:00Z
+  const times = Array.from({ length: 48 }, (_, i) => new Date(t0 + i * 3600000 - 6 * 3600000).toISOString().slice(0, 16));
+  const fcm = (cc, code = 1) => ({ hourly: { time: times, cloud_cover: Array(48).fill(cc), weather_code: Array(48).fill(code) }, utcOffset: -21600, timezone: 'America/Denver' });
+  eq('sky: clear', skyAt(fcm(10), job.best), 'Clear skies expected.');
+  eq('sky: partly', skyAt(fcm(50), job.best), 'Partly cloudy.');
+  eq('sky: overcast', skyAt(fcm(90), job.best), 'Mostly cloudy — it may stay hidden.');
+  eq('sky: rain code wins', skyAt(fcm(10, 61), job.best), 'Precipitation likely — it may stay hidden.');
+  eq('sky: series does not reach that hour', skyAt({ hourly: { time: times.slice(0, 5), cloud_cover: [1, 1, 1, 1, 1] }, utcOffset: -21600 }, job.best), '');
+  const note = composeMoon(mrow(), job, fcm(10), NOW.getTime());
+  eq('compose: title', note.title, 'Harvest Moon tonight');
+  eq('compose: body', note.body, 'Denver · sunset 6:50 PM\nBest viewing around 12:51 AM. Clear skies expected.');
+  eq('compose: 24h clock', composeMoon(mrow({ time_fmt: '24h' }), job, fcm(10), NOW.getTime()).body.split('\n')[0], 'Denver · sunset 18:50');
+  eq('compose: tag', note.tag, 'moon');
+
+  // Through the planner: a moon job and a briefing for the same row in
+  // one tick share the forecast call.
+  const when = new Date((sunset - 45 * 60) * 1000);
+  const hourThen = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Denver', hour: 'numeric', hourCycle: 'h23' }).format(when));
+  const rows = [mrow({ briefing: 1, hour: hourThen })];
+  forecastJson = { ...forecastJson, hourly: fcm(10).hourly, utc_offset_seconds: -21600, timezone: 'America/Denver' };
+  const env = { ...baseEnv, DB: fakeDB({ 'OR thresholds = 1': () => rows }) };
+  pushed.length = 0;
+  const st = await runBriefings(env, { now: when });
+  eq('clock: moon + briefing → 2 jobs, 1 forecast, 2 sent', [st.due, st.moons, st.briefings, st.forecasts, st.sent], [2, 1, 1, 1, 2]);
+  check('clock: moon_last_key written', env.DB.writes.some(w => w.sql.includes('moon_last_key') && w.binds[0] === String(harvest.dt)));
+  check('clock: moon push has its topic', pushed.some(p => p.headers.Topic === 'moon'));
+  forecastJson = { ...forecastJson, hourly: hourly(), utc_offset_seconds: 0, timezone: null };
 }
 
 // ── Alert helpers ────────────────────────────────────────────────────

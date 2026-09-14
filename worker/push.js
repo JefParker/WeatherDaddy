@@ -30,6 +30,7 @@ import {
   inNwsBox, alertKey, fetchActiveAlerts, isPushWorthy, referencedIds, composeAlert, alertTtl,
 } from './alerts.js';
 import { T, fetchAirQuality, evaluateThresholds, composeThresholds } from './thresholds.js';
+import { moonDue, composeMoon } from './moon.js';
 
 const MAX_SUBREQUESTS  = 45;
 const MAX_SENDS        = 25;       // CPU budget; anything past it waits for the next tick
@@ -334,7 +335,7 @@ export async function runClockFeatures(env, { now = new Date() } = {}) {
   const vapid = vapidFrom(env);
   const stats = {
     total: 0, due: 0, sent: 0, gone: 0, failed: 0, deferred: 0, forecasts: 0, forecastErrors: 0,
-    briefings: 0, thresholds: 0, quiet: 0,
+    briefings: 0, thresholds: 0, quiet: 0, moons: 0,
   };
   if (!vapid || !env.DB) return { ...stats, skipped: 'not configured' };
   const nowSec = Math.floor(now.getTime() / 1000);
@@ -357,6 +358,10 @@ export async function runClockFeatures(env, { now = new Date() } = {}) {
     }
     if (row.thresholds && (row.threshold_mask | 0) && clock.hour === row.threshold_hour && row.threshold_last_day !== clock.dateKey) {
       add(row, { kind: 'thresholds', day: clock.dateKey });
+    }
+    if (row.moon) {
+      const m = moonDue(row, nowSec);
+      if (m) add(row, { kind: 'moon', ...m });
     }
   }
   if (!stats.due) return stats;
@@ -406,6 +411,10 @@ export async function runClockFeatures(env, { now = new Date() } = {}) {
         const done = () => ledger.update(row.endpoint, 'UPDATE push_subscriptions SET threshold_last_day = ?1 WHERE endpoint = ?2', job.day);
         if (!items.length) { stats.quiet++; done(); return; }
         await ledger.deliver(row, composeThresholds(row, items, now.getTime()), vapid, { ttl: 6 * 3600, urgency: 'normal', topic: 'thresholds' }, stats, done);
+      } else if (job.kind === 'moon') {
+        stats.moons++;
+        await ledger.deliver(row, composeMoon(row, job, forecast, now.getTime()), vapid, { ttl: 3 * 3600, urgency: 'normal', topic: 'moon' }, stats,
+          () => ledger.update(row.endpoint, 'UPDATE push_subscriptions SET moon_last_key = ?1 WHERE endpoint = ?2', job.key));
       }
     });
   }
