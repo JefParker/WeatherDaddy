@@ -9,6 +9,10 @@
 // Free-plan budgets that shape the cron run (numbers from
 // developers.cloudflare.com/workers/platform/limits, Sept 2026):
 //   - 50 subrequests per invocation → forecasts + sends capped at 45
+//   - 10 ms CPU per cron invocation → sends capped at 25 (measured
+//     2026-09-14 on the real runtime: ~0.3 ms per push for the ECDH +
+//     AES-GCM + ES256 work, ~1 ms fixed, so 40 sends ran 11-20 ms;
+//     Cloudflare tolerates an occasional overrun, not a daily one)
 //   - 6 simultaneous outgoing connections → sends go 5 at a time
 //   - 50 D1 queries per invocation → one SELECT plus one batch
 
@@ -18,6 +22,7 @@ import {
 } from './briefing.js';
 
 const MAX_SUBREQUESTS  = 45;
+const MAX_SENDS        = 25;       // CPU budget; anything past it waits for the next tick
 const SEND_CONCURRENCY = 5;
 const MAX_FAILS        = 8;        // consecutive delivery failures before the row is dropped
 const TEST_COOLDOWN_S  = 30;
@@ -247,14 +252,17 @@ export async function runBriefings(env, { now = new Date() } = {}) {
   }
   if (!stats.due) return stats;
 
-  // Budget: one forecast fetch per group plus one send per row.
+  // Budget: one forecast fetch per group plus one send per row, and no
+  // more than MAX_SENDS sends in total however the groups fall.
   let budget = MAX_SUBREQUESTS;
+  let sends = MAX_SENDS;
   const plan = [];
   for (const [key, items] of groups) {
-    if (budget < 2) { stats.deferred += items.length; continue; }
-    const take = Math.min(items.length, budget - 1);
+    if (budget < 2 || sends < 1) { stats.deferred += items.length; continue; }
+    const take = Math.min(items.length, budget - 1, sends);
     stats.deferred += items.length - take;
     budget -= 1 + take;
+    sends -= take;
     plan.push({ key, items: items.slice(0, take) });
   }
 
