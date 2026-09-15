@@ -709,11 +709,14 @@ Object.assign(UI, {
   },
 
   // The next-2-hours strip: eight 15-minute bars, coloured by intensity
-  // band, under the precip sentence. Today only, unpinned only, and
-  // only when the window has precipitation in it (see _precipStrip).
-  // Plain divs rather than an SVG: the bars are percent heights in a
-  // flex row, so the strip follows the hero's width with no
-  // measurement, and there is no text inside it to distort.
+  // band, BEHIND the precip sentence — the sentence sits at the top of
+  // the block and the bars rise up under it, so the strip can be three
+  // times taller than a strip under the text could be without costing
+  // the hero a pixel more. The bar colours are faint for that reason.
+  // Today only, unpinned only, and only when the window has
+  // precipitation in it (see _precipStrip). Plain divs rather than an
+  // SVG: the bars are percent heights in a flex row, so the strip
+  // follows the block's width with no measurement.
   _heroPrecipStripHTML(ctx) {
     const strip = ctx.precipStrip;
     if (!strip) return '';
@@ -780,7 +783,7 @@ Object.assign(UI, {
         ${temp.html}
         <div class="hero-feels-like">Feels like ${this.formatTemp(heroData.main.feels_like)}° - ${this.esc(breeze)}</div>
         ${yesterdayMsg ? `<div class="hero-yesterday">${this.esc(yesterdayMsg)}</div>` : ''}
-        ${precipMsg ? `<div class="precip-message">${precipMsg}</div>` : ''}${precipStrip}
+        ${(precipMsg || precipStrip) ? `<div class="precip-block${precipStrip ? ' has-strip' : ''}">${precipStrip}${precipMsg ? `<div class="precip-message">${precipMsg}</div>` : ''}</div>` : ''}
       </section>`;
     return { html, shouldFlip: temp.shouldFlip };
   },

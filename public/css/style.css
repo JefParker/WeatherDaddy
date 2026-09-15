@@ -194,42 +194,69 @@ body {
   margin-bottom: 20px;
 }
 
+.precip-block {
+  margin-top: 20px;
+}
 .precip-message {
   font-weight: 600;
   font-size: 0.95rem;
-  margin-top: 20px;
 }
 
-/* Next-2-hours precipitation strip under the hero (ui-dashboard.js
+/* Next-2-hours precipitation strip on the hero (ui-dashboard.js
    _heroPrecipStripHTML). Eight 15-minute bars on a banded height scale
    (light / moderate / heavy = bottom / middle / top third) and three
-   axis labels. Kept narrow and short: it is on the hero, where every
-   pixel is dear, and it only renders when the next two hours are wet. */
-.precip-strip {
+   axis labels. The bars are a layer behind the precip sentence: the
+   sentence sits at the top of the block, the bars rise from the axis
+   line up behind it, and the block is only as tall as the bars want.
+   Light rain stays below the text, heavy rain runs up behind it —
+   hence the faint colours and the text shadow. It only renders when
+   the next two hours are wet. */
+.precip-block.has-strip {
+  position: relative;
   width: 100%;
-  max-width: 240px;
-  margin: 10px auto 0;
+  max-width: 320px;
+  min-height: 76px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-bottom: 14px; /* the axis labels */
+}
+.precip-block.has-strip .precip-message {
+  position: relative;
+  z-index: 1;
+  padding-top: 2px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+.precip-strip {
+  position: absolute;
+  inset: 0;
 }
 .precip-strip-bars {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 14px;
   display: flex;
   align-items: flex-end;
   gap: 3px;
-  height: 22px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.18);
 }
 .precip-strip-bar {
   flex: 1 1 0;
   min-width: 0;
-  border-radius: 2px 2px 0 0;
+  border-radius: 3px 3px 0 0;
 }
 .precip-strip-dry      { background: transparent; }
-.precip-strip-light    { background: rgba(77, 182, 172, 0.45); }
-.precip-strip-moderate { background: rgba(77, 182, 172, 0.85); }
-.precip-strip-heavy    { background: #b2f5ea; }
+.precip-strip-light    { background: rgba(77, 182, 172, 0.22); }
+.precip-strip-moderate { background: rgba(77, 182, 172, 0.36); }
+.precip-strip-heavy    { background: rgba(178, 245, 234, 0.42); }
 .precip-strip-axis {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
   justify-content: space-between;
-  margin-top: 3px;
   font-size: 0.65rem;
   line-height: 1;
   color: var(--text-secondary);
@@ -1808,9 +1835,11 @@ body:has(#radar-screen.open) .update-pill { display: none; }
     font-size: 0.85rem;
     margin-bottom: 10px;
   }
+  .precip-block {
+    margin-top: 8px;
+  }
   .precip-message {
     font-size: 0.85rem;
-    margin-top: 8px;
   }
 
   /* Stats grid in a narrow column gets cramped at 3 cols — keep 3 but
@@ -1852,8 +1881,9 @@ body:has(#radar-screen.open) .update-pill { display: none; }
    drop hero padding further so the graph stays visible. */
 @media (orientation: landscape) and (max-height: 380px) {
   .hero-section { padding: 8px 6px 4px; }
-  /* No room: the sentence above it carries the news. */
+  /* No room: the sentence carries the news. */
   .precip-strip { display: none; }
+  .precip-block.has-strip { min-height: 0; padding-bottom: 0; }
   .hero-temp-large { font-size: 2.5rem; }
   .hero-icon-large svg,
   .hero-icon-large img { width: 36px; height: 36px; }
