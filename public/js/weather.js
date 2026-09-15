@@ -27,6 +27,22 @@ const WeatherAPI = {
   // Fresh objects each call (the arrays get consumed by callers), shared
   // between the parsers' own error paths and App's .catch() fallbacks so
   // the "empty" shape is defined exactly once.
+  // Just the 15-minute precipitation series, for the nowcast ticker
+  // (App.tickNowcast): the same slice of the same call getEnrichment
+  // makes, so the sentence and strip never mix two sources.
+  async getMinutely(lat, lon) {
+    const url = `https://api.open-meteo.com/v1/forecast` +
+      `?latitude=${enc(lat)}&longitude=${enc(lon)}` +
+      `&minutely_15=precipitation&forecast_minutely_15=96&timeformat=unixtime&timezone=UTC`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`open-meteo ${res.status}`);
+    const m = (await res.json()).minutely_15 || {};
+    return (m.time || []).map((t, i) => ({
+      dt: t,
+      precipMM: m.precipitation ? m.precipitation[i] || 0 : 0
+    }));
+  },
+
   emptyEnrichment() {
     return { uv: { current: null, daily: [] }, hourly: [], daily: [], minutely: [], tzName: null };
   },

@@ -759,12 +759,6 @@ Object.assign(UI, {
     // stays consistent with the rest of the hero card.
     const breeze = this.windDescription(heroData.wind.speed);
     const yesterdayMsg = this._heroYesterdayMsg(ctx);
-    // Resolved before the sentence, which words itself around the strip.
-    ctx.precipStrip = (ctx.isToday && !ctx.pinnedHourSlot)
-      ? this._precipStrip(ctx.state.omMinutely, ctx.nowSec)
-      : null;
-    const precipMsg = this._heroPrecipMsg(ctx);
-    const precipStrip = this._heroPrecipStripHTML(ctx);
     const html = `<section class="hero-section">
         <div class="hero-when">${this.esc(this._heroWhen(ctx))}</div>
         <div class="hero-condition">
@@ -783,9 +777,42 @@ Object.assign(UI, {
         ${temp.html}
         <div class="hero-feels-like">Feels like ${this.formatTemp(heroData.main.feels_like)}° - ${this.esc(breeze)}</div>
         ${yesterdayMsg ? `<div class="hero-yesterday">${this.esc(yesterdayMsg)}</div>` : ''}
-        ${(precipMsg || precipStrip) ? `<div class="precip-block${precipStrip ? ' has-strip' : ''}">${precipStrip}${precipMsg ? `<div class="precip-message">${precipMsg}</div>` : ''}</div>` : ''}
+        ${this._precipBlockHTML(ctx)}
       </section>`;
     return { html, shouldFlip: temp.shouldFlip };
+  },
+
+  // The precip sentence and, when the next two hours are wet, the strip
+  // behind it — its own builder because App.tickNowcast re-renders just
+  // this block between dashboard renders (see refreshPrecipBlock).
+  _precipBlockHTML(ctx) {
+    // Resolved before the sentence, which words itself around the strip.
+    ctx.precipStrip = (ctx.isToday && !ctx.pinnedHourSlot)
+      ? this._precipStrip(ctx.state.omMinutely, ctx.nowSec)
+      : null;
+    const precipMsg = this._heroPrecipMsg(ctx);
+    const precipStrip = this._heroPrecipStripHTML(ctx);
+    if (!precipMsg && !precipStrip) return '';
+    return `<div class="precip-block${precipStrip ? ' has-strip' : ''}">${precipStrip}${precipMsg ? `<div class="precip-message">${precipMsg}</div>` : ''}</div>`;
+  },
+
+  // Redraw the precip block from the state and the clock, in place.
+  // "Rain starting in ~15 min" is a countdown and the strip's leftmost
+  // bar is the current 15-minute slot: both go stale within a minute
+  // of being drawn, long before the 15-minute refresh. The block has no
+  // listeners, so swapping its HTML is safe; the rest of the hero is
+  // left alone.
+  refreshPrecipBlock(state) {
+    if (this._cubeAnimating) return;
+    const hero = document.querySelector('.hero-section');
+    if (!hero || !state || !state.currentWeather) return;
+    const html = this._precipBlockHTML(this._dashboardContext(state));
+    const cur = hero.querySelector('.precip-block');
+    if (cur) {
+      if (html) cur.outerHTML = html; else cur.remove();
+    } else if (html) {
+      hero.insertAdjacentHTML('beforeend', html);
+    }
   },
 
   // ── Quick stats ─────────────────────────────────────────────────────

@@ -495,8 +495,45 @@ const App = {
         hiddenAt = Date.now();
       } else if (hiddenAt !== null && Date.now() - hiddenAt >= INTERVAL_MS) {
         this.refreshCurrentWeather();
+      } else {
+        // Back sooner than that: the countdown still moved on.
+        this.tickNowcast();
       }
     });
+
+    // The nowcast line and strip, every minute, from data in hand.
+    setInterval(() => this.tickNowcast(), 60 * 1000);
+  },
+
+  // Keep "Rain starting in ~15 min, lasting ~45 min" and the strip
+  // under it honest between refreshes. Every minute the block is redrawn
+  // from the series already in state, so the countdown counts down and
+  // the bars shift as slots pass; and while the next two hours have
+  // rain in them, the 15-minute series itself is refetched every five
+  // minutes — that one small, keyless Open-Meteo call, not the whole
+  // city — so a shower the model moved is seen within five minutes
+  // rather than fifteen. A dry window costs nothing beyond the redraw.
+  NOWCAST_REFETCH_MS: 5 * 60 * 1000,
+  _minutelyFetchedAt: 0,
+  async tickNowcast() {
+    const loc = Storage.getLocation();
+    const s = this.state;
+    if (!loc || !s.currentWeather || document.hidden) return;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const wetSoon = !!(UI._precipStrip(s.omMinutely, nowSec) || UI._precipNowcast(s.omMinutely, nowSec));
+    if (wetSoon && Date.now() - this._minutelyFetchedAt >= this.NOWCAST_REFETCH_MS) {
+      this._minutelyFetchedAt = Date.now();
+      const token = this._fetchToken;
+      try {
+        const minutely = await WeatherAPI.getMinutely(loc.lat, loc.lon);
+        // Not if the city changed underneath the fetch. The next full
+        // refresh writes the cache; this is a live overlay only.
+        if (token === this._fetchToken && minutely.length) s.omMinutely = minutely;
+      } catch (e) {
+        console.warn('Nowcast refetch failed:', e);
+      }
+    }
+    UI.refreshPrecipBlock(s);
   },
 
   async refreshCurrentWeather() {
