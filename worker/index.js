@@ -116,8 +116,10 @@ export default {
     try {
       upstreamRes = await fetch(upstream.toString(), {
         // Light edge cache so repeat lookups for the same city don't
-        // burn through the OWM free-tier quota.
-        cf: { cacheTtl: 60, cacheEverything: true },
+        // burn through the OWM free-tier quota. Successes only: a
+        // cached 401 or 429 would keep answering for a minute after
+        // the key or the quota had recovered.
+        cf: { cacheTtlByStatus: { '200-299': 60 }, cacheEverything: true },
         headers: { accept: 'application/json' },
       });
     } catch (err) {
@@ -137,7 +139,8 @@ export default {
       headers: {
         ...corsHeaders(),
         'Content-Type': 'application/json',
-        'Cache-Control': 'public, max-age=60',
+        // Same rule for the browser's cache: an error is not worth a minute.
+        'Cache-Control': upstreamRes.ok ? 'public, max-age=60' : 'no-store',
       },
     });
   },
