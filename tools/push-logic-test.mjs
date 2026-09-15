@@ -11,7 +11,7 @@ import { localIsoToEpoch } from '../worker/briefing.js';
 import { nearbyFullMoons, solarTimes, moonDue, composeMoon, skyAt, moonIllumination } from '../worker/moon.js';
 import { skyDue, composeSky, METEOR_SHOWERS, ECLIPSES } from '../worker/sky.js';
 import { changesSlot, evaluateChanges, composeChanges, sinceWord } from '../worker/changes.js';
-import { nowcastOnset, nowcastDue, composeNowcast, nowcastTtl, spanLabel, inQuietHours, NOWCAST_LEAD_S } from '../worker/nowcast.js';
+import { nowcastOnset, nowcastRest, nowcastDue, composeNowcast, nowcastTtl, spanLabel, inQuietHours, NOWCAST_LEAD_S, NOWCAST_REST_S } from '../worker/nowcast.js';
 
 let failures = 0;
 const check = (name, ok, detail = '') => {
@@ -36,7 +36,7 @@ const row = (i, extra = {}) => ({
   hour: 20, temp_unit: 'F', wind_unit: 'mph', precip_unit: 'in', time_fmt: '12h',
   briefing: 1, alerts: 0, thresholds: 0, threshold_hour: 17, threshold_mask: 63, moon: 0, sky: 0, changes: 0,
   last_sent_day: null, threshold_last_day: null, moon_last_key: null, sky_last_key: null,
-  changes_snapshot: null, changes_last_slot: null, fail_count: 0, ...extra,
+  changes_snapshot: null, changes_last_slot: null, nowcast_last_dt: null, nowcast_next_at: null, fail_count: 0, ...extra,
 });
 
 // A fake D1: `tables` answers SELECTs by a substring of the SQL; every
@@ -371,6 +371,11 @@ eq('umbrella: title', composeThresholds(trow(), evaluateThresholds(trow({ thresh
   eq('onset: snow in the spell says snow', nowcastOnset(series('.xs.....'), nsec).snow, true);
   eq('onset: snow after the spell does not', nowcastOnset(series('.x..s...'), nsec).snow, false);
   eq('onset: too short a series is nothing', nowcastOnset(series('.'), nsec), null);
+  eq('rest: a dry six hours rests for 30 min', nowcastRest(series('........................'), nsec), nsec + NOWCAST_REST_S);
+  eq('rest: rain within the hour keeps polling', nowcastRest(series('....x...'), nsec), null);
+  eq('rest: rain falling now keeps polling', nowcastRest(series('x.......'), nsec), null);
+  eq('rest: rain at 21:15 (68 min out) rests', nowcastRest(series('.....x..'), nsec), nsec + NOWCAST_REST_S);
+  eq('rest: no data rests', nowcastRest([], nsec), nsec + NOWCAST_REST_S);
 
   const nrow = (extra = {}) => row('n', { briefing: 0, nowcast: 1, nowcast_last_dt: null, ...extra });
   const onset = nowcastOnset(series('.xxx....'), nsec);
@@ -405,18 +410,25 @@ eq('umbrella: title', composeThresholds(trow(), evaluateThresholds(trow({ thresh
     nrow(),
     row('n2', { briefing: 0, nowcast: 1, nowcast_last_dt: at(0) }),
     row('n3', { briefing: 0, nowcast: 1, nowcast_last_dt: null, tz: 'Asia/Tokyo' }),  // 05:07 there
+    row('n4', { briefing: 0, nowcast: 1, nowcast_next_at: nsec + 600 }),                // resting
+    row('n5', { briefing: 0, nowcast: 1, nowcast_next_at: nsec - 1 }),                  // rest over
   ];
   const env = { ...baseEnv, DB: fakeDB({ 'WHERE nowcast = 1': () => rows }) };
   pushed.length = 0;
   const st = await runNowcast(env, { now: NOW });
-  eq('nowcast: 3 rows, 2 awake, 1 place fetched, 1 onset, 1 sent, 1 repeat', [st.total, st.awake, st.locations, st.fetched, st.onsets, st.sent, st.repeats], [3, 2, 1, 1, 1, 1, 1]);
+  eq('nowcast: 5 rows, 1 quiet, 1 resting, 3 awake, 1 place fetched, 1 onset, 2 sent, 1 repeat', [st.total, st.resting, st.awake, st.locations, st.fetched, st.onsets, st.sent, st.repeats], [5, 1, 3, 1, 1, 1, 2, 1]);
+  check('nowcast: rain within the hour → nobody rests', !env.DB.writes.some(w => w.sql.includes('nowcast_next_at')));
   check('nowcast: the onset slot is remembered on the row', env.DB.writes.some(w => w.sql.includes('nowcast_last_dt') && w.binds[0] === at(1) && w.binds[1] === 'https://push.example/n'));
   check('nowcast: urgency high, topic nowcast, short TTL', pushed.every(p => p.headers.Urgency === 'high' && p.headers.Topic === 'nowcast' && Number(p.headers.TTL) <= 8 * 60));
 
   minutelyJson = omMinutely(series('........'));
   const env2 = { ...baseEnv, DB: fakeDB({ 'WHERE nowcast = 1': () => [nrow()] }) };
   const st2 = await runNowcast(env2, { now: NOW });
-  eq('nowcast: dry place fetched, nothing sent, nothing written', [st2.fetched, st2.onsets, st2.sent, env2.DB.writes.length], [1, 0, 0, 0]);
+  eq('nowcast: dry place fetched, nothing sent, row rests', [st2.fetched, st2.onsets, st2.sent, st2.rested], [1, 0, 0, 1]);
+  eq('nowcast: rest is 30 min from now', env2.DB.writes.map(w => w.sql.includes('nowcast_next_at') && w.binds), [[nsec + NOWCAST_REST_S, 'https://push.example/n']]);
+  const env2b = { ...baseEnv, DB: fakeDB({ 'WHERE nowcast = 1': () => [nrow({ nowcast_next_at: nsec + NOWCAST_REST_S })] }) };
+  const st2b = await runNowcast(env2b, { now: NOW });
+  eq('nowcast: resting row costs no fetch', [st2b.resting, st2b.fetched], [1, 0]);
 
   minutelyJson = omMinutely(wet);
   const env3 = { ...baseEnv, DB: fakeDB({ 'WHERE nowcast = 1': () => Array.from({ length: 40 }, (_, i) => row(i, { briefing: 0, nowcast: 1, nowcast_last_dt: null })) }) };

@@ -35,7 +35,7 @@ import { T, T_ALL, fetchAirQuality, evaluateThresholds, composeThresholds } from
 import { moonDue, composeMoon } from './moon.js';
 import { skyDue, composeSky } from './sky.js';
 import { changesSlot, evaluateChanges, composeChanges } from './changes.js';
-import { nowcastKey, inQuietHours, fetchMinutely, nowcastOnset, nowcastDue, composeNowcast, nowcastTtl } from './nowcast.js';
+import { nowcastKey, inQuietHours, fetchMinutely, nowcastOnset, nowcastRest, nowcastDue, composeNowcast, nowcastTtl } from './nowcast.js';
 
 const MAX_SUBREQUESTS  = 45;
 const MAX_SENDS        = 25;       // CPU budget; anything past it waits for the next tick
@@ -214,7 +214,7 @@ async function subscribe(env, body) {
       thresholds = excluded.thresholds, threshold_hour = excluded.threshold_hour,
       threshold_mask = excluded.threshold_mask, moon = excluded.moon,
       sky = excluded.sky, changes = excluded.changes, nowcast = excluded.nowcast,
-      fail_count = 0, updated_at = excluded.updated_at
+      nowcast_next_at = NULL, fail_count = 0, updated_at = excluded.updated_at
   `).bind(
     sub.endpoint, sub.p256dh, sub.auth, prefs.lat, prefs.lon, prefs.name, prefs.tz, prefs.hour,
     prefs.units.temp, prefs.units.wind, prefs.units.precip, prefs.units.time,
@@ -538,13 +538,15 @@ export async function runAlerts(env, { now = new Date() } = {}) {
 }
 
 // One nowcast tick. Every location with a nowcast subscriber who isn't
-// in quiet hours gets one 15-minute-series call; if rain is about to
-// start there, each of those subscribers who hasn't been told about
-// this spell gets a push. The onset is a property of the place, so it
-// is worked out once per group and only the dedupe is per row.
+// in quiet hours or resting (nowcast_next_at still ahead) gets one
+// 15-minute-series call; if rain is about to start there, each of those
+// subscribers who hasn't been told about this spell gets a push, and
+// if nothing is coming within the hour the location's rows rest for
+// half an hour. The onset is a property of the place, so it is worked
+// out once per group and only the dedupe is per row.
 export async function runNowcast(env, { now = new Date() } = {}) {
   const vapid = vapidFrom(env);
-  const stats = { total: 0, awake: 0, locations: 0, fetched: 0, fetchErrors: 0, onsets: 0, repeats: 0, sent: 0, gone: 0, failed: 0, deferred: 0 };
+  const stats = { total: 0, awake: 0, resting: 0, locations: 0, fetched: 0, fetchErrors: 0, onsets: 0, rested: 0, repeats: 0, sent: 0, gone: 0, failed: 0, deferred: 0 };
   if (!vapid || !env.DB) return { ...stats, skipped: 'not configured' };
   const nowSec = Math.floor(now.getTime() / 1000);
 
@@ -555,6 +557,7 @@ export async function runNowcast(env, { now = new Date() } = {}) {
   const groups = new Map();
   for (const row of rows) {
     if (inQuietHours(row, now)) continue;
+    if ((Number(row.nowcast_next_at) || 0) > nowSec) { stats.resting++; continue; }
     stats.awake++;
     const key = nowcastKey(row.lat, row.lon);
     if (!groups.has(key)) groups.set(key, []);
@@ -570,13 +573,20 @@ export async function runNowcast(env, { now = new Date() } = {}) {
     if (budget < 1) { stats.deferred += members.length; continue; }
     budget--;
     stats.fetched++;
-    let onset;
-    try { onset = nowcastOnset(await fetchMinutely(members[0].lat, members[0].lon), nowSec); }
+    let series;
+    try { series = await fetchMinutely(members[0].lat, members[0].lon); }
     catch (err) {
       stats.fetchErrors++;
       console.warn('[nowcast] fetch failed', members[0].lat, members[0].lon, err && err.message);
       continue;
     }
+    const rest = nowcastRest(series, nowSec);
+    if (rest) {
+      stats.rested += members.length;
+      for (const row of members) ledger.update(row.endpoint, 'UPDATE push_subscriptions SET nowcast_next_at = ?1 WHERE endpoint = ?2', rest);
+      continue;
+    }
+    const onset = nowcastOnset(series, nowSec);
     if (!onset) continue;
     stats.onsets++;
 

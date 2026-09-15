@@ -13,6 +13,13 @@
 // Note the series is true 15-minute model output in North America and
 // central Europe and interpolated from hourly elsewhere — still
 // worth having, just softer at the edges, hence the tildes.
+//
+// Polling is gated by the series itself: when nothing wet is coming in
+// the next hour the location rests for half an hour (nowcast_next_at
+// on each of its rows), so a dry day costs 48 calls per location, not
+// 288, and Open-Meteo's 10k/day ceiling is a long way off. Model runs
+// update hourly, so half an hour cannot miss a shower that was an
+// hour or more out when last looked.
 
 import { localClock } from './briefing.js';
 import { clockTime } from './moon.js';
@@ -21,6 +28,8 @@ const OM = 'https://api.open-meteo.com/v1/forecast';
 
 export const NOWCAST_LEAD_S   = 20 * 60;  // send once the onset is this close
 export const NOWCAST_REPEAT_S = 60 * 60;  // a new onset must be this far past the last one told
+export const NOWCAST_REST_S   = 30 * 60;  // how long a location sleeps when nothing is coming
+export const NOWCAST_WATCH_S  = 60 * 60;  // …unless the first wet slot is within this
 const WET_MM = 0.05;                      // mm per 15 min that counts as precipitating
 // No rain pushes between these local hours (device timezone): a shower
 // at 3 AM is not something to be woken for.
@@ -80,6 +89,15 @@ export function nowcastOnset(series, nowSec, leadSec = NOWCAST_LEAD_S) {
     untilDt: end < upcoming.length ? upcoming[end].dt : null,
     snow: spell.some((m) => (m.snow || 0) > 0),
   };
+}
+
+// When may this location next skip the fetch? Epoch seconds, or null
+// to keep polling every tick: precipitation within the hour, whether
+// falling now or due soon, is watched closely so the onset push lands
+// on time and a following spell is seen.
+export function nowcastRest(series, nowSec) {
+  const soon = (series || []).some((m) => m.dt + 900 > nowSec && m.dt <= nowSec + NOWCAST_WATCH_S && (m.mm || 0) >= WET_MM);
+  return soon ? null : nowSec + NOWCAST_REST_S;
 }
 
 // One push per spell of rain: an onset within NOWCAST_REPEAT_S of the
