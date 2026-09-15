@@ -174,7 +174,7 @@ eq('umbrella: title', composeThresholds(trow(), evaluateThresholds(trow({ thresh
 
   const mrow = (extra = {}) => row('m', { briefing: 0, moon: 1, tz: 'America/Denver', ...extra });
   const harvest = nearbyFullMoons(Date.parse('2026-09-26T12:00Z') / 1000)[1];
-  eq('the Harvest Moon peak', iso(harvest.dt), '2026-09-26T06:56');
+  eq('the Harvest Moon peak (Meeus; almanac says 16:49)', iso(harvest.dt), '2026-09-26T16:49');
   // Its local day in Denver is the 26th; sunset that day is 00:50Z on the 27th.
   const sunset = den.sunset;
   check('due 45 min before sunset', !!moonDue(mrow(), sunset - 45 * 60));
@@ -187,7 +187,16 @@ eq('umbrella: title', composeThresholds(trow(), evaluateThresholds(trow({ thresh
   check('due again for the next moon despite last key', !!moonDue(mrow({ moon_last_key: 'old' }), sunset - 45 * 60));
   const job = moonDue(mrow(), sunset - 45 * 60);
   eq('job key is the peak', job.key, String(harvest.dt));
-  check('peak (06:56Z on the 26th) is not in the night → best viewing is mid-night', job.best !== harvest.dt && job.best > job.sunset && job.best < job.sunrise);
+  check('peak (10:49 AM MDT on the 26th) is not in the night → best viewing is mid-night', job.best !== harvest.dt && job.best > job.sunset && job.best < job.sunrise);
+  // In Tokyo the same peak is 1:49 AM on the 27th: that is the night
+  // that began on the evening of the 26th, so the push goes out before
+  // the 26th's sunset and names the peak as the time to look.
+  const trow = mrow({ tz: 'Asia/Tokyo', lat: 35.68, lon: 139.69 });
+  const tokyoSunset = solarTimes(2026, 9, 26, 35.68, 139.69, 'Asia/Tokyo').sunset;
+  const tjob = moonDue(trow, tokyoSunset - 45 * 60);
+  check('after-midnight peak → due the evening before', !!tjob && tjob.sunset === tokyoSunset);
+  check('after-midnight peak → not due the evening after', !moonDue(trow, tokyoSunset + 86400 - 45 * 60));
+  check('after-midnight peak → best viewing is the peak', tjob && tjob.best === harvest.dt);
 
   // A forecast whose hourly series covers that night, in Denver time.
   const t0 = Date.UTC(2026, 8, 26, 6); // local midnight MDT = 06:00Z

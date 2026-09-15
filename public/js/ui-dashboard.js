@@ -827,9 +827,28 @@ Object.assign(UI, {
       </div>`;
   },
 
+  // The night of a full moon: sunset and the following sunrise, for
+  // the night whose dark hours contain the peak — a peak at 1:49 AM
+  // belongs to the evening before, not the one after. A daytime peak
+  // takes the night that starts on its local date. null in polar
+  // day/night. Same rule as fullMoonNight in worker/moon.js, so the
+  // card and the push agree on the night.
+  _fullMoonNight(ctx, fm) {
+    let fallback = null;
+    for (const anchor of [fm.dt, fm.dt - 86400]) {
+      const sun = this._sunTimesAt(ctx, anchor);
+      const next = this._sunTimesAt(ctx, anchor + 86400);
+      if (!(sun.sunset && next.sunrise)) continue;
+      const night = { sunset: sun.sunset, sunrise: next.sunrise };
+      if (fm.dt >= night.sunset && fm.dt <= night.sunrise) return { ...night, peakAtNight: true };
+      if (!fallback) fallback = { ...night, peakAtNight: false };
+    }
+    return fallback;
+  },
+
   // The full-moon card, when the hero's moment falls inside a
-  // full-moon-visible window (sunset - 12h of the full-moon day through
-  // the next sunrise). Returns { name, html } or null.
+  // full-moon-visible window (sunset - 12h of the full-moon night
+  // through its sunrise). Returns { name, html } or null.
   _fullMoonCard(ctx) {
     const { heroData, tz } = ctx;
     const currentDt = heroData.dt;
@@ -837,17 +856,15 @@ Object.assign(UI, {
     // it (previous / nearest / next by index). No year-scoped table
     // needed and no fixed 13-entry scan per render.
     for (const fm of getRelevantFullMoons(currentDt)) {
-      const fmSun = this._sunTimesAt(ctx, fm.dt);
-      const nextDaySun = this._sunTimesAt(ctx, fm.dt + 86400);
-      if (!(fmSun.sunset && nextDaySun.sunrise)) continue;
-      const startDt = fmSun.sunset - 12 * 3600;
-      const endDt = nextDaySun.sunrise;
+      const night = this._fullMoonNight(ctx, fm);
+      if (!night) continue;
+      const startDt = night.sunset - 12 * 3600;
+      const endDt = night.sunrise;
       if (!(currentDt >= startDt && currentDt <= endDt)) continue;
 
       let optimalDt = fm.dt;
-      const fmPeakIsAtNight = fm.dt >= fmSun.sunset && fm.dt <= nextDaySun.sunrise;
-      if (!fmPeakIsAtNight) {
-        optimalDt = fmSun.sunset + (nextDaySun.sunrise - fmSun.sunset) / 2;
+      if (!night.peakAtNight) {
+        optimalDt = night.sunset + (night.sunrise - night.sunset) / 2;
       }
       const optimalTimeStr = this.formatTime(optimalDt, true, tz);
       const moonFilter = FULL_MOON_FILTERS[fm.name] || FULL_MOON_FILTER_DEFAULT;

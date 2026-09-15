@@ -54,29 +54,69 @@ const FULL_MOON_FILTER_DEFAULT = 'drop-shadow(0 0 10px rgba(255, 255, 255, 0.25)
 const FULL_MOON_SYNODIC_DAYS = 29.530588853;
 const FULL_MOON_REF_MS = Date.UTC(2000, 0, 21, 4, 41);
 
+// The instant of full moon number `k` (0 = 2000-01-21), epoch seconds:
+// Meeus, Astronomical Algorithms ch. 49, good to a minute or two. The
+// mean lunation alone (FULL_MOON_REF_MS + k × synodic month) can be
+// ±14 hours out because of the Moon's orbital eccentricity — enough to
+// put the full-moon card, and the Worker's push, on the wrong night.
+// Same code as fullMoonEpoch in worker/moon.js.
+function _fullMoonEpoch(k) {
+  const RAD = Math.PI / 180;
+  const kk = k + 0.5;                      // Meeus counts lunations from the 2000-01-06 new moon
+  const T = kk / 1236.85;
+  const T2 = T * T, T3 = T2 * T, T4 = T3 * T;
+  let jde = 2451550.09766 + 29.530588861 * kk + 0.00015437 * T2 - 0.000000150 * T3 + 0.00000000073 * T4;
+  const E  = 1 - 0.002516 * T - 0.0000074 * T2;
+  const M  = RAD * (2.5534   + 29.10535670  * kk - 0.0000014 * T2 - 0.00000011 * T3);   // Sun's mean anomaly
+  const Mp = RAD * (201.5643 + 385.81693528 * kk + 0.0107582 * T2 + 0.00001238 * T3 - 0.000000058 * T4); // Moon's
+  const F  = RAD * (160.7108 + 390.67050284 * kk - 0.0016118 * T2 - 0.00000227 * T3 + 0.000000011 * T4); // argument of latitude
+  const O  = RAD * (124.7746 - 1.56375588   * kk + 0.0020672 * T2 + 0.00000215 * T3);   // longitude of the ascending node
+  const s = Math.sin;
+  jde += -0.40614 * s(Mp) + 0.17302 * E * s(M) + 0.01614 * s(2 * Mp) + 0.01043 * s(2 * F)
+    + 0.00734 * E * s(Mp - M) - 0.00515 * E * s(Mp + M) + 0.00209 * E * E * s(2 * M)
+    - 0.00111 * s(Mp - 2 * F) - 0.00057 * s(Mp + 2 * F) + 0.00056 * E * s(2 * Mp + M)
+    - 0.00042 * s(3 * Mp) + 0.00042 * E * s(M + 2 * F) + 0.00038 * E * s(M - 2 * F)
+    - 0.00024 * E * s(2 * Mp - M) - 0.00017 * s(O) - 0.00007 * s(Mp + 2 * M)
+    + 0.00004 * s(2 * Mp - 2 * F) + 0.00004 * s(3 * M) + 0.00003 * s(Mp + M - 2 * F)
+    + 0.00003 * s(2 * Mp + 2 * F) - 0.00003 * s(Mp + M + 2 * F) + 0.00003 * s(Mp - M + 2 * F)
+    - 0.00002 * s(Mp - M - 2 * F) - 0.00002 * s(3 * Mp + M) + 0.00002 * s(4 * Mp);
+  // Planetary arguments (Meeus 49.7-49.9): a minute or two at most.
+  const A = [
+    [0.000325, 299.77 + 0.107408 * kk - 0.009173 * T2], [0.000165, 251.88 + 0.016321 * kk],
+    [0.000164, 251.83 + 26.651886 * kk], [0.000126, 349.42 + 36.412478 * kk],
+    [0.000110, 84.66 + 18.206239 * kk], [0.000062, 141.74 + 53.303771 * kk],
+    [0.000060, 207.14 + 2.453732 * kk], [0.000056, 154.84 + 7.306860 * kk],
+    [0.000047, 34.52 + 27.261239 * kk], [0.000042, 207.19 + 0.121824 * kk],
+    [0.000040, 291.34 + 1.844379 * kk], [0.000037, 161.72 + 24.198154 * kk],
+    [0.000035, 239.56 + 25.513099 * kk], [0.000023, 331.55 + 3.592518 * kk],
+  ];
+  for (const [c, a] of A) jde += c * s(RAD * a);
+  // JDE is Terrestrial Time, which runs ~69 s ahead of UTC in the 2020s.
+  return Math.round((jde - 2440587.5) * 86400 - 69);
+}
+
 // Return the full moon at index k (relative to FULL_MOON_REF_MS) with
 // its traditional name and Blue-Moon override. k=0 → 2000-01-21;
-// k=326 → the Wolf Moon of 2026, etc. Pure function of k, so we can
+// k=321 → the Wolf Moon of 2026, etc. Pure function of k, so we can
 // compute the two nearest to `now` in O(1) instead of iterating a
 // 13-entry per-year table.
 function _fullMoonAt(k) {
-  const dtMs = FULL_MOON_REF_MS + k * FULL_MOON_SYNODIC_DAYS * 86400000;
-  const d = new Date(dtMs);
-  const month = d.getUTCMonth();
+  const dt = _fullMoonEpoch(k);
+  const month = new Date(dt * 1000).getUTCMonth();
   // Blue Moon = second full moon inside the same UTC calendar month.
   // We only need to look back one synodic period since two full moons
   // in the same month is the only Blue-Moon condition.
-  const prevMs = FULL_MOON_REF_MS + (k - 1) * FULL_MOON_SYNODIC_DAYS * 86400000;
-  const prevMonth = new Date(prevMs).getUTCMonth();
+  const prevMonth = new Date(_fullMoonEpoch(k - 1) * 1000).getUTCMonth();
   const name = (prevMonth === month) ? 'Blue Moon' : FULL_MOON_NAMES[month];
-  return { name, dt: Math.round(dtMs / 1000) };
+  return { name, dt };
 }
 
 // The renderer only cares whether the CURRENT time is inside any
 // full-moon-visible window; that window brackets a single full-moon
 // peak. Return the 3 candidates closest to `nowDt` (prev / nearest /
 // next) — one of them will always be the right one to test, regardless
-// of what side of the peak `nowDt` lands on.
+// of what side of the peak `nowDt` lands on. The mean lunation picks
+// the index; the exact times come from _fullMoonAt.
 function getRelevantFullMoons(nowDtSec) {
   const nowMs = nowDtSec * 1000;
   const kNear = Math.round(

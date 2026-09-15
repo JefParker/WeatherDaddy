@@ -20,12 +20,53 @@ const FULL_MOON_NAMES = [
 ];
 const SYNODIC_DAYS = 29.530588853;
 const REF_MS = Date.UTC(2000, 0, 21, 4, 41); // an observed full moon
+const RAD = Math.PI / 180;
+
+// The instant of full moon number `k` (0 = 2000-01-21), epoch seconds:
+// Meeus, Astronomical Algorithms ch. 49, which is good to a minute or
+// two. The mean lunation alone (REF_MS + k × SYNODIC_DAYS) can be
+// ±14 hours out because of the Moon's orbital eccentricity, which is
+// enough to put "the night of the full moon" on the wrong calendar day.
+// Same code as _fullMoonEpoch in public/js/ui-format.js.
+export function fullMoonEpoch(k) {
+  const kk = k + 0.5;                      // Meeus counts lunations from the 2000-01-06 new moon
+  const T = kk / 1236.85;
+  const T2 = T * T, T3 = T2 * T, T4 = T3 * T;
+  let jde = 2451550.09766 + 29.530588861 * kk + 0.00015437 * T2 - 0.000000150 * T3 + 0.00000000073 * T4;
+  const E  = 1 - 0.002516 * T - 0.0000074 * T2;
+  const M  = RAD * (2.5534   + 29.10535670  * kk - 0.0000014 * T2 - 0.00000011 * T3);   // Sun's mean anomaly
+  const Mp = RAD * (201.5643 + 385.81693528 * kk + 0.0107582 * T2 + 0.00001238 * T3 - 0.000000058 * T4); // Moon's
+  const F  = RAD * (160.7108 + 390.67050284 * kk - 0.0016118 * T2 - 0.00000227 * T3 + 0.000000011 * T4); // argument of latitude
+  const O  = RAD * (124.7746 - 1.56375588   * kk + 0.0020672 * T2 + 0.00000215 * T3);   // longitude of the ascending node
+  const s = Math.sin;
+  jde += -0.40614 * s(Mp) + 0.17302 * E * s(M) + 0.01614 * s(2 * Mp) + 0.01043 * s(2 * F)
+    + 0.00734 * E * s(Mp - M) - 0.00515 * E * s(Mp + M) + 0.00209 * E * E * s(2 * M)
+    - 0.00111 * s(Mp - 2 * F) - 0.00057 * s(Mp + 2 * F) + 0.00056 * E * s(2 * Mp + M)
+    - 0.00042 * s(3 * Mp) + 0.00042 * E * s(M + 2 * F) + 0.00038 * E * s(M - 2 * F)
+    - 0.00024 * E * s(2 * Mp - M) - 0.00017 * s(O) - 0.00007 * s(Mp + 2 * M)
+    + 0.00004 * s(2 * Mp - 2 * F) + 0.00004 * s(3 * M) + 0.00003 * s(Mp + M - 2 * F)
+    + 0.00003 * s(2 * Mp + 2 * F) - 0.00003 * s(Mp + M + 2 * F) + 0.00003 * s(Mp - M + 2 * F)
+    - 0.00002 * s(Mp - M - 2 * F) - 0.00002 * s(3 * Mp + M) + 0.00002 * s(4 * Mp);
+  // Planetary arguments (Meeus 49.7-49.9): a minute or two at most.
+  const A = [
+    [0.000325, 299.77 + 0.107408 * kk - 0.009173 * T2], [0.000165, 251.88 + 0.016321 * kk],
+    [0.000164, 251.83 + 26.651886 * kk], [0.000126, 349.42 + 36.412478 * kk],
+    [0.000110, 84.66 + 18.206239 * kk], [0.000062, 141.74 + 53.303771 * kk],
+    [0.000060, 207.14 + 2.453732 * kk], [0.000056, 154.84 + 7.306860 * kk],
+    [0.000047, 34.52 + 27.261239 * kk], [0.000042, 207.19 + 0.121824 * kk],
+    [0.000040, 291.34 + 1.844379 * kk], [0.000037, 161.72 + 24.198154 * kk],
+    [0.000035, 239.56 + 25.513099 * kk], [0.000023, 331.55 + 3.592518 * kk],
+  ];
+  for (const [c, a] of A) jde += c * s(RAD * a);
+  // JDE is Terrestrial Time, which runs ~69 s ahead of UTC in the 2020s.
+  return Math.round((jde - 2440587.5) * 86400 - 69);
+}
 
 export function fullMoonAt(k) {
-  const dtMs = REF_MS + k * SYNODIC_DAYS * 86400000;
-  const month = new Date(dtMs).getUTCMonth();
-  const prevMonth = new Date(REF_MS + (k - 1) * SYNODIC_DAYS * 86400000).getUTCMonth();
-  return { name: prevMonth === month ? 'Blue Moon' : FULL_MOON_NAMES[month], dt: Math.round(dtMs / 1000) };
+  const dt = fullMoonEpoch(k);
+  const month = new Date(dt * 1000).getUTCMonth();
+  const prevMonth = new Date(fullMoonEpoch(k - 1) * 1000).getUTCMonth();
+  return { name: prevMonth === month ? 'Blue Moon' : FULL_MOON_NAMES[month], dt };
 }
 
 // Fraction of the Moon's disc lit at `sec`, 0 (new) to 1 (full), from
@@ -37,6 +78,7 @@ export function moonIllumination(sec) {
 }
 
 // The three full moons nearest `nowSec` (previous / nearest / next).
+// The mean lunation picks the index; the exact times come from above.
 export function nearbyFullMoons(nowSec) {
   const k = Math.round((nowSec * 1000 - REF_MS) / (SYNODIC_DAYS * 86400000));
   return [fullMoonAt(k - 1), fullMoonAt(k), fullMoonAt(k + 1)];
@@ -92,27 +134,39 @@ export function solarTimes(year, month /* 1-12 */, day, lat, lon, tz) {
 const WINDOW_BEFORE_S = 75 * 60;
 const WINDOW_UNTIL_S  = 15 * 60;
 
-// Is there a full-moon push due for this row right now? Returns the job
-// (key, moon, sunset, next sunrise, best viewing time) or null. "The
-// night of the full moon" is the local calendar day of the peak, as on
-// the dashboard's full-moon card; the device timezone stands in for the
-// city's, which only matters for a city many zones away with a peak
-// near midnight.
-export function moonDue(row, nowSec) {
+// The night of a full moon: sunset and the following sunrise, for the
+// night whose dark hours contain the peak — a peak at 1:49 AM belongs
+// to the evening before, not the one after. A daytime peak takes the
+// night that starts on its local date. null in polar day/night. Same
+// rule as UI._fullMoonNight on the dashboard's full-moon card, so the
+// push and the card agree on the night; the device timezone stands in
+// for the city's, which only matters for a city many zones away.
+export function fullMoonNight(fm, row) {
   const tz = row.tz;
-  for (const fm of nearbyFullMoons(nowSec)) {
-    if (row.moon_last_key === String(fm.dt)) continue;
-    const day = localClock(tz, new Date(fm.dt * 1000)).dateKey;
-    const [y, m, d] = day.split('-').map(Number);
+  let fallback = null;
+  for (const anchor of [fm.dt, fm.dt - 86400]) {
+    const [y, m, d] = localClock(tz, new Date(anchor * 1000)).dateKey.split('-').map(Number);
     const today = solarTimes(y, m, d, row.lat, row.lon, tz);
     if (!today.sunset) continue;
-    if (nowSec < today.sunset - WINDOW_BEFORE_S || nowSec > today.sunset - WINDOW_UNTIL_S) continue;
     const next = solarTimes(...nextDay(y, m, d), row.lat, row.lon, tz);
-    const sunrise = next.sunrise || today.sunset + 12 * 3600;
+    const night = { sunset: today.sunset, sunrise: next.sunrise || today.sunset + 12 * 3600 };
+    if (fm.dt >= night.sunset && fm.dt <= night.sunrise) return { ...night, peakAtNight: true };
+    if (!fallback) fallback = { ...night, peakAtNight: false };
+  }
+  return fallback;
+}
+
+// Is there a full-moon push due for this row right now? Returns the job
+// (key, moon, sunset, next sunrise, best viewing time) or null.
+export function moonDue(row, nowSec) {
+  for (const fm of nearbyFullMoons(nowSec)) {
+    if (row.moon_last_key === String(fm.dt)) continue;
+    const night = fullMoonNight(fm, row);
+    if (!night) continue;
+    if (nowSec < night.sunset - WINDOW_BEFORE_S || nowSec > night.sunset - WINDOW_UNTIL_S) continue;
     // Best viewing: the peak if it falls in the night, else mid-night.
-    const peakAtNight = fm.dt >= today.sunset && fm.dt <= sunrise;
-    const best = peakAtNight ? fm.dt : Math.round(today.sunset + (sunrise - today.sunset) / 2);
-    return { key: String(fm.dt), moon: fm, sunset: today.sunset, sunrise, best };
+    const best = night.peakAtNight ? fm.dt : Math.round(night.sunset + (night.sunrise - night.sunset) / 2);
+    return { key: String(fm.dt), moon: fm, sunset: night.sunset, sunrise: night.sunrise, best };
   }
   return null;
 }
