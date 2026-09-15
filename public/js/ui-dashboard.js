@@ -1439,14 +1439,16 @@ Object.assign(UI, {
 
   // ── Wiring ──────────────────────────────────────────────────────────
 
-  // Header star. Include cityName so name-match catches entries that
-  // already sit in the saved list but whose stored coords drifted more
-  // than SAME_LOCATION_DEG from what /weather just returned — otherwise
-  // the star would flicker between saved and unsaved for the same place.
+  // Header star. Tested against the coordinates the city was fetched
+  // for (state.coords — the same point App.handleSaveLocation stores),
+  // falling back to OWM's snapped centre only for a payload that
+  // predates that field. cityName is included so a name match still
+  // catches an entry saved by an older build from the snapped point.
   _renderSaveButton(ctx, onSave) {
-    const { currentWeather, cityName } = ctx;
+    const { currentWeather, cityName, state } = ctx;
+    const at = state.coords || currentWeather.coord;
     const savedList = Storage.getSavedList();
-    const isSaved = Storage.isDuplicate(savedList, currentWeather.coord.lat, currentWeather.coord.lon, cityName);
+    const isSaved = Storage.isDuplicate(savedList, at.lat, at.lon, cityName);
     this.saveBtnContainer.innerHTML = `
       <button class="save-loc-btn ${isSaved ? 'saved' : ''}" id="save-btn" aria-label="${isSaved ? 'Remove Saved Location' : 'Save Location'}">
         ${isSaved

@@ -1259,9 +1259,18 @@ const App = {
     this.renderAll();
   },
 
+  // The coordinates saved are the ones the city was FETCHED for
+  // (state.coords), not the ones OWM echoes back: /weather snaps to a
+  // station centroid, routinely more than SAME_LOCATION_DEG away, and a
+  // generic name ("Current Location") can't paper over the gap with a
+  // name match. Saving the snapped point left Storage.getLocation()
+  // and the saved entry disagreeing about where "here" is, so cycleCity
+  // couldn't find the current city and the weather cache was keyed
+  // twice for one place. UI._renderSaveButton reads the same source so
+  // the star agrees with the list.
   handleSaveLocation() {
     if (!this.state.currentWeather) return;
-    const { lat, lon } = this.state.currentWeather.coord;
+    const { lat, lon } = this.state.coords || this.state.currentWeather.coord;
     const name = this.state.cityName;
 
     const list = Storage.getSavedList();
