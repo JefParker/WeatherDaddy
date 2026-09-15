@@ -40,8 +40,12 @@
   // hour gives a retry within the hour and lands half-hour zones
   // (Newfoundland, India) at :30 rather than :60. Severe-weather alerts
   // get their own five-minute cron: a tornado warning lasts 30-45
-  // minutes. worker/push.js dispatches on the cron string.
-  "triggers": { "crons": ["*/30 * * * *", "*/5 * * * *"] },
+  // minutes. The rain nowcast also runs every five minutes, on the
+  // minutes in between, so each check is its own invocation with its
+  // own subrequest and CPU budget (the Free plan allows five crons per
+  // account). worker/push.js dispatches on the cron string, so these
+  // must match CRON_CLOCK / CRON_ALERTS / CRON_NOWCAST there.
+  "triggers": { "crons": ["*/30 * * * *", "*/5 * * * *", "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"] },
   "observability": { "enabled": true },
   // Production hostname. This moved from the Pages project on cutover;
   // a hostname can belong to only one of the two at a time.

@@ -6,11 +6,12 @@
 // reading, changing or deleting that one row. Rows live in D1 (binding
 // DB; schema in migrations/). One row per device carries one city and
 // a flag per feature: morning briefing, severe weather alerts, threshold
-// alerts, full moon, sky events, forecast changes.
+// alerts, full moon, sky events, forecast changes, rain nowcast.
 //
-// Two crons (wrangler.jsonc): */30 runs the clock-driven features
-// (briefing, thresholds, moon, sky, changes) and */5 runs the
-// severe-weather check.
+// Three crons (wrangler.jsonc): */30 runs the clock-driven features
+// (briefing, thresholds, moon, sky, changes), */5 runs the
+// severe-weather check, and the rain nowcast runs every five minutes
+// on the minutes in between (:02, :07, …) so it is its own invocation.
 // Each invocation gets its own budget below.
 //
 // Free-plan budgets that shape a cron run (numbers from
@@ -34,6 +35,7 @@ import { T, T_ALL, fetchAirQuality, evaluateThresholds, composeThresholds } from
 import { moonDue, composeMoon } from './moon.js';
 import { skyDue, composeSky } from './sky.js';
 import { changesSlot, evaluateChanges, composeChanges } from './changes.js';
+import { nowcastKey, inQuietHours, fetchMinutely, nowcastOnset, nowcastDue, composeNowcast, nowcastTtl } from './nowcast.js';
 
 const MAX_SUBREQUESTS  = 45;
 const MAX_SENDS        = 25;       // CPU budget; anything past it waits for the next tick
@@ -45,6 +47,7 @@ const ALERT_MEMORY_S   = 7 * 86400; // how long push_alerts_sent remembers an id
 
 export const CRON_CLOCK  = '*/30 * * * *';
 export const CRON_ALERTS = '*/5 * * * *';
+export const CRON_NOWCAST = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
 
 const TEMP_UNITS   = new Set(['C', 'F']);
 const WIND_UNITS   = new Set(['ms', 'kmh', 'mph']);
@@ -123,6 +126,7 @@ function parsePrefs(p) {
     moon:       f.moon === true,
     sky:        f.sky === true,
     changes:    f.changes === true,
+    nowcast:    f.nowcast === true,
   };
   const thresholdHour = hourOf(Number(p.thresholdHour), 17);
   const m = Number(p.thresholdMask);
@@ -149,6 +153,7 @@ function publicPrefs(row) {
       moon:       !!row.moon,
       sky:        !!row.sky,
       changes:    !!row.changes,
+      nowcast:    !!row.nowcast,
     },
     thresholdHour: row.threshold_hour,
     thresholdMask: row.threshold_mask,
@@ -196,9 +201,9 @@ async function subscribe(env, body) {
     INSERT INTO push_subscriptions
       (endpoint, p256dh, auth, lat, lon, city_name, tz, hour,
        temp_unit, wind_unit, precip_unit, time_fmt,
-       briefing, alerts, thresholds, threshold_hour, threshold_mask, moon, sky, changes,
+       briefing, alerts, thresholds, threshold_hour, threshold_mask, moon, sky, changes, nowcast,
        created_at, updated_at)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?21)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?22)
     ON CONFLICT(endpoint) DO UPDATE SET
       p256dh = excluded.p256dh, auth = excluded.auth,
       lat = excluded.lat, lon = excluded.lon, city_name = excluded.city_name,
@@ -208,13 +213,13 @@ async function subscribe(env, body) {
       briefing = excluded.briefing, alerts = excluded.alerts,
       thresholds = excluded.thresholds, threshold_hour = excluded.threshold_hour,
       threshold_mask = excluded.threshold_mask, moon = excluded.moon,
-      sky = excluded.sky, changes = excluded.changes,
+      sky = excluded.sky, changes = excluded.changes, nowcast = excluded.nowcast,
       fail_count = 0, updated_at = excluded.updated_at
   `).bind(
     sub.endpoint, sub.p256dh, sub.auth, prefs.lat, prefs.lon, prefs.name, prefs.tz, prefs.hour,
     prefs.units.temp, prefs.units.wind, prefs.units.precip, prefs.units.time,
     f.briefing ? 1 : 0, f.alerts ? 1 : 0, f.thresholds ? 1 : 0, prefs.thresholdHour, prefs.thresholdMask, f.moon ? 1 : 0,
-    f.sky ? 1 : 0, f.changes ? 1 : 0,
+    f.sky ? 1 : 0, f.changes ? 1 : 0, f.nowcast ? 1 : 0,
     now
   ).run();
   const row = await env.DB.prepare('SELECT * FROM push_subscriptions WHERE endpoint = ?1').bind(sub.endpoint).first();
@@ -532,7 +537,70 @@ export async function runAlerts(env, { now = new Date() } = {}) {
   return stats;
 }
 
+// One nowcast tick. Every location with a nowcast subscriber who isn't
+// in quiet hours gets one 15-minute-series call; if rain is about to
+// start there, each of those subscribers who hasn't been told about
+// this spell gets a push. The onset is a property of the place, so it
+// is worked out once per group and only the dedupe is per row.
+export async function runNowcast(env, { now = new Date() } = {}) {
+  const vapid = vapidFrom(env);
+  const stats = { total: 0, awake: 0, locations: 0, fetched: 0, fetchErrors: 0, onsets: 0, repeats: 0, sent: 0, gone: 0, failed: 0, deferred: 0 };
+  if (!vapid || !env.DB) return { ...stats, skipped: 'not configured' };
+  const nowSec = Math.floor(now.getTime() / 1000);
+
+  const { results: rows } = await env.DB.prepare('SELECT * FROM push_subscriptions WHERE nowcast = 1').all();
+  stats.total = rows.length;
+  if (!rows.length) return stats;
+
+  const groups = new Map();
+  for (const row of rows) {
+    if (inQuietHours(row, now)) continue;
+    stats.awake++;
+    const key = nowcastKey(row.lat, row.lon);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+  stats.locations = groups.size;
+  if (!groups.size) return stats;
+
+  const ledger = makeLedger(env);
+  let budget = MAX_SUBREQUESTS;
+  let sends = MAX_SENDS;
+  for (const [, members] of groups) {
+    if (budget < 1) { stats.deferred += members.length; continue; }
+    budget--;
+    stats.fetched++;
+    let onset;
+    try { onset = nowcastOnset(await fetchMinutely(members[0].lat, members[0].lon), nowSec); }
+    catch (err) {
+      stats.fetchErrors++;
+      console.warn('[nowcast] fetch failed', members[0].lat, members[0].lon, err && err.message);
+      continue;
+    }
+    if (!onset) continue;
+    stats.onsets++;
+
+    const jobs = [];
+    for (const row of members) {
+      if (nowcastDue(row, onset)) jobs.push(row);
+      else stats.repeats++;
+    }
+    const take = Math.min(jobs.length, budget, sends);
+    stats.deferred += jobs.length - take;
+    budget -= take;
+    sends -= take;
+    await pool(jobs.slice(0, take), SEND_CONCURRENCY, (row) =>
+      ledger.deliver(row, composeNowcast(row, onset, nowSec, now.getTime()), vapid, { ttl: nowcastTtl(onset, nowSec), urgency: 'high', topic: 'nowcast' }, stats,
+        () => ledger.update(row.endpoint, 'UPDATE push_subscriptions SET nowcast_last_dt = ?1 WHERE endpoint = ?2', onset.dt)));
+    if (budget < 1 || sends < 1) break;
+  }
+  await ledger.flush();
+  return stats;
+}
+
 export async function handleScheduled(event, env) {
-  const stats = event.cron === CRON_ALERTS ? await runAlerts(env) : await runClockFeatures(env);
+  const stats = event.cron === CRON_ALERTS ? await runAlerts(env)
+    : event.cron === CRON_NOWCAST ? await runNowcast(env)
+    : await runClockFeatures(env);
   console.log(JSON.stringify({ cron: event.cron, ...stats }));
 }

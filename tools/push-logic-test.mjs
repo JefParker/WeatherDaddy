@@ -4,13 +4,14 @@
 //
 //     node tools/push-logic-test.mjs
 
-import { runClockFeatures as runBriefings, runAlerts } from '../worker/push.js';
+import { runClockFeatures as runBriefings, runAlerts, runNowcast } from '../worker/push.js';
 import { isPushWorthy, referencedIds, formatAlertTime, alertGist, composeAlert, alertTtl, inNwsBox } from '../worker/alerts.js';
 import { T, T_ALL, evaluateThresholds, composeThresholds, hourLabel } from '../worker/thresholds.js';
 import { localIsoToEpoch } from '../worker/briefing.js';
 import { nearbyFullMoons, solarTimes, moonDue, composeMoon, skyAt, moonIllumination } from '../worker/moon.js';
 import { skyDue, composeSky, METEOR_SHOWERS, ECLIPSES } from '../worker/sky.js';
 import { changesSlot, evaluateChanges, composeChanges, sinceWord } from '../worker/changes.js';
+import { nowcastOnset, nowcastDue, composeNowcast, nowcastTtl, spanLabel, inQuietHours, NOWCAST_LEAD_S } from '../worker/nowcast.js';
 
 let failures = 0;
 const check = (name, ok, detail = '') => {
@@ -66,9 +67,11 @@ const daily = (over = {}) => ({ time: ['2026-09-15', '2026-09-16'], temperature_
 let forecastJson = { daily: daily(), current: { temperature_2m: 60, weather_code: 1 }, hourly: hourly(), utc_offset_seconds: 0 };
 let aqiJson = { hourly: { time: hourly().time, us_aqi: Array(48).fill(30) }, utc_offset_seconds: 0 };
 let nwsJson = { features: [] };
+let minutelyJson = { minutely_15: { time: [], precipitation: [], snowfall: [] } };
 globalThis.fetch = async (url, init) => {
   const u = String(url);
   if (u.includes('air-quality')) return new Response(JSON.stringify(aqiJson));
+  if (u.includes('minutely_15')) return new Response(JSON.stringify(minutelyJson));
   if (u.includes('open-meteo')) return new Response(JSON.stringify(forecastJson));
   if (u.includes('api.weather.gov')) return new Response(JSON.stringify(nwsJson));
   pushed.push({ url: u, headers: init.headers });
@@ -348,6 +351,77 @@ eq('umbrella: title', composeThresholds(trow(), evaluateThresholds(trow({ thresh
   check('clock: both looks stored a snapshot and the slot', ['https://push.example/c', 'https://push.example/c2'].every(ep => env.DB.writes.some(w => w.sql.includes('changes_snapshot') && w.binds[1] === '2026-09-15T20' && w.binds[2] === ep && w.binds[0].includes('"2026-09-16"'))));
   check('clock: changes push has its topic', pushed.some(p => p.headers.Topic === 'changes'));
   forecastJson = { ...forecastJson, daily: daily() };
+}
+
+// ── Rain nowcast ─────────────────────────────────────────────────────
+{
+  // NOW is 20:07 UTC; slots start at 20:00. A pattern of 15-minute
+  // slots from 20:00: '.' dry, 'x' rain, 's' snow (0.5 mm each).
+  const nsec = NOW.getTime() / 1000;
+  const slot0 = Date.parse('2026-09-15T20:00Z') / 1000;
+  const series = (pat) => pat.split('').map((c, i) => ({ dt: slot0 + i * 900, mm: c === '.' ? 0 : 0.5, snow: c === 's' ? 0.3 : 0 }));
+  const at = (i) => slot0 + i * 900;
+  eq('onset: dry series is nothing', nowcastOnset(series('........'), nsec), null);
+  eq('onset: already raining is nothing', nowcastOnset(series('xxxx....'), nsec), null);
+  eq('onset: starts next slot, three slots long', nowcastOnset(series('.xxx....'), nsec), { dt: at(1), untilDt: at(4), snow: false });
+  eq('onset: within the 20-minute lead (20:15 is 8 min away)', nowcastOnset(series('.x......'), nsec).dt, at(1));
+  eq('onset: 20:30 is 23 min away → not yet', nowcastOnset(series('..x.....'), nsec), null);
+  eq('onset: a wider lead finds it', nowcastOnset(series('..x.....'), nsec, 30 * 60).dt, at(2));
+  eq('onset: open-ended when the series stays wet', nowcastOnset(series('.xxxxxxx'), nsec).untilDt, null);
+  eq('onset: snow in the spell says snow', nowcastOnset(series('.xs.....'), nsec).snow, true);
+  eq('onset: snow after the spell does not', nowcastOnset(series('.x..s...'), nsec).snow, false);
+  eq('onset: too short a series is nothing', nowcastOnset(series('.'), nsec), null);
+
+  const nrow = (extra = {}) => row('n', { briefing: 0, nowcast: 1, nowcast_last_dt: null, ...extra });
+  const onset = nowcastOnset(series('.xxx....'), nsec);
+  eq('due: first time', nowcastDue(nrow(), onset), onset);
+  eq('due: same spell shifted a slot is not sent again', nowcastDue(nrow({ nowcast_last_dt: at(0) }), onset), null);
+  eq('due: an onset an hour past the last one is new', nowcastDue(nrow({ nowcast_last_dt: at(1) - 3600 }), onset), onset);
+  eq('due: no onset', nowcastDue(nrow(), null), null);
+  check('quiet: 03:00 local is quiet', inQuietHours(nrow(), new Date('2026-09-15T03:00Z')));
+  check('quiet: 22:00 local is quiet', inQuietHours(nrow(), new Date('2026-09-15T22:00Z')));
+  check('quiet: 07:00 local is not', !inQuietHours(nrow(), new Date('2026-09-15T07:00Z')));
+  check('quiet: honours the row zone', inQuietHours(nrow({ tz: 'America/Denver' }), new Date('2026-09-15T09:00Z')));
+  eq('span: 45 min', spanLabel(45 * 60), '~45 min');
+  eq('span: 90 min → 1.5 h', spanLabel(90 * 60), '~1.5 h');
+  eq('span: 6 h', spanLabel(6 * 3600), '~6 h');
+  eq('lead constant', NOWCAST_LEAD_S, 20 * 60);
+
+  const note = composeNowcast(nrow(), onset, nsec, NOW.getTime());
+  eq('compose: title', note.title, 'Rain starting in ~8 min');
+  eq('compose: body', note.body, 'Denver · lasting ~45 min, until about 9:00 PM');
+  eq('compose: tag', note.tag, 'nowcast');
+  eq('compose: snow, open-ended, 24h clock', composeNowcast(nrow({ time_fmt: '24h' }), { dt: at(1), untilDt: null, snow: true }, nsec).body, 'Denver · through the next several hours');
+  eq('compose: snow title', composeNowcast(nrow(), { dt: at(1), untilDt: null, snow: true }, nsec).title, 'Snow starting in ~8 min');
+  eq('ttl: until the rain arrives', nowcastTtl(onset, nsec), at(1) - nsec);
+  eq('ttl: floor of a minute', nowcastTtl({ dt: nsec + 10 }, nsec), 60);
+
+  // Through the planner: two rows at the same place (one already told
+  // about this spell), one in quiet hours, one in a dry place.
+  const wet = series('.xxx....');
+  const omMinutely = (rows) => ({ minutely_15: { time: rows.map(m => m.dt), precipitation: rows.map(m => m.mm), snowfall: rows.map(m => m.snow) } });
+  minutelyJson = omMinutely(wet);
+  const rows = [
+    nrow(),
+    row('n2', { briefing: 0, nowcast: 1, nowcast_last_dt: at(0) }),
+    row('n3', { briefing: 0, nowcast: 1, nowcast_last_dt: null, tz: 'Asia/Tokyo' }),  // 05:07 there
+  ];
+  const env = { ...baseEnv, DB: fakeDB({ 'WHERE nowcast = 1': () => rows }) };
+  pushed.length = 0;
+  const st = await runNowcast(env, { now: NOW });
+  eq('nowcast: 3 rows, 2 awake, 1 place fetched, 1 onset, 1 sent, 1 repeat', [st.total, st.awake, st.locations, st.fetched, st.onsets, st.sent, st.repeats], [3, 2, 1, 1, 1, 1, 1]);
+  check('nowcast: the onset slot is remembered on the row', env.DB.writes.some(w => w.sql.includes('nowcast_last_dt') && w.binds[0] === at(1) && w.binds[1] === 'https://push.example/n'));
+  check('nowcast: urgency high, topic nowcast, short TTL', pushed.every(p => p.headers.Urgency === 'high' && p.headers.Topic === 'nowcast' && Number(p.headers.TTL) <= 8 * 60));
+
+  minutelyJson = omMinutely(series('........'));
+  const env2 = { ...baseEnv, DB: fakeDB({ 'WHERE nowcast = 1': () => [nrow()] }) };
+  const st2 = await runNowcast(env2, { now: NOW });
+  eq('nowcast: dry place fetched, nothing sent, nothing written', [st2.fetched, st2.onsets, st2.sent, env2.DB.writes.length], [1, 0, 0, 0]);
+
+  minutelyJson = omMinutely(wet);
+  const env3 = { ...baseEnv, DB: fakeDB({ 'WHERE nowcast = 1': () => Array.from({ length: 40 }, (_, i) => row(i, { briefing: 0, nowcast: 1, nowcast_last_dt: null })) }) };
+  const st3 = await runNowcast(env3, { now: NOW });
+  eq('nowcast: 40 at one place → 25 sent, 15 deferred to the next tick', [st3.sent, st3.deferred], [25, 15]);
 }
 
 // ── Alert helpers ────────────────────────────────────────────────────

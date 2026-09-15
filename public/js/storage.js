@@ -209,7 +209,7 @@ const Storage = {
   getPushPrefs() {
     const raw = this._read(this.PUSH_PREFS_KEY, null) || {};
     const obj = (k) => (raw && typeof raw[k] === 'object' && raw[k]) || {};
-    const b = obj('briefing'), a = obj('alerts'), t = obj('thresholds'), m = obj('moon'), s = obj('sky'), c = obj('changes');
+    const b = obj('briefing'), a = obj('alerts'), t = obj('thresholds'), m = obj('moon'), s = obj('sky'), c = obj('changes'), n = obj('nowcast');
     const hour = (v, dflt) => (Number.isInteger(v) && v >= 0 && v <= 23) ? v : dflt;
     const cityOf = (c) => (c && typeof c.lat === 'number' && typeof c.lon === 'number')
       ? { lat: c.lat, lon: c.lon, name: typeof c.name === 'string' ? c.name : '' }
@@ -230,6 +230,7 @@ const Storage = {
       moon:    { enabled: m.enabled === true },
       sky:     { enabled: s.enabled === true },
       changes: { enabled: c.enabled === true },
+      nowcast: { enabled: n.enabled === true },
     };
   },
   savePushPrefs(prefs) {

@@ -3,9 +3,9 @@
 // Extends the UI object from ui.js. Loaded after ui-radar.js and before
 // app.js in index.html, and listed in sw.js ASSETS_TO_CACHE. The screen
 // is one city picker followed by a section per feature: morning
-// briefing, severe weather alerts, threshold alerts, full moon, sky
-// events, forecast changes. Every feature shares the one city and the
-// one browser subscription.
+// briefing, severe weather alerts, rain nowcast, threshold alerts, full
+// moon, sky events, forecast changes. Every feature shares the one city
+// and the one browser subscription.
 //
 // The flow: the first switch turned on asks for notification
 // permission, subscribes this browser to Web Push with the server's
@@ -19,7 +19,7 @@
 
 Object.assign(UI, {
   PUSH_API: '/api/push',
-  PUSH_FEATURES: ['briefing', 'alerts', 'thresholds', 'moon', 'sky', 'changes'],
+  PUSH_FEATURES: ['briefing', 'alerts', 'nowcast', 'thresholds', 'moon', 'sky', 'changes'],
   // Bit per threshold item; must match worker/thresholds.js.
   PUSH_THRESHOLDS: [
     { bit: 1,  id: 'freeze', label: 'Freeze',           sub: 'Low at or below 32°F / 0°C' },
@@ -258,6 +258,8 @@ Object.assign(UI, {
             ? 'Checked every 5 minutes'
             : 'Only US locations have National Weather Service alerts.';
           isError = !this._inNwsBox(p.city);
+        } else if (f === 'nowcast') {
+          text = 'Checked every 5 minutes, 7 AM to 10 PM';
         } else if (f === 'thresholds') {
           text = `Every day at ${hourText(els.thresholdHour)}, for the next 24 hours`.trim();
         } else if (f === 'moon') {
@@ -286,6 +288,7 @@ Object.assign(UI, {
         briefing: p.briefing.enabled, alerts: p.alerts.enabled,
         thresholds: p.thresholds.enabled, moon: p.moon.enabled,
         sky: p.sky.enabled, changes: p.changes.enabled,
+        nowcast: p.nowcast.enabled,
       },
       thresholdHour: p.thresholds.hour,
       thresholdMask: p.thresholds.mask,
@@ -321,6 +324,7 @@ Object.assign(UI, {
       moon:       { enabled: !!f.moon },
       sky:        { enabled: !!f.sky },
       changes:    { enabled: !!f.changes },
+      nowcast:    { enabled: !!f.nowcast },
     };
     Storage.savePushPrefs(p);
     return p;
@@ -387,6 +391,7 @@ Object.assign(UI, {
     return {
       briefing: 'Morning briefing', alerts: 'Severe weather alerts', thresholds: 'Threshold alerts',
       moon: 'Full moon alerts', sky: 'Sky event alerts', changes: 'Forecast change alerts',
+      nowcast: 'Rain starting soon alerts',
     }[f] || f;
   },
 
