@@ -4,7 +4,7 @@
 //
 //     node tools/push-logic-test.mjs
 
-import { runClockFeatures as runBriefings, runAlerts, runNowcast } from '../worker/push.js';
+import { runClockFeatures as runBriefings, runAlerts, runNowcast, handlePushRoute } from '../worker/push.js';
 import { isPushWorthy, referencedIds, formatAlertTime, alertGist, composeAlert, alertTtl, inNwsBox } from '../worker/alerts.js';
 import { T, T_ALL, evaluateThresholds, composeThresholds, hourLabel } from '../worker/thresholds.js';
 import { localIsoToEpoch } from '../worker/briefing.js';
@@ -323,7 +323,15 @@ eq('umbrella: title', composeThresholds(trow(), evaluateThresholds(trow({ thresh
   eq('quiet: small moves are nothing', evaluateChanges(withSnap(), fcd({ temperature_2m_max: [70, 78], precipitation_probability_max: [10, 40] }), evening, tsec).items, []);
   eq('high dropped', evaluateChanges(withSnap(), fcd({ temperature_2m_max: [70, 62] }), evening, tsec).items, ["Tomorrow's high 62°, was 72°"]);
   eq('°C cutoff is 4', evaluateChanges(withSnap({ }), { ...fcd({ temperature_2m_max: [70, 68] }) }, evening, tsec).items, []);
-  eq('°C: 4° moves', evaluateChanges(crow({ temp_unit: 'C', changes_snapshot: JSON.stringify({ ...snap, at: Date.parse('2026-09-15T06:05Z') / 1000 }) }), fcd({ temperature_2m_max: [70, 68] }), evening, tsec).items, ["Tomorrow's high 68°, was 72°"]);
+  const cSnap = JSON.parse(evaluateChanges(crow({ temp_unit: 'C' }), fcd(), evening, Date.parse('2026-09-15T06:05Z') / 1000).snapshot);
+  eq('°C: 4° moves', evaluateChanges(crow({ temp_unit: 'C', changes_snapshot: JSON.stringify(cSnap) }), fcd({ temperature_2m_max: [70, 68] }), evening, tsec).items, ["Tomorrow's high 68°, was 72°"]);
+  // The app re-sends the whole preference set on every change, and the
+  // row keeps its snapshot: one taken in °F, or for another city, must
+  // not read as a change.
+  eq('snapshot: stamped with place and units', snap.key, '39.74,-104.99,F,mph,in');
+  eq('units changed since the snapshot → replaced, not compared', evaluateChanges(crow({ temp_unit: 'C', changes_snapshot: JSON.stringify({ ...snap, at: Date.parse('2026-09-15T06:05Z') / 1000 }) }), fcd({ temperature_2m_max: [21, 20], temperature_2m_min: [11, 10] }), evening, tsec).items, []);
+  eq('city changed since the snapshot → replaced, not compared', evaluateChanges(crow({ lat: 33.45, lon: -112.07, changes_snapshot: JSON.stringify({ ...snap, at: Date.parse('2026-09-15T06:05Z') / 1000 }) }), fcd({ temperature_2m_max: [104, 105], temperature_2m_min: [80, 80] }), evening, tsec).items, []);
+  eq('pre-1.11 snapshot (no key) → replaced, not compared', evaluateChanges(crow({ changes_snapshot: JSON.stringify({ at: Date.parse('2026-09-15T06:05Z') / 1000, days: snap.days }) }), fcd({ temperature_2m_max: [70, 40] }), evening, tsec).items, []);
   eq('rain chance up', evaluateChanges(withSnap(), fcd({ precipitation_probability_max: [10, 70] }), evening, tsec).items, ['Rain chance 70%, was 10%']);
   eq('snow now expected', evaluateChanges(withSnap(), fcd({ snowfall_sum: [0, 4.5] }), evening, tsec).items, ['Snow now expected: 4.5 in']);
   eq('several at once, in order', evaluateChanges(withSnap(), fcd({ temperature_2m_max: [70, 60], temperature_2m_min: [50, 40], precipitation_probability_max: [10, 80] }), evening, tsec).items.length, 3);
@@ -338,7 +346,7 @@ eq('umbrella: title', composeThresholds(trow(), evaluateThresholds(trow({ thresh
   // Through the planner at 20:07 UTC: a row whose briefing hour is 20
   // takes the "today" look; one already looked this slot is skipped.
   forecastJson = { ...forecastJson, daily: daily({ temperature_2m_max: [58, 72] }) };
-  const morningSnap = JSON.stringify({ at: Date.parse('2026-09-15T06:05Z') / 1000, days: { '2026-09-15': { hi: 70, lo: 50, pop: 10, snow: 0 }, '2026-09-16': { hi: 72, lo: 51, pop: 10, snow: 0 } } });
+  const morningSnap = JSON.stringify({ at: Date.parse('2026-09-15T06:05Z') / 1000, key: snap.key, days: { '2026-09-15': { hi: 70, lo: 50, pop: 10, snow: 0 }, '2026-09-16': { hi: 72, lo: 51, pop: 10, snow: 0 } } });
   const rows = [
     crow({ hour: 20, changes_snapshot: morningSnap }),
     row('c2', { briefing: 0, changes: 1, hour: 20, changes_snapshot: null }),
@@ -497,6 +505,28 @@ check('nws box: Denver in, London out, Honolulu in', inNwsBox(39.74, -104.99) &&
   const env = { ...baseEnv, DB: fakeDB({ 'WHERE alerts = 1': () => Array.from({ length: 40 }, (_, i) => row(i, { alerts: 1 })), 'FROM push_alerts_sent': () => [] }) };
   const s = await runAlerts(env, { now: NOW });
   eq('alerts: 40 under one warning → 25 sent, 15 deferred to the next 5-minute tick', [s.sent, s.deferred], [25, 15]);
+}
+
+// ── Delivery bookkeeping ─────────────────────────────────────────────
+{
+  // A row whose keys make sendPush throw is one failure, not the end of
+  // the run: the other row's push still lands and is still recorded.
+  const env = { ...baseEnv, DB: fakeDB({ 'WHERE briefing = 1': () => [row(0), row('bad', { p256dh: 'AAAA' })] }) };
+  const s = await runBriefings(env, { now: NOW });
+  eq('deliver: a throwing send counts as a failure, the tick completes', [s.sent, s.failed], [1, 1]);
+  check('deliver: the good row was recorded', env.DB.writes.some(w => w.sql.includes('last_sent_day') && w.binds[1] === 'https://push.example/0'));
+  check('deliver: the bad row took a strike', env.DB.writes.some(w => w.sql.includes('fail_count = fail_count + 1') && w.binds[0] === 'https://push.example/bad'));
+}
+{
+  // An endpoint rotation moves the alert memory along with the row.
+  const db = fakeDB({});
+  db.batch = async (stmts) => { for (const st of stmts) db.writes.push({ sql: st._sql, binds: st._binds }); return [{ meta: { changes: 1 } }, { meta: { changes: 2 } }]; };
+  const env = { ...baseEnv, DB: db };
+  const body = { oldEndpoint: 'https://push.example/old', subscription: { endpoint: 'https://push.example/new', keys: { p256dh, auth } } };
+  const res = await handlePushRoute(new Request('https://weatherdaddy.app/api/push/resubscribe', { method: 'POST', body: JSON.stringify(body) }), env, {}, 'resubscribe');
+  eq('resubscribe: ok', res.status, 200);
+  check('resubscribe: row moved', db.writes.some(w => w.sql.includes('UPDATE push_subscriptions') && w.binds[0] === 'https://push.example/new' && w.binds[4] === 'https://push.example/old'));
+  check('resubscribe: alert memory moved too', db.writes.some(w => w.sql.includes('push_alerts_sent SET endpoint') && w.binds[0] === 'https://push.example/new' && w.binds[1] === 'https://push.example/old'));
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nall push logic checks pass');

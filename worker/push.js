@@ -189,7 +189,11 @@ export async function handlePushRoute(request, env, ctx, path) {
 }
 
 // Create or fully replace this device's row. The app always sends the
-// complete preference set, so every feature flag is written.
+// complete preference set, so every feature flag is written. The spell
+// of rain last announced (nowcast_last_dt) belongs to the old city, so
+// it survives only while the city stays put; otherwise a real onset at
+// the new one within the hour would be taken for a repeat. (The
+// forecast-changes snapshot guards itself: worker/changes.js.)
 async function subscribe(env, body) {
   const sub = parseSubscription(body.subscription);
   const prefs = parsePrefs(body.prefs);
@@ -214,7 +218,8 @@ async function subscribe(env, body) {
       thresholds = excluded.thresholds, threshold_hour = excluded.threshold_hour,
       threshold_mask = excluded.threshold_mask, moon = excluded.moon,
       sky = excluded.sky, changes = excluded.changes, nowcast = excluded.nowcast,
-      nowcast_next_at = NULL, fail_count = 0, updated_at = excluded.updated_at
+      nowcast_next_at = NULL, fail_count = 0, updated_at = excluded.updated_at,
+      nowcast_last_dt = CASE WHEN excluded.lat = lat AND excluded.lon = lon THEN nowcast_last_dt ELSE NULL END
   `).bind(
     sub.endpoint, sub.p256dh, sub.auth, prefs.lat, prefs.lon, prefs.name, prefs.tz, prefs.hour,
     prefs.units.temp, prefs.units.wind, prefs.units.precip, prefs.units.time,
@@ -244,16 +249,21 @@ async function status(env, body) {
 }
 
 // The push service rotated the endpoint (sw.js pushsubscriptionchange).
+// The alert memory moves with the row, or every warning still active
+// would be sent to the device a second time.
 async function resubscribe(env, body) {
   const oldEndpoint = parseEndpoint(body.oldEndpoint);
   const sub = parseSubscription(body.subscription);
   if (!oldEndpoint || !sub) return json({ error: 'Invalid subscription' }, 400);
   const now = Math.floor(Date.now() / 1000);
-  const res = await env.DB.prepare(`
-    UPDATE push_subscriptions
-       SET endpoint = ?1, p256dh = ?2, auth = ?3, fail_count = 0, updated_at = ?4
-     WHERE endpoint = ?5
-  `).bind(sub.endpoint, sub.p256dh, sub.auth, now, oldEndpoint).run();
+  const [res] = await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE push_subscriptions
+         SET endpoint = ?1, p256dh = ?2, auth = ?3, fail_count = 0, updated_at = ?4
+       WHERE endpoint = ?5
+    `).bind(sub.endpoint, sub.p256dh, sub.auth, now, oldEndpoint),
+    env.DB.prepare('UPDATE OR IGNORE push_alerts_sent SET endpoint = ?1 WHERE endpoint = ?2').bind(sub.endpoint, oldEndpoint),
+  ]);
   if (!res.meta || !res.meta.changes) return json({ error: 'Unknown subscription' }, 404);
   return json({ ok: true });
 }
@@ -313,9 +323,15 @@ function makeLedger(env) {
       writes.push(env.DB.prepare('UPDATE push_subscriptions SET fail_count = fail_count + 1 WHERE endpoint = ?1').bind(row.endpoint));
     },
     // Deliver one payload and record the outcome. `onSent` runs only on
-    // success so a deferred or failed item is retried next tick.
+    // success so a deferred or failed item is retried next tick. A send
+    // that throws (sendPush does for a malformed key or an oversized
+    // payload) counts as one failure for that row: letting it escape
+    // would reject the whole pool and end the run before flush(), so
+    // every push already accepted this tick would go out again.
     async deliver(row, payload, vapid, opts, stats, onSent) {
-      const result = await sendPush(row, payload, vapid, opts);
+      let result;
+      try { result = await sendPush(row, payload, vapid, opts); }
+      catch (err) { result = { ok: false, status: 0, gone: false, error: err && err.message }; }
       if (result.ok) {
         stats.sent++;
         writes.push(env.DB.prepare('UPDATE push_subscriptions SET fail_count = 0, updated_at = ?1 WHERE endpoint = ?2').bind(nowSec(), row.endpoint));

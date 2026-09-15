@@ -11,11 +11,19 @@
 // forecast call the tick makes anyway and one column on the row.
 // changes_last_slot dedupes the half-hourly cron like last_sent_day.
 
-import { localClock } from './briefing.js';
+import { localClock, forecastKey } from './briefing.js';
 
 // A snapshot older than this is only replaced, never compared: the
 // change since it is not "since this morning" any more.
 const MAX_AGE_S = 36 * 3600;
+
+// What a snapshot's numbers are about: the row's place and units. A
+// snapshot taken for another city, or in °F before the person switched
+// to °C, would otherwise read as a huge change ("high 20°, was 68°"),
+// because the app re-sends the whole preference set on every change
+// and the row keeps its snapshot across that.
+const snapshotKey = (row) =>
+  forecastKey(row.lat, row.lon, { temp: row.temp_unit, wind: row.wind_unit, precip: row.precip_unit });
 
 // What counts as a big change, in the row's own units.
 function cutoffs(row) {
@@ -41,8 +49,8 @@ export function changesSlot(row, clock) {
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
 // The forecast reduced to what the next look compares: one entry per
-// daily date.
-export function snapshotOf(forecast, nowSec) {
+// daily date, stamped with the place and units it describes.
+export function snapshotOf(forecast, nowSec, row) {
   const d = forecast.daily || {};
   const days = {};
   const times = Array.isArray(d.time) ? d.time : [];
@@ -54,7 +62,7 @@ export function snapshotOf(forecast, nowSec) {
       snow: num(d.snowfall_sum && d.snowfall_sum[i]),
     };
   }
-  return { at: Math.round(nowSec), days };
+  return { at: Math.round(nowSec), key: row ? snapshotKey(row) : undefined, days };
 }
 
 function parseSnapshot(text) {
@@ -78,13 +86,16 @@ export function sinceWord(atSec, tz, nowSec) {
 // Compare the look's target day against the stored snapshot. Returns
 // the lines to send (empty when nothing moved much, or there is nothing
 // to compare with yet), the snapshot to store, and the "since" phrase.
+// A snapshot for another place or unit system is replaced, not
+// compared, like a stale one.
 export function evaluateChanges(row, forecast, job, nowSec = Date.now() / 1000) {
-  const next = snapshotOf(forecast, nowSec);
+  const next = snapshotOf(forecast, nowSec, row);
   const prev = parseSnapshot(row.changes_snapshot);
   const dates = Object.keys(next.days);
   const date = dates[job.target === 'today' ? 0 : 1];
   const now = date && next.days[date];
-  const was = prev && nowSec - prev.at <= MAX_AGE_S ? prev.days[date] : null;
+  const comparable = prev && prev.key === next.key && nowSec - prev.at <= MAX_AGE_S;
+  const was = comparable ? prev.days[date] : null;
   const out = { items: [], snapshot: JSON.stringify(next), since: was ? sinceWord(prev.at, row.tz, nowSec) : '' };
   if (!was || !now) return out;
 

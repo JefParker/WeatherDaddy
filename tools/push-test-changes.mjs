@@ -8,7 +8,7 @@
 
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { fetchForecast } from '../worker/briefing.js';
+import { fetchForecast, forecastKey } from '../worker/briefing.js';
 import { evaluateChanges, composeChanges } from '../worker/changes.js';
 import { sendPush } from '../worker/webpush.js';
 
@@ -25,10 +25,13 @@ console.log(`${rows.length} subscriber(s) with forecast changes on`);
 
 const nowSec = Date.now() / 1000;
 for (const row of rows) {
-  const f = await fetchForecast(row.lat, row.lon, { temp: row.temp_unit, wind: row.wind_unit, precip: row.precip_unit });
+  const units = { temp: row.temp_unit, wind: row.wind_unit, precip: row.precip_unit };
+  const f = await fetchForecast(row.lat, row.lon, units);
   const tomorrow = f.daily.time[1];
   const real = { hi: f.daily.temperature_2m_max[1], lo: f.daily.temperature_2m_min[1] };
-  const test = { ...row, changes_snapshot: JSON.stringify({ at: nowSec - 6 * 3600, days: { [tomorrow]: { hi: real.hi + 12, lo: real.lo + 9, pop: 75, snow: 0 } } }) };
+  // Stamped like a real snapshot (worker/changes.js), or the look would
+  // treat it as one taken for another place and store rather than compare.
+  const test = { ...row, changes_snapshot: JSON.stringify({ at: nowSec - 6 * 3600, key: forecastKey(row.lat, row.lon, units), days: { [tomorrow]: { hi: real.hi + 12, lo: real.lo + 9, pop: 75, snow: 0 } } }) };
   const result = evaluateChanges(test, f, { key: 'test', target: 'tomorrow' }, nowSec);
   const payload = composeChanges(row, result);
   payload.title = `TEST · ${payload.title}`;
