@@ -3108,7 +3108,8 @@ body:has(#radar-screen.open) .a2hs-prompt { display: none; }
   min-height: 1.2em;
 }
 .push-status:empty { padding: 0; min-height: 0; }
-.push-status.is-error { color: #ff453a; }
+.push-status.is-error,
+.push-row-sub.is-error { color: #ff453a; }
 /* Threshold checklist rows: a native checkbox on the right, sized to
    the switch's visual weight. */
 .push-check { cursor: pointer; }

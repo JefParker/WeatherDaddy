@@ -204,6 +204,11 @@ const Storage = {
   // is validated on read so junk can't break the screen. One city per
   // device, shared by every feature; v1 (1.8) kept the city inside
   // `briefing`, and that is lifted out on read.
+  //
+  // `follow` means the city is wherever the device last was: `city` is
+  // then the latest GPS fix (UI.followPushLocation), `followAt` when it
+  // was taken, and `followError` why the last attempt failed, if it
+  // did. The server never sees the flag, only the coordinates.
   PUSH_PREFS_KEY: 'push_prefs_v1',
   PUSH_THRESHOLD_ALL: 127,
   getPushPrefs() {
@@ -216,6 +221,9 @@ const Storage = {
       : null;
     return {
       city: cityOf(raw.city) || cityOf(b),
+      follow:      raw.follow === true,
+      followAt:    Number.isFinite(raw.followAt) ? raw.followAt : null,
+      followError: typeof raw.followError === 'string' ? raw.followError : null,
       briefing: {
         enabled:     b.enabled === true,
         hour:        hour(b.hour, 6),

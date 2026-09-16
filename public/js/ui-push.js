@@ -7,6 +7,13 @@
 // moon, sky events, forecast changes. Every feature shares the one city
 // and the one browser subscription.
 //
+// The city can also be "Wherever I am": the server can never ask the
+// phone where it is (push can't wake the app, workers have no
+// geolocation), so the app re-reads GPS each time it is opened or
+// foregrounded (followPushLocation) and, when the fix has moved by more
+// than a few km, re-POSTs the row with the new coordinates. The server
+// just sees a city change.
+//
 // The flow: the first switch turned on asks for notification
 // permission, subscribes this browser to Web Push with the server's
 // VAPID key, and POSTs the subscription plus the complete preference
@@ -30,9 +37,14 @@ Object.assign(UI, {
     { bit: 32, id: 'aqi',      label: 'Poor air quality', sub: 'US AQI above 100' },
     { bit: 64, id: 'umbrella', label: 'Umbrella',         sub: '50% or better chance of rain at some point' },
   ],
+  PUSH_FOLLOW_VALUE: 'follow',               // the city picker's "Wherever I am" option
+  PUSH_FOLLOW_MOVE_KM: 5,                    // a fix closer than this is the same place
+  PUSH_FOLLOW_INTERVAL_MS: 15 * 60 * 1000,   // background checks no more often than this
   _push: null,          // element handles, set by _bindPushScreen
   _pushBusy: false,
   _pushSyncTimer: null,
+  _pushFollowAt: 0,     // last background GPS attempt (ms); throttles foregrounding
+  _pushFollowing: null, // in-flight followPushLocation promise
 
   _bindPushScreen() {
     const $ = (id) => document.getElementById(id);
@@ -44,6 +56,7 @@ Object.assign(UI, {
       iosInstall:  $('push-ios-install'),
       denied:      $('push-denied'),
       city:        $('push-city'),
+      citySub:     $('push-city-sub'),
       hour:        $('push-briefing-hour'),
       test:        $('push-briefing-test'),
       thresholdHour: $('push-thresholds-hour'),
@@ -83,6 +96,7 @@ Object.assign(UI, {
   onShowPushScreen() {
     this.renderPushScreen();
     this._reconcilePush();
+    this.followPushLocation();
   },
 
   // What this browser can do. iOS only exposes PushManager to web apps
@@ -148,19 +162,23 @@ Object.assign(UI, {
     if (current) add(current, `${current.name || 'Current location'} (current)`);
     Storage.getSavedList().forEach(c => add(c));
     // The chosen city may since have been removed from the list; keep
-    // it selectable so the screen shows what is actually set.
-    if (p.city && this._anyPushEnabled(p)) add(p.city);
+    // it selectable so the screen shows what is actually set. (When
+    // following, p.city is the last GPS fix, not a city of the list's.)
+    if (p.city && !p.follow && this._anyPushEnabled(p)) add(p.city);
 
     els.city.innerHTML = '';
+    els.city.disabled = false;
+    const follow = document.createElement('option');
+    follow.value = this.PUSH_FOLLOW_VALUE;
+    follow.textContent = 'Wherever I am';
+    els.city.appendChild(follow);
     if (!cities.length) {
       const o = document.createElement('option');
       o.value = '';
       o.textContent = 'No saved cities yet';
+      o.disabled = true;
       els.city.appendChild(o);
-      els.city.disabled = true;
-      return;
     }
-    els.city.disabled = false;
     for (const c of cities) {
       const o = document.createElement('option');
       o.value = this._cityKey(c);
@@ -170,8 +188,41 @@ Object.assign(UI, {
       o.dataset.name = c.name;
       els.city.appendChild(o);
     }
-    const want = p.city ? this._cityKey(p.city) : null;
+    const want = p.follow ? this.PUSH_FOLLOW_VALUE : (p.city ? this._cityKey(p.city) : null);
     if (want && Array.from(els.city.options).some(o => o.value === want)) els.city.value = want;
+    else if (!cities.length) els.city.value = '';
+    this._renderPushCitySub(p);
+  },
+
+  // The line under "City": what following means, and where the last
+  // fix landed (or why there isn't one).
+  _renderPushCitySub(p = Storage.getPushPrefs()) {
+    const el = this._push && this._push.citySub;
+    if (!el) return;
+    let text = 'Every notification below is about this city.';
+    let isError = false;
+    if (p.follow) {
+      text = 'Follows your location each time you open WeatherDaddy. ';
+      if (p.followError) {
+        text += p.city ? `${p.followError} Still using ${p.city.name}.` : p.followError;
+        isError = true;
+      } else if (p.city) {
+        text += `Now: ${p.city.name}${p.followAt ? ', ' + this._agoText(p.followAt) : ''}.`;
+      } else {
+        text += 'Locating…';
+      }
+    }
+    el.textContent = text;
+    el.classList.toggle('is-error', isError);
+  },
+
+  _agoText(ms) {
+    const mins = Math.max(0, Math.round((Date.now() - ms) / 60000));
+    if (mins < 2) return 'just now';
+    if (mins < 60) return `${mins} min ago`;
+    const hours = Math.round(mins / 60);
+    if (hours < 48) return `${hours} h ago`;
+    return `${Math.round(hours / 24)} days ago`;
   },
 
   _renderHourOptions(select, hour, dflt) {
@@ -222,7 +273,7 @@ Object.assign(UI, {
 
   _selectedPushCity() {
     const o = this._push.city.selectedOptions && this._push.city.selectedOptions[0];
-    if (!o || !o.value) return null;
+    if (!o || !o.value || o.value === this.PUSH_FOLLOW_VALUE) return null;
     return { lat: Number(o.dataset.lat), lon: Number(o.dataset.lon), name: o.dataset.name || '' };
   },
 
@@ -299,8 +350,19 @@ Object.assign(UI, {
   _pushPrefsFromScreen() {
     const els = this._push;
     const p = Storage.getPushPrefs();
-    const city = this._selectedPushCity() || p.city;
-    p.city = city;
+    const follow = els.city.value === this.PUSH_FOLLOW_VALUE;
+    if (follow && !p.follow) {
+      // Just switched to following: the old city stays on the row until
+      // the first fix replaces it (followPushLocation runs right after).
+      p.follow = true;
+      p.followAt = null;
+      p.followError = null;
+    } else if (!follow) {
+      p.follow = false;
+      p.followAt = null;
+      p.followError = null;
+      p.city = this._selectedPushCity() || p.city;
+    }
     p.briefing.hour = Number(els.hour.value);
     if (els.thresholdHour) p.thresholds.hour = Number(els.thresholdHour.value);
     if (els.thresholdList) p.thresholds.mask = this._thresholdMaskFromScreen();
@@ -314,6 +376,8 @@ Object.assign(UI, {
     const f = sp.features || { briefing: !!sp.briefing };
     const p = {
       city: { lat: sp.lat, lon: sp.lon, name: sp.name },
+      // Client-only: the server sees coordinates, never the flag.
+      follow: base.follow, followAt: base.followAt, followError: base.followError,
       briefing:   { enabled: !!f.briefing, hour: sp.hour, lastSentDay: sp.lastSentDay || null },
       alerts:     { enabled: !!f.alerts },
       thresholds: {
@@ -403,7 +467,9 @@ Object.assign(UI, {
     if (!els || this._pushBusy) return;
     const p = this._pushPrefsFromScreen();
     if (on && !p.city) {
-      this._renderPushStatus(f, 'Save a city first, then choose it above.', true);
+      this._renderPushStatus(f, p.follow
+        ? 'WeatherDaddy needs your location first — allow location access, then try again.'
+        : 'Save a city first, then choose it above.', true);
       return;
     }
     this._setPushBusy(true);
@@ -460,8 +526,84 @@ Object.assign(UI, {
   _onPushPrefChange() {
     const p = this._pushPrefsFromScreen();
     Storage.savePushPrefs(p);
+    this._renderPushCitySub(p);
     for (const f of this.PUSH_FEATURES) this._renderPushStatus(f);
     if (this._anyPushEnabled(p)) this.syncPushPrefs();
+    // Picking "Wherever I am" is the tap Safari wants behind a
+    // geolocation prompt, so take the first fix now rather than on the
+    // next launch. It syncs on its own if it lands somewhere new.
+    if (p.follow) this.followPushLocation({ force: true });
+  },
+
+  // Bring the followed city up to date from GPS. Runs on launch and on
+  // every foregrounding (app.js), throttled, and does nothing unless
+  // "Wherever I am" is chosen. A fix within PUSH_FOLLOW_MOVE_KM of the
+  // current city is the same place and costs nothing further; a farther
+  // one is reverse-geocoded for a name and re-POSTed to the server,
+  // which treats it like any other city change. `fix` supplies a
+  // position already in hand (the header's location button) so neither
+  // GPS nor the geocoder is asked twice. Resolves true if the city moved.
+  followPushLocation({ force = false, fix = null } = {}) {
+    if (this._pushFollowing) return this._pushFollowing;
+    this._pushFollowing = this._followPushLocationNow({ force, fix })
+      .catch(err => { console.warn('[push] follow failed:', err); return false; })
+      .finally(() => { this._pushFollowing = null; });
+    return this._pushFollowing;
+  },
+
+  async _followPushLocationNow({ force, fix }) {
+    let p = Storage.getPushPrefs();
+    if (!p.follow) return false;
+    if (!force && !fix) {
+      if (!this._anyPushEnabled(p)) return false;
+      if (Date.now() - this._pushFollowAt < this.PUSH_FOLLOW_INTERVAL_MS) return false;
+    }
+    this._pushFollowAt = Date.now();
+
+    let coords = fix;
+    if (!coords) {
+      try { coords = await LocationService.getCurrentPosition(); }
+      catch (err) {
+        p = Storage.getPushPrefs();
+        if (!p.follow) return false;
+        p.followError = (err && err.code === 1)
+          ? 'Location access is off for WeatherDaddy.'
+          : 'Couldn’t get your location.';
+        Storage.savePushPrefs(p);
+        this._renderPushCitySub(p);
+        return false;
+      }
+    }
+
+    p = Storage.getPushPrefs();
+    if (!p.follow) return false;
+    const moved = !p.city ||
+      WeatherAPI._haversineKm(p.city.lat, p.city.lon, coords.lat, coords.lon) >= this.PUSH_FOLLOW_MOVE_KM;
+    if (!moved) {
+      p.followAt = Date.now();
+      p.followError = null;
+      Storage.savePushPrefs(p);
+      this._renderPushCitySub(p);
+      return false;
+    }
+
+    let name = coords.name || '';
+    if (!name) {
+      name = 'Current location';
+      try {
+        const geo = await WeatherAPI.reverseGeocode(coords.lat, coords.lon);
+        if (geo) name = App.buildLocationName(geo.name, geo.state, geo.country);
+      } catch (_) {}
+      p = Storage.getPushPrefs();
+      if (!p.follow) return false;
+    }
+    p.city = { lat: coords.lat, lon: coords.lon, name };
+    p.followAt = Date.now();
+    p.followError = null;
+    Storage.savePushPrefs(p);
+    if (this._push && this._push.screen.classList.contains('open')) this.renderPushScreen();
+    if (this._anyPushEnabled(p)) this.syncPushPrefs();
+    return true;
   },
 
   // Push the stored preferences (plus current units and timezone) to
@@ -491,8 +633,9 @@ Object.assign(UI, {
       return;
     }
     const data = await this._pushFetch('subscribe', { subscription: sub.toJSON(), prefs: this._pushPrefsPayload(p) });
-    this._adoptServerPrefs(data && data.prefs, p);
+    const adopted = this._adoptServerPrefs(data && data.prefs, p);
     if (this._push && this._push.screen.classList.contains('open')) {
+      this._renderPushCitySub(adopted);
       for (const f of this.PUSH_FEATURES) this._renderPushStatus(f);
     }
   },

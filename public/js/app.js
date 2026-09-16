@@ -115,6 +115,10 @@ const App = {
     // first swipe in either direction shows fresh data.
     this._prefetchNeighborsOfCurrent();
 
+    // "Wherever I am" notifications: re-point the subscription at where
+    // the phone is now (a no-op unless that option is chosen).
+    if (typeof UI.followPushLocation === 'function') UI.followPushLocation();
+
     // Auto-refresh weather every 15 minutes (see startAutoRefresh)
     this.startAutoRefresh();
 
@@ -493,12 +497,17 @@ const App = {
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
         hiddenAt = Date.now();
-      } else if (hiddenAt !== null && Date.now() - hiddenAt >= INTERVAL_MS) {
+        return;
+      }
+      if (hiddenAt !== null && Date.now() - hiddenAt >= INTERVAL_MS) {
         this.refreshCurrentWeather();
       } else {
         // Back sooner than that: the countdown still moved on.
         this.tickNowcast();
       }
+      // Foregrounding is the only moment a PWA can learn it has
+      // travelled; followPushLocation throttles itself.
+      if (typeof UI.followPushLocation === 'function') UI.followPushLocation();
     });
 
     // The nowcast line and strip, every minute, from data in hand.
@@ -876,6 +885,10 @@ const App = {
         const geo = await WeatherAPI.reverseGeocode(coords.lat, coords.lon);
         if (geo) name = this.buildLocationName(geo.name, geo.state, geo.country);
       } catch (_) {}
+      // A fix in hand is a fix the followed subscription can use as is.
+      if (typeof UI.followPushLocation === 'function') {
+        UI.followPushLocation({ fix: { lat: coords.lat, lon: coords.lon, name } });
+      }
       await this.fetchAndDisplay(coords.lat, coords.lon, name);
       UI.closeOverlayWithCube('locations-screen');
     } catch (e) {
