@@ -85,7 +85,7 @@ Object.assign(UI, {
         this.setPushFeature(f, !on);
       });
     }
-    els.city.addEventListener('change', () => this._onPushPrefChange());
+    els.city.addEventListener('change', () => this._onPushPrefChange({ cityPicked: true }));
     els.hour.addEventListener('change', () => this._onPushPrefChange());
     if (els.thresholdHour) els.thresholdHour.addEventListener('change', () => this._onPushPrefChange());
     if (els.thresholdList) this._renderThresholdList();
@@ -188,7 +188,13 @@ Object.assign(UI, {
       o.dataset.name = c.name;
       els.city.appendChild(o);
     }
-    const want = p.follow ? this.PUSH_FOLLOW_VALUE : (p.city ? this._cityKey(p.city) : null);
+    // Nothing chosen yet → the city on screen, not the first option:
+    // "Wherever I am" is an explicit choice (it asks for location), and
+    // a fresh screen that defaulted to it could not turn anything on
+    // until the picker was touched.
+    const want = p.follow ? this.PUSH_FOLLOW_VALUE
+      : p.city ? this._cityKey(p.city)
+      : cities.length ? this._cityKey(cities[0]) : null;
     if (want && Array.from(els.city.options).some(o => o.value === want)) els.city.value = want;
     else if (!cities.length) els.city.value = '';
     this._renderPushCitySub(p);
@@ -465,11 +471,9 @@ Object.assign(UI, {
   async setPushFeature(f, on) {
     const els = this._push;
     if (!els || this._pushBusy) return;
-    const p = this._pushPrefsFromScreen();
-    if (on && !p.city) {
-      this._renderPushStatus(f, p.follow
-        ? 'WeatherDaddy needs your location first — allow location access, then try again.'
-        : 'Save a city first, then choose it above.', true);
+    let p = this._pushPrefsFromScreen();
+    if (on && !p.city && !p.follow) {
+      this._renderPushStatus(f, 'Save a city first, then choose it above.', true);
       return;
     }
     this._setPushBusy(true);
@@ -485,6 +489,23 @@ Object.assign(UI, {
             perm === 'denied' ? 'Notifications are blocked for WeatherDaddy.' : 'Notification permission wasn’t granted.',
             true);
           return;
+        }
+        // "Wherever I am" with no fix yet (the picker was never touched,
+        // or the first fix failed): this tap is the one that asks for
+        // location. Without it the switch could only ever report that a
+        // location was needed, and nothing would ask for one.
+        if (!p.city && p.follow) {
+          Storage.savePushPrefs(p);
+          this._renderPushCitySub(p);
+          await this.followPushLocation({ force: true });
+          p = Storage.getPushPrefs();
+          if (!p.city) {
+            this.renderPushScreen();
+            this._renderPushStatus(f, p.followError
+              ? `${p.followError} Allow location access, or pick a city above.`
+              : 'WeatherDaddy needs your location first — allow location access, then try again.', true);
+            return;
+          }
         }
         const sub = await this._getPushSubscription(true);
         p[f].enabled = true;
@@ -523,7 +544,7 @@ Object.assign(UI, {
   },
 
   // City, hour or checklist changed on the screen.
-  _onPushPrefChange() {
+  _onPushPrefChange({ cityPicked = false } = {}) {
     const p = this._pushPrefsFromScreen();
     Storage.savePushPrefs(p);
     this._renderPushCitySub(p);
@@ -531,8 +552,10 @@ Object.assign(UI, {
     if (this._anyPushEnabled(p)) this.syncPushPrefs();
     // Picking "Wherever I am" is the tap Safari wants behind a
     // geolocation prompt, so take the first fix now rather than on the
-    // next launch. It syncs on its own if it lands somewhere new.
-    if (p.follow) this.followPushLocation({ force: true });
+    // next launch. It syncs on its own if it lands somewhere new. Only
+    // the picker triggers this: an hour or checklist change while
+    // following is not a reason to read GPS again.
+    if (p.follow && cityPicked) this.followPushLocation({ force: true });
   },
 
   // Bring the followed city up to date from GPS. Runs on launch and on

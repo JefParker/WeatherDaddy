@@ -647,6 +647,7 @@ Object.assign(UI, {
     this.runElementCubeTransition(graphEl, oldHTML, newHTML, direction)
       .finally(() => {
         this._graphCubeAnimating = false;
+        this._afterGraphCube();
         if (hadFocus) {
           const rect = graphEl.querySelector('.graph-mode-toggle');
           if (rect) rect.focus();

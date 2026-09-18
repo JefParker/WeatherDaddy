@@ -113,6 +113,9 @@ Object.assign(UI, {
     }
   },
 
+  // How long the basemap style may take before "Loading radar…" gives
+  // way to a message; a working connection loads it in a few seconds.
+  RADAR_LOAD_TIMEOUT_MS: 20000,
   _radar: null,
   _radarToken: 0,
   _maplibrePromise: null,
@@ -132,7 +135,8 @@ Object.assign(UI, {
     const r = this._radar = {
       token, lat, lon,
       provider: null, frames: [], idx: -1,
-      map: null, timer: null, playing: false
+      map: null, timer: null, playing: false,
+      loaded: false, loadTimer: null
     };
 
     this._radarSetProvider(null);
@@ -176,6 +180,7 @@ Object.assign(UI, {
     if (!r) return;
     this._radar = null;
     if (r.timer) clearTimeout(r.timer);
+    if (r.loadTimer) clearTimeout(r.loadTimer);
     if (r.map) {
       try { r.map.remove(); } catch (_) { /* already gone */ }
     }
@@ -270,6 +275,19 @@ Object.assign(UI, {
     dot.setAttribute('aria-hidden', 'true');
     new ml.Marker({ element: dot }).setLngLat([r.lon, r.lat]).addTo(map);
 
+    // "Loading radar…" must not be the last word. The frames and the
+    // tile probe succeeded, but the basemap style is a separate host:
+    // if it fails (or the connection drops between the probe and the
+    // style fetch) `load` never fires, so say so rather than sit on the
+    // loading message with the controls disabled.
+    const failedToLoad = () => {
+      if (r !== this._radar || r.loaded) return;
+      this._radarStatus(navigator.onLine === false
+        ? 'Radar needs a connection.'
+        : 'The radar map couldn’t load. Close it and try again in a minute.');
+    };
+    r.loadTimer = setTimeout(failedToLoad, this.RADAR_LOAD_TIMEOUT_MS);
+
     map.on('error', (e) => {
       // MapLibre reports every failed tile here. Radar tiles for an
       // out-of-coverage corner of the view 404 routinely; log once per
@@ -278,10 +296,21 @@ Object.assign(UI, {
         r._loggedError = true;
         console.warn('[WeatherDaddy Radar] map error:', e && e.error ? e.error.message || e.error : e);
       }
+      // Before `load`, an error that isn't a tile is usually the style
+      // (or a source it names) failing to fetch, after which the map
+      // never loads — but a sprite or glyph miss reports the same way
+      // and the style still loads, so give `load` a few more seconds
+      // rather than calling it at once. A late `load` still wins.
+      if (!r.loaded && !(e && e.tile) && r === this._radar) {
+        clearTimeout(r.loadTimer);
+        r.loadTimer = setTimeout(failedToLoad, 5000);
+      }
     });
 
     map.on('load', () => {
-      if (r !== this._radar) return;
+      if (r !== this._radar || r.loaded) return;
+      r.loaded = true;
+      clearTimeout(r.loadTimer);
       this._radarLiftBasemap(map);
       this._addRadarLayers(r);
       this._radarStatus(null);

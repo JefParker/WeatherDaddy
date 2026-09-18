@@ -482,7 +482,12 @@ Object.assign(UI, {
       cityChanged: this._renderedCityName !== cityName,
       tz, dayKeyFor, todayKey, dailyData,
       selectedDayIndex, selectedHourDt, isToday,
-      todayData: dailyData[0],
+      // The entry for the city's calendar today, or undefined when it
+      // has none (late evening with enrichment down: OWM's first slot
+      // is already tomorrow). NOT dailyData[0], which is tomorrow then
+      // — "rest of today" would describe the wrong day under a "Right
+      // now" label. _dayTotals treats a missing day as no window.
+      todayData: todayIdx !== -1 ? dailyData[todayIdx] : undefined,
       nowSec, nearTermByKey, lastNearTermDt,
       todayIdx, nowDayIdx, currentDayIdx
     };
@@ -492,8 +497,10 @@ Object.assign(UI, {
     ctx.heroData       = this._heroDataFor(ctx);
 
     const { activeDay, pinnedHourSlot } = ctx;
-    ctx.activeDayEntry = isToday ? dailyData[0] : dailyData[selectedDayIndex];
-    ctx.activeDayKey   = ctx.activeDayEntry ? ctx.activeDayEntry.key : null;
+    // Today keeps today's KEY even when it has no entry (see todayData),
+    // so moonrise, tides and the daily lookups stay on the right day.
+    ctx.activeDayEntry = isToday ? ctx.todayData : dailyData[selectedDayIndex];
+    ctx.activeDayKey   = isToday ? todayKey : (ctx.activeDayEntry ? ctx.activeDayEntry.key : null);
     // Open-Meteo's daily summary for the active day — the authoritative
     // whole-day numbers (max precip probability, max wind, sunshine)
     // that beat anything derived from sampled 3h slots.
@@ -838,8 +845,11 @@ Object.assign(UI, {
     for (const anchor of [fm.dt, fm.dt - 86400]) {
       const sun = this._sunTimesAt(ctx, anchor);
       const next = this._sunTimesAt(ctx, anchor + 86400);
-      if (!(sun.sunset && next.sunrise)) continue;
-      const night = { sunset: sun.sunset, sunrise: next.sunrise };
+      if (!sun.sunset) continue;
+      // No sunrise the next morning (polar night setting in): the
+      // night is the twelve hours after sunset, as worker/moon.js
+      // fullMoonNight has it, so the push and the card agree.
+      const night = { sunset: sun.sunset, sunrise: next.sunrise || sun.sunset + 12 * 3600 };
       if (fm.dt >= night.sunset && fm.dt <= night.sunrise) return { ...night, peakAtNight: true };
       if (!fallback) fallback = { ...night, peakAtNight: false };
     }
@@ -900,7 +910,10 @@ Object.assign(UI, {
     if (!(state.tideExtrema && state.tideExtrema.length > 0)) return null;
 
     const liveNow = isToday && !pinnedHourSlot;
-    const anchorDt = heroData.dt;
+    // "Next" means from the clock, not from OWM's observation time,
+    // which can be 40 minutes old on the free tier and would surface a
+    // high tide that has already passed.
+    const anchorDt = liveNow ? ctx.nowSec : heroData.dt;
 
     // Local-day window for the selected day, used for the non-live case.
     const dayStartSec = activeDayKey
@@ -1043,9 +1056,13 @@ Object.assign(UI, {
           ? ' ' + this.windDirection(activeDay.wind.deg) + windArrow : ''}`));
     if (hasGust) notable.push(item('Wind gust', this.formatWind(activeDay.wind.gust)));
     // Unusually dry or muggy air is notable; the broad middle is routine.
+    // Null when Open-Meteo had no sample for a synthesised slot; no
+    // row then, rather than a "Humidity 0%" promoted to notable.
     const humidity = activeDay.main.humidity;
-    (humidity <= 20 || humidity >= 85 ? notable : routine)
-      .push(item('Humidity', `${humidity}%`));
+    if (humidity != null && Number.isFinite(humidity)) {
+      (humidity <= 20 || humidity >= 85 ? notable : routine)
+        .push(item('Humidity', `${Math.round(humidity)}%`));
+    }
     if (cloudCover != null) {
       routine.push(item('Cloud cover', `${Math.round(cloudCover)}%`));
     }

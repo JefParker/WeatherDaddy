@@ -25,13 +25,10 @@ const FULL_MOON_NAMES = [
   'Cold Moon'        // Dec
 ];
 
-// Synodic PERIOD matches moonPhaseName()'s; the EPOCHS deliberately do
-// not. moonPhaseName() anchors to the actual new moon (2000-01-06
-// 18:14 UTC) while this anchors to the actual full moon (2000-01-21
-// 04:41 UTC) — the real interval between them is ~8h off from half a
-// mean synodic month (orbital eccentricity), and each feature is most
-// accurate anchored to its own observed phase. Deriving one epoch from
-// the other would shift every full-moon timestamp ~8h from reality.
+// The mean lunation only picks the INDEX of a full moon; the instant
+// comes from _fullMoonEpoch (Meeus). moonPhaseName() reads its phase
+// off the same exact instants, so the card and the "Moon phase" stat
+// can never disagree about the night of the full moon.
 // Glow / tint applied to the full-moon card's illustration, keyed by the
 // traditional name above. Anything not listed gets the plain white glow.
 const FULL_MOON_FILTERS = {
@@ -780,7 +777,7 @@ Object.assign(UI, {
       main: {
         temp: h.temp,
         feels_like: h.feelsLike != null ? h.feelsLike : h.temp,
-        humidity: h.humidity || 0,
+        humidity: h.humidity != null ? h.humidity : null,
         pressure: h.pressureMsl != null ? Math.round(h.pressureMsl) : 1013
       },
       weather: [{
@@ -1009,13 +1006,30 @@ Object.assign(UI, {
   // Moon phase name at a given moment. Defaults to "now" so existing
   // callers don't change, but takes a ms timestamp so forecast days /
   // hourly tiles can show the correct phase for THEIR date rather than
-  // always "today's phase". Synodic period 29.530588 days, anchored to
-  // the new moon on 2000-01-06 18:14 UTC.
+  // always "today's phase". The phase is read between the exact full
+  // moons either side (see _fullMoonEpoch); the mean-lunation formula
+  // from the 2000-01-06 new moon is only the fallback.
   moonPhaseName(atMs = Date.now()) {
-    const SYNODIC = 29.530588853;
-    const REF_MS = Date.UTC(2000, 0, 6, 18, 14);
-    const daysSince = (atMs - REF_MS) / 86400000;
-    const p = (((daysSince % SYNODIC) + SYNODIC) % SYNODIC) / SYNODIC; // 0..1
+    const atSec = atMs / 1000;
+    // Position within the lunation between the two exact (Meeus) full
+    // moons that bracket the instant, so this agrees with the full-moon
+    // card: a mean lunation from a fixed epoch runs up to ~14 hours off
+    // the real full moon, enough for the card to say "Harvest Moon"
+    // while the stat next to it said "Waxing gibbous". 0.5 = full.
+    let prev = null, next = null;
+    for (const fm of getRelevantFullMoons(atSec)) {
+      if (fm.dt <= atSec) prev = fm;
+      else if (!next) next = fm;
+    }
+    let p;
+    if (prev && next && next.dt > prev.dt) {
+      p = ((atSec - prev.dt) / (next.dt - prev.dt) + 0.5) % 1;
+    } else {
+      const SYNODIC = 29.530588853;
+      const REF_MS = Date.UTC(2000, 0, 6, 18, 14);
+      const daysSince = (atMs - REF_MS) / 86400000;
+      p = (((daysSince % SYNODIC) + SYNODIC) % SYNODIC) / SYNODIC; // 0..1
+    }
     if (p < 0.03 || p >= 0.97) return 'New';
     if (p < 0.22) return 'Waxing crescent';
     if (p < 0.28) return 'First quarter';

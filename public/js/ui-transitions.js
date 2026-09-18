@@ -148,6 +148,7 @@ Object.assign(UI, {
     const deferred = this._deferredRender;
     this._deferredRender = null;
     if (deferred) deferred();
+    this._afterGraphCube();
   },
 
   // Hygiene for cube faces, applied for the duration of a spin:
@@ -577,7 +578,7 @@ Object.assign(UI, {
 
     this._graphCubeAnimating = true;
     this.runElementCubeTransition(newEl, oldGraphHTML, newGraphHTML, direction)
-      .finally(() => { this._graphCubeAnimating = false; });
+      .finally(() => { this._graphCubeAnimating = false; this._afterGraphCube(); });
   },
 
   // Cube transition scoped to a single element — used for the temperature

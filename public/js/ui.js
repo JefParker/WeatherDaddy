@@ -48,6 +48,28 @@ const UI = {
   importExportFeedback: document.getElementById('import-export-feedback'),
 
   _resizeBound: false,
+  // A window resize arrived while a cube was rotating the graph (see
+  // the resize listener in init); replayed by _afterGraphCube.
+  _graphResizePending: false,
+
+  _rerenderLastGraph() {
+    if (!this._lastGraph) return;
+    this.renderGraph(
+      this._lastGraph.hourly,
+      this._lastGraph.tz,
+      this._lastGraph.omHourly || [],
+      this._lastGraph.opts || {}
+    );
+  },
+
+  // Called when a graph cube (day swipe, series flip) or a city cube
+  // lands: the HTML it just wrote was rendered for the pre-resize width.
+  _afterGraphCube() {
+    if (!this._graphResizePending) return;
+    this._graphResizePending = false;
+    if (this._graphCubeAnimating || this._cubeAnimating) return; // another spin took over
+    this._rerenderLastGraph();
+  },
   _lastGraph: null,
   // Series the graph's switch last offered, in cycle order. Written by
   // renderGraph, read by _toggleGraphMode — T and U come and go with the
@@ -170,12 +192,16 @@ const UI = {
     // and reveals a previously-hidden zero-width container).
     if (!this._resizeBound) {
       window.addEventListener('resize', () => {
-        if (this._lastGraph) this.renderGraph(
-          this._lastGraph.hourly,
-          this._lastGraph.tz,
-          this._lastGraph.omHourly || [],
-          this._lastGraph.opts || {}
-        );
+        // Mid-cube (a day swipe or a series flip is rotating the
+        // graph), #graph-container holds the animating faces; a render
+        // now would tear them out, and the cube would then land its
+        // snapshot sized for the old width anyway. Park the re-render
+        // for _afterGraphCube.
+        if (this._graphCubeAnimating || this._cubeAnimating) {
+          this._graphResizePending = true;
+          return;
+        }
+        this._rerenderLastGraph();
       });
       this._resizeBound = true;
     }

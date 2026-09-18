@@ -18,7 +18,7 @@
 // (index.html used to also carry ?v= query strings, but cacheKey()
 // strips the query before caching, so they never did anything and were
 // removed.)
-const CACHE_NAME = 'weatherdaddy-v229';
+const CACHE_NAME = 'weatherdaddy-v230';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -428,9 +428,12 @@ self.addEventListener('push', event => {
     body: data.body || '',
     icon: data.icon || './assets/icons/icon-192.png',
     badge: data.badge || './assets/icons/monochrome-192.png',
-    // Same tag → a new briefing replaces yesterday's in the tray.
+    // Same tag → a new briefing replaces yesterday's in the tray. The
+    // replacement must still make a sound: a second spell of rain an
+    // hour after the first "Rain starting" is news, and with renotify
+    // off the tray entry would change silently.
     tag: data.tag || 'weatherdaddy',
-    renotify: false,
+    renotify: true,
     data: { url: data.url || './' },
   };
   if (typeof data.timestamp === 'number') options.timestamp = data.timestamp;

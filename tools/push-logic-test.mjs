@@ -537,6 +537,21 @@ check('nws box: Denver in, London out, Honolulu in', inNwsBox(39.74, -104.99) &&
   check('resubscribe: row moved', db.writes.some(w => w.sql.includes('UPDATE push_subscriptions') && w.binds[0] === 'https://push.example/new' && w.binds[4] === 'https://push.example/old'));
   check('resubscribe: alert memory moved too', db.writes.some(w => w.sql.includes('push_alerts_sent SET endpoint') && w.binds[0] === 'https://push.example/new' && w.binds[1] === 'https://push.example/old'));
 }
+{
+  // The app already subscribed under the new endpoint before the
+  // service worker reported the rotation: the guarded UPDATE touches
+  // nothing, the old row is dropped, and that still counts as success.
+  const db = fakeDB({});
+  db.batch = async () => [{ meta: { changes: 0 } }, { meta: { changes: 1 } }, { meta: { changes: 0 } }, { meta: { changes: 0 } }];
+  const env = { ...baseEnv, DB: db };
+  const body = { oldEndpoint: 'https://push.example/old', subscription: { endpoint: 'https://push.example/new', keys: { p256dh, auth } } };
+  const res = await handlePushRoute(new Request('https://weatherdaddy.app/api/push/resubscribe', { method: 'POST', body: JSON.stringify(body) }), env, {}, 'resubscribe');
+  eq('resubscribe: new endpoint already had a row → old one dropped, 200', res.status, 200);
+  // Neither row exists: unknown.
+  db.batch = async () => [{ meta: { changes: 0 } }, { meta: { changes: 0 } }, { meta: { changes: 0 } }, { meta: { changes: 0 } }];
+  const res2 = await handlePushRoute(new Request('https://weatherdaddy.app/api/push/resubscribe', { method: 'POST', body: JSON.stringify(body) }), env, {}, 'resubscribe');
+  eq('resubscribe: neither endpoint known → 404', res2.status, 404);
+}
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nall push logic checks pass');
 process.exit(failures ? 1 : 0);

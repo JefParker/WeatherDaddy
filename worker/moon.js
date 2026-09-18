@@ -72,8 +72,17 @@ export function fullMoonAt(k) {
 // Fraction of the Moon's disc lit at `sec`, 0 (new) to 1 (full), from
 // the phase angle alone — plenty for "how much will it wash out the sky".
 export function moonIllumination(sec) {
-  const cycles = (sec * 1000 - REF_MS) / (SYNODIC_DAYS * 86400000);
-  const phase = cycles - Math.floor(cycles); // 0 = full, 0.5 = new
+  // Phase measured between the two exact full moons bracketing `sec`,
+  // like UI.moonPhaseName, rather than from the mean lunation, which
+  // can run ~14 hours off the real full moon.
+  let prev = null, next = null;
+  for (const fm of nearbyFullMoons(sec)) {
+    if (fm.dt <= sec) prev = fm;
+    else if (!next) next = fm;
+  }
+  const phase = (prev && next && next.dt > prev.dt)
+    ? (sec - prev.dt) / (next.dt - prev.dt)        // 0 = full, 0.5 = new
+    : (((sec * 1000 - REF_MS) / (SYNODIC_DAYS * 86400000)) % 1 + 1) % 1;
   return (1 + Math.cos(2 * Math.PI * phase)) / 2;
 }
 

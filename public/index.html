@@ -502,7 +502,7 @@
                 <p>Coastal locations automatically display high and low tide times on the quick-stats grid, along with the current <strong>water temperature</strong>. Heights are shown alongside the time wherever the range is large enough to be worth reading. Select a forecast day and the rows switch from "next" tide to that day's tides.</p>
                 <p>Near a U.S. coast, tide times come from the nearest <strong>NOAA tide station</strong> — the same harmonic predictions printed tide tables use. Elsewhere they fall back to a global ocean model, which is fine for "is the tide in or out" but can be over an hour off at a specific harbour.</p>
                 <p>At the coast the graph gains a third view: a <strong>tide curve</strong> showing sea level across the day. Tap the <strong>R / W / T</strong> letters in the graph's right edge — or double-tap the graph — to cycle precipitation → wind → tide. Inland locations keep the two-way R / W switch, and your choice of tide view is remembered for when you come back to the coast.</p>
-                <p>On days that reach the WHO <strong>Very High</strong> UV band a fourth letter, <strong>U</strong>, joins the switch: a UV-index curve with the Very High threshold marked, so you can see when the sun is actually worth avoiding. Like the tide view, it only appears where it applies and your choice is remembered.</p>
+                <p>On days that reach the WHO <strong>Moderate</strong> UV band or higher a fourth letter, <strong>U</strong>, joins the switch: a UV-index curve with the Very High threshold marked, so you can see when the sun is actually worth avoiding. Like the tide view, it only appears where it applies and your choice is remembered.</p>
                 <p>If a full moon is happening within 12 hours of nightfall, it takes center stage on the stats grid with its traditional name and optimal viewing time.</p>
               </div>
             </div>
@@ -706,7 +706,7 @@
           </div>
           <p class="byok-feedback" id="byok-feedback" role="status" aria-live="polite"></p>
         </section>
-        <p class="about-footer">Open-Meteo, OpenStreetMap Nominatim, the U.S. National Weather Service, and the bundled GeoNames dictionary are called directly from your browser. OpenWeatherMap requests go through a tiny Cloudflare Pages proxy that attaches our shared API key — unless you've added your own key above, in which case the browser talks to OpenWeatherMap directly and our proxy is bypassed entirely.</p>
+        <p class="about-footer">Open-Meteo, OpenStreetMap Nominatim, the U.S. National Weather Service, and the bundled GeoNames dictionary are called directly from your browser. OpenWeatherMap requests go through a tiny Cloudflare Worker proxy that attaches our shared API key — unless you've added your own key above, in which case the browser talks to OpenWeatherMap directly and our proxy is bypassed entirely.</p>
       </div>
     </div>
 
@@ -826,7 +826,7 @@
       </header>
       <div class="overlay-body radar-body">
         <div class="radar-map-wrap">
-          <div id="radar-map" aria-label="Precipitation radar map"></div>
+          <div id="radar-map" role="region" aria-label="Precipitation radar map"></div>
           <p class="radar-status" id="radar-status" role="status" hidden></p>
           <button type="button" class="radar-recenter" id="radar-recenter" aria-label="Recenter on this location" disabled>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>

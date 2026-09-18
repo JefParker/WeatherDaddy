@@ -250,21 +250,31 @@ async function status(env, body) {
 
 // The push service rotated the endpoint (sw.js pushsubscriptionchange).
 // The alert memory moves with the row, or every warning still active
-// would be sent to the device a second time.
+// would be sent to the device a second time. If the app has already
+// subscribed under the new endpoint (its own reconcile ran first), that
+// row is the newer one and the old row is simply dropped: a bare UPDATE
+// would trip the primary key and fail the whole request.
 async function resubscribe(env, body) {
   const oldEndpoint = parseEndpoint(body.oldEndpoint);
   const sub = parseSubscription(body.subscription);
   if (!oldEndpoint || !sub) return json({ error: 'Invalid subscription' }, 400);
+  if (oldEndpoint === sub.endpoint) return json({ ok: true });
   const now = Math.floor(Date.now() / 1000);
-  const [res] = await env.DB.batch([
+  const [moved, dropped] = await env.DB.batch([
     env.DB.prepare(`
       UPDATE push_subscriptions
          SET endpoint = ?1, p256dh = ?2, auth = ?3, fail_count = 0, updated_at = ?4
        WHERE endpoint = ?5
+         AND NOT EXISTS (SELECT 1 FROM push_subscriptions WHERE endpoint = ?1)
     `).bind(sub.endpoint, sub.p256dh, sub.auth, now, oldEndpoint),
+    // Still there only when the new endpoint already had a row.
+    env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?1').bind(oldEndpoint),
     env.DB.prepare('UPDATE OR IGNORE push_alerts_sent SET endpoint = ?1 WHERE endpoint = ?2').bind(sub.endpoint, oldEndpoint),
+    // Whatever OR IGNORE left behind (ids the new row already knew).
+    env.DB.prepare('DELETE FROM push_alerts_sent WHERE endpoint = ?1').bind(oldEndpoint),
   ]);
-  if (!res.meta || !res.meta.changes) return json({ error: 'Unknown subscription' }, 404);
+  const changed = (r) => !!(r && r.meta && r.meta.changes);
+  if (!changed(moved) && !changed(dropped)) return json({ error: 'Unknown subscription' }, 404);
   return json({ ok: true });
 }
 
