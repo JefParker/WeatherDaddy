@@ -503,7 +503,7 @@
                 <p>Near a U.S. coast, tide times come from the nearest <strong>NOAA tide station</strong> — the same harmonic predictions printed tide tables use. Elsewhere they fall back to a global ocean model, which is fine for "is the tide in or out" but can be over an hour off at a specific harbour.</p>
                 <p>At the coast the graph gains a third view: a <strong>tide curve</strong> showing sea level across the day. Tap the <strong>R / W / T</strong> letters in the graph's right edge — or double-tap the graph — to cycle precipitation → wind → tide. Inland locations keep the two-way R / W switch, and your choice of tide view is remembered for when you come back to the coast.</p>
                 <p>On days that reach the WHO <strong>Moderate</strong> UV band or higher a fourth letter, <strong>U</strong>, joins the switch: a UV-index curve with the Very High threshold marked, so you can see when the sun is actually worth avoiding. Like the tide view, it only appears where it applies and your choice is remembered.</p>
-                <p>If a full moon is happening within 12 hours of nightfall, it takes center stage on the stats grid with its traditional name and optimal viewing time.</p>
+                <p>From 12 hours before sunset on the night of a full moon until sunrise, the moon takes center stage on the stats grid with its traditional name and optimal viewing time.</p>
               </div>
             </div>
 
@@ -514,7 +514,7 @@
                 <svg class="accordion-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
               <div class="accordion-content">
-                <p>Double-tap (or double-click) the big temperature in the hero card to toggle between Fahrenheit and Celsius everywhere in the app. The Units screen still has the full set of options for wind, pressure, distance, time, and precipitation.</p>
+                <p>Double-tap (or double-click) the big temperature in the hero card to switch everything between imperial (°F, mph, inHg, inches, miles) and metric (°C, km/h, hPa, mm, km) at once. A metric choice like m/s or mmHg survives the round trip, and the time format is left alone. The Units screen still has the full set of options for each.</p>
               </div>
             </div>
 
@@ -569,7 +569,7 @@
                 <svg class="accordion-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
               <div class="accordion-content">
-                <p>Right-click (on desktop) or press and hold (on touch screens) anywhere on the main weather dashboard to open a quick-access context menu. This lets you quickly jump to locations, units, data settings, install the app, or copy the sharing URL without opening the main menu.</p>
+                <p>Right-click (on desktop) or press and hold (on touch screens) anywhere on the main weather dashboard to open a quick-access context menu. This lets you quickly jump to locations, units, notifications, data settings, install the app, or copy the sharing URL without opening the main menu.</p>
               </div>
             </div>
 
@@ -582,8 +582,8 @@
               <div class="accordion-content">
                 <p>When there are active U.S. National Weather Service alerts for your current location, a bar appears at the bottom of the dashboard — <strong>red</strong> for Severe or Extreme warnings, <strong>amber</strong> for lesser watches, advisories and statements. Tap the bar to open the alerts overlay and view the full text and severity of each one.</p>
                 <p>U.S. locations also get a <strong>Forecaster's Notes</strong> button under the day graph: the local NWS office's own narrative of what is driving the forecast, updated a few times a day. Tap it to read the full discussion, split into its sections. It sits with the forecast rather than on the bottom edge so that strip stays reserved for alerts.</p>
+                <p>Next to it, a <strong>Radar</strong> button opens an animated precipitation map centred on the city you are looking at, with a scrubber through the last hour or two. The contiguous U.S. gets NOAA's NEXRAD radar; everywhere else uses RainViewer's global mosaic. The button is hidden while you are offline, since radar can't be cached.</p>
                 <p>When a new version of the app has been installed in the background, a small <strong>Reload</strong> pill appears at the bottom of the dashboard. Tap it to switch straight away, or ignore it: the app swaps over on its own the next time it is in the background or idle.</p>
-                <p>Next to it, a <strong>Radar</strong> button opens an animated precipitation map centred on the city you are looking at, with a scrubber through the last hour or two. U.S. locations get NOAA's NEXRAD radar; everywhere else uses RainViewer's global mosaic. The button is hidden while you are offline, since radar can't be cached.</p>
               </div>
             </div>
 
@@ -594,7 +594,7 @@
                 <svg class="accordion-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
               <div class="accordion-content">
-                <p>WeatherDaddy is built as a Progressive Web App (PWA). Choose <strong>Install App</strong> from the menu to add it to your home screen or desktop for a full-screen, native-style experience (on iOS, use Share → Add to Home Screen). It caches static assets and weather forecasts (for up to 24 hours), so you can open the app and view your last retrieved conditions even without an active internet connection.</p>
+                <p>WeatherDaddy is built as a Progressive Web App (PWA). Choose <strong>Install App</strong> from the menu to add it to your home screen or desktop for a full-screen, native-style experience (on iOS, use Share → Add to Home Screen). It caches static assets and weather forecasts (for up to 6 hours), so you can open the app and view your last retrieved conditions even without an active internet connection.</p>
               </div>
             </div>
 
@@ -629,7 +629,7 @@
             </li>
             <li>
               <a class="about-source-name" href="https://www.weather.gov" target="_blank" rel="noopener noreferrer">U.S. National Weather Service ↗</a>
-              <span class="about-source-desc">Weather alerts (all severities), area forecast discussions, and CO-OPS station tide predictions for U.S. locations.</span>
+              <span class="about-source-desc">Weather alerts (all severities) and area forecast discussions for U.S. locations, plus station tide predictions from NOAA's CO-OPS.</span>
             </li>
             <li>
               <a class="about-source-name" href="https://mesonet.agron.iastate.edu" target="_blank" rel="noopener noreferrer">Iowa Environmental Mesonet ↗</a>
@@ -655,7 +655,7 @@
           <ul class="about-sources">
             <li>
               <span class="about-source-name">Geolocation API</span>
-              <span class="about-source-desc">Used by the "Use current location" button to find weather for where you are right now. WeatherDaddy never sends your location anywhere except the weather APIs above.</span>
+              <span class="about-source-desc">Used by the "Use current location" button, on first launch, and by <strong>Wherever I am</strong> in Push Notifications to find weather for where you are right now. WeatherDaddy never sends your location anywhere except the weather APIs above and, for Wherever I am, its notification service.</span>
             </li>
           </ul>
         </section>
