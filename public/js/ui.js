@@ -655,11 +655,13 @@ const UI = {
       return;
     }
     const sections = this._parseAfd(discussion.text);
-    const issued = discussion.issued ? new Date(discussion.issued) : null;
+    const issued = discussion.issued ? Date.parse(discussion.issued) : NaN;
+    // The city's own time, like every other time on the page.
+    const tz = this.cityTz(App.state);
     const meta = [
       discussion.office ? `NWS ${this.esc(discussion.office)}` : '',
-      (issued && !isNaN(issued))
-        ? `Issued ${issued.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+      !isNaN(issued)
+        ? `Issued ${this.formatDateTime(Math.floor(issued / 1000), tz, { weekday: false })}`
         : ''
     ].filter(Boolean).join(' · ');
     // Headings arrive SHOUTING; sentence-case them for the UI.
@@ -688,14 +690,14 @@ const UI = {
       return;
     }
 
+    // In the city's own time, with its zone, since "until 8 PM" means the
+    // zone the warning is for, not the viewer's.
+    const tz = this.cityTz(App.state);
     const fmtTime = (iso) => {
       if (!iso) return '';
-      const d = new Date(iso);
-      if (isNaN(d)) return '';
-      return d.toLocaleString([], {
-        weekday: 'short', month: 'short', day: 'numeric',
-        hour: 'numeric', minute: '2-digit'
-      });
+      const ms = Date.parse(iso);
+      if (isNaN(ms)) return '';
+      return this.formatDateTime(Math.floor(ms / 1000), tz);
     };
 
     // NWS narrative text is wrapped at ~70 chars with hard \n inside each

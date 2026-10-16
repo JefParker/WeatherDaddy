@@ -578,6 +578,26 @@ Object.assign(UI, {
     return Math.floor(this._dateFromDayKey(key).getTime() / 1000) - off;
   },
 
+  // "Thu, Oct 16, 8:00 PM PDT": a city-local date and time, in the
+  // reader's 12h/24h setting, with the zone's short name when the city's
+  // IANA zone is known (alert and discussion times, which read in the
+  // city's time, not the viewer's). `weekday: false` drops the weekday.
+  formatDateTime(unix, tz = 0, { weekday = true } = {}) {
+    const p = this.localParts(unix, tz);
+    const date = new Date(Date.UTC(p.year, p.month - 1, p.day)).toLocaleDateString([], {
+      ...(weekday ? { weekday: 'short' } : {}), month: 'short', day: 'numeric', timeZone: 'UTC'
+    });
+    let zone = '';
+    if (typeof tz === 'string') {
+      try {
+        const part = new Intl.DateTimeFormat([], { timeZone: tz, timeZoneName: 'short' })
+          .formatToParts(unix * 1000).find(x => x.type === 'timeZoneName');
+        if (part && part.value) zone = ` ${part.value}`;
+      } catch (_) { /* no zone label */ }
+    }
+    return `${date}, ${this.formatTime(unix, true, tz)}${zone}`;
+  },
+
   formatTime(unix, showMinutes = true, tz = 0) {
     const unit = Storage.getUnits().time;
     const { hour: h, minute: m } = this.localParts(unix, tz);
@@ -1080,11 +1100,17 @@ Object.assign(UI, {
     for (let i = 1; i < parts.length; i++) {
       const p = parts[i];
       const upper = p.toUpperCase();
-      if (this.US_STATE_NAMES[upper]) { parts[i] = this.US_STATE_NAMES[upper]; continue; }
-      if (/^[A-Z]{2}$/.test(upper) && countryNamer) {
-        const full = countryNamer.of(upper);
-        if (full && full !== upper) parts[i] = full;
+      // The last part is the country ("Valletta, MT" is Malta, not
+      // Montana): a US state code sits before a "US" ("Austin, TX, US"),
+      // and only reads as a state at the end when it's no country at all.
+      const last = i === parts.length - 1;
+      let country = null;
+      if (last && /^[A-Z]{2}$/.test(upper) && countryNamer) {
+        try { country = countryNamer.of(upper); } catch (_) { country = null; }
+        if (country === upper) country = null;
       }
+      if (country) { parts[i] = country; continue; }
+      if (this.US_STATE_NAMES[upper]) { parts[i] = this.US_STATE_NAMES[upper]; continue; }
     }
     return parts.join(', ');
   },

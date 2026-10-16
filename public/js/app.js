@@ -1035,7 +1035,6 @@ const App = {
   // centroid (see the note in UI.buildDailyData), so a coordinate
   // comparison would silently fail for exactly those cities.
   _applyCachedCity(lat, lon, name, preserveSelection = false) {
-    this.state.coords = { lat, lon };
     const cached = Storage.getWeatherCache(lat, lon);
     // A partial entry (older build, interrupted write, hand-edited
     // storage) must read as a MISS: _applyPayload dereferences
@@ -1043,6 +1042,10 @@ const App = {
     // mid-animation with nothing rendered.
     if (!cached || !cached.currentWeather || !cached.forecast) return false;
     if (Date.now() - (cached.ts || 0) > this.WEATHER_CACHE_MAX_AGE_MS) return false;
+    // Only now that the city will actually be shown: on a miss the
+    // dashboard stays on the previous city, and so must its coords (the
+    // save star and Radar read them).
+    this.state.coords = { lat, lon };
 
     const cityName = name || cached.cityName;
 
@@ -1110,6 +1113,10 @@ const App = {
   //   (see _applyCachedCity). Independent of hadCache, because a refresh
   //   whose cache has aged out still has the selection live in state.
   async _refreshCity(lat, lon, name, token = null, hadCache = false, preserveSelection = false) {
+    // Kept to put back if the fetch fails with nothing cached: the
+    // previous city's dashboard is repainted then, and the star and
+    // Radar must agree with it rather than act on the city that failed.
+    const prevCoords = this.state.coords;
     this.state.coords = { lat, lon };
     if (token == null) {
       this._fetchToken = (this._fetchToken || 0) + 1;
@@ -1220,6 +1227,7 @@ const App = {
       // to a different city later.
       this._sharedStateToRestore = null;
       if (token !== this._fetchToken) return;
+      if (!hadCache) this.state.coords = prevCoords;
       // BYOK: surface inactive/invalid user keys as a clear, actionable
       // message instead of the generic "Failed to load weather data."
       if (e && e.name === 'InvalidApiKeyError') {

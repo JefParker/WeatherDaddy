@@ -195,8 +195,12 @@ Object.assign(UI, {
     const want = p.follow ? this.PUSH_FOLLOW_VALUE
       : p.city ? this._cityKey(p.city)
       : cities.length ? this._cityKey(cities[0]) : null;
+    // A stored city that is no longer on the list (nothing on, so it
+    // wasn't added above) falls back to the city on screen the same way;
+    // the browser's own default would be "Wherever I am".
     if (want && Array.from(els.city.options).some(o => o.value === want)) els.city.value = want;
-    else if (!cities.length) els.city.value = '';
+    else if (cities.length) els.city.value = this._cityKey(cities[0]);
+    else els.city.value = '';
     this._renderPushCitySub(p);
   },
 
