@@ -298,9 +298,15 @@ const WeatherAPI = {
       sunshineSec:  d.sunshine_duration   ? d.sunshine_duration[i]   : null
     })).filter(day => day.dt + 86400 > nowSec);
 
+    // Open-Meteo stamps each 15-minute value with the END of its interval
+    // (a "preceding 15 minutes sum", like its hourly precipitation; see
+    // UI._omHourToOwmSlot). The nowcast and the 2-hour strip read dt as
+    // the slot's START ("starting in ~N min" is the start of the first
+    // wet slot), so it's shifted here, once, for every reader. The
+    // Worker's nowcast (worker/nowcast.js) does the same.
     const m = data.minutely_15 || {};
     const minutely = (m.time || []).map((t, i) => ({
-      dt: t,
+      dt: t - 900,
       precipMM: m.precipitation ? m.precipitation[i] || 0 : 0
     }));
 
