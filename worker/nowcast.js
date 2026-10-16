@@ -62,8 +62,11 @@ export async function fetchMinutely(lat, lon) {
   const data = await res.json();
   const m = data.minutely_15 || {};
   const times = Array.isArray(m.time) ? m.time : [];
+  // Open-Meteo stamps each 15-minute value with the END of its interval
+  // (a "preceding 15 minutes sum"); the readers below take dt as the
+  // slot's START, so it's shifted here, as public/js/weather.js does.
   return times.map((t, i) => ({
-    dt: t,
+    dt: t - 900,
     mm: (m.precipitation && m.precipitation[i]) || 0,
     snow: (m.snowfall && m.snowfall[i]) || 0,
   })).sort((a, b) => a.dt - b.dt);
